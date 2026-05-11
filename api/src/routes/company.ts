@@ -118,6 +118,36 @@ company.post('/logo', authMiddleware, zValidator('json', z.object({ image: z.str
   return c.json({ logo_url: logoUrl });
 });
 
+// ── POST: upload PDF images to R2 (logo, chop, stamp) ──
+const pdfImageSchema = z.object({ image: z.string().min(1) });
+
+company.post('/pdf-logo', authMiddleware, zValidator('json', pdfImageSchema), async (c) => {
+  const { image } = c.req.valid('json');
+  const user = c.get('user');
+  const base64 = image.replace(/^data:image\/\w+;base64,/, '');
+  const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+  await c.env.FILE_BUCKET.put(`tenants/${user.id}/images/header-logo.png`, bytes);
+  return c.json({ success: true, key: `tenants/${user.id}/images/header-logo.png` });
+});
+
+company.post('/pdf-chop', authMiddleware, zValidator('json', pdfImageSchema), async (c) => {
+  const { image } = c.req.valid('json');
+  const user = c.get('user');
+  const base64 = image.replace(/^data:image\/\w+;base64,/, '');
+  const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+  await c.env.FILE_BUCKET.put(`tenants/${user.id}/images/company-chop.png`, bytes);
+  return c.json({ success: true, key: `tenants/${user.id}/images/company-chop.png` });
+});
+
+company.post('/pdf-stamp', authMiddleware, zValidator('json', pdfImageSchema), async (c) => {
+  const { image } = c.req.valid('json');
+  const user = c.get('user');
+  const base64 = image.replace(/^data:image\/\w+;base64,/, '');
+  const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+  await c.env.FILE_BUCKET.put(`tenants/${user.id}/images/signature-stamp.png`, bytes);
+  return c.json({ success: true, key: `tenants/${user.id}/images/signature-stamp.png` });
+});
+
 // ── Domain resolution ──
 company.get('/by-domain', async (c) => {
   const host = (c.req.query('host') || c.req.header('Host') || '').replace(/:\d+$/, '');

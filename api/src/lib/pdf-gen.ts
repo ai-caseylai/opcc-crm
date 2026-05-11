@@ -7,6 +7,10 @@ const R2_IMAGE_PATHS = {
   companyChop: 'images/company-chop.png',
 };
 
+function tenantKey(userId: string, key: string) {
+  return `tenants/${userId}/${key}`;
+}
+
 async function loadFromR2(bucket: R2Bucket, key: string): Promise<Uint8Array | null> {
   try {
     const obj = await bucket.get(key);
@@ -24,25 +28,26 @@ async function embedFonts(pdfDoc: PDFDocument): Promise<PdfFonts> {
   };
 }
 
-async function embedImages(pdfDoc: PDFDocument, bucket: R2Bucket): Promise<PdfAssets> {
+async function embedImages(pdfDoc: PDFDocument, bucket: R2Bucket, userId?: string): Promise<PdfAssets> {
   const images: PdfAssets = {};
 
-  const logoBytes = await loadFromR2(bucket, R2_IMAGE_PATHS.logo);
-  if (logoBytes) images.logoImage = await pdfDoc.embedPng(logoBytes);
-
-  const sigBytes = await loadFromR2(bucket, R2_IMAGE_PATHS.signatureStamp);
-  if (sigBytes) images.signatureStampImage = await pdfDoc.embedPng(sigBytes);
-
-  const chopBytes = await loadFromR2(bucket, R2_IMAGE_PATHS.companyChop);
-  if (chopBytes) images.companyChopImage = await pdfDoc.embedPng(chopBytes);
+  for (const [name, globalKey] of Object.entries(R2_IMAGE_PATHS)) {
+    let bytes: Uint8Array | null = null;
+    if (userId) bytes = await loadFromR2(bucket, tenantKey(userId, globalKey));
+    if (!bytes) bytes = await loadFromR2(bucket, globalKey);
+    if (!bytes) continue;
+    if (name === 'logo') images.logoImage = await pdfDoc.embedPng(bytes);
+    else if (name === 'signatureStamp') images.signatureStampImage = await pdfDoc.embedPng(bytes);
+    else if (name === 'companyChop') images.companyChopImage = await pdfDoc.embedPng(bytes);
+  }
 
   return images;
 }
 
-export async function generateInvoicePDF(bucket: R2Bucket, data: InvoiceData): Promise<Uint8Array> {
+export async function generateInvoicePDF(bucket: R2Bucket, data: InvoiceData, userId?: string): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.create();
   const fonts = await embedFonts(pdfDoc);
-  const images = await embedImages(pdfDoc, bucket);
+  const images = await embedImages(pdfDoc, bucket, userId);
   drawInvoice(pdfDoc, data, fonts, images);
   return pdfDoc.save();
 }

@@ -64,7 +64,7 @@ pdf.get('/:type/:id', async (c) => {
   const num = doc[type === 'invoice' ? 'invoice_number' : 'quotation_number'] as string;
 
   try {
-    const pdfBytes = await generateInvoicePDF(c.env.FILE_BUCKET, payload);
+    const pdfBytes = await generateInvoicePDF(c.env.FILE_BUCKET, payload, (doc as any).user_id);
     return new Response(pdfBytes, {
       headers: {
         'Content-Type': 'application/pdf',

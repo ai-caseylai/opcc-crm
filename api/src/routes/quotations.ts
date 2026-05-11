@@ -4,6 +4,7 @@ import { zValidator } from '@hono/zod-validator';
 import { v4 as uuidv4 } from 'uuid';
 import { Bindings, Variables } from '../types';
 import { authMiddleware } from '../middleware/auth';
+import { ensureProducts } from '../lib/auto-product';
 
 const quotations = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 quotations.use('*', authMiddleware);
@@ -80,6 +81,8 @@ quotations.post('/', zValidator('json', createSchema), async (c) => {
 
   await db.prepare('INSERT INTO audit_log (id, user_id, action, entity_type, entity_id, changes) VALUES (?, ?, ?, ?, ?, ?)')
     .bind(`al-${uuidv4().slice(0, 8)}`, user.id, 'create', 'quotation', id, JSON.stringify({ quotation_number: data.quotation_number })).run();
+
+  await ensureProducts(db, user.id, data.items);
 
   const quotation = await db.prepare('SELECT * FROM quotations WHERE id = ?').bind(id).first();
   const items = await db.prepare('SELECT * FROM quotation_items WHERE quotation_id = ? ORDER BY sort_order').bind(id).all();

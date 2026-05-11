@@ -4,6 +4,7 @@ import { zValidator } from '@hono/zod-validator';
 import { v4 as uuidv4 } from 'uuid';
 import { Bindings, Variables } from '../types';
 import { authMiddleware } from '../middleware/auth';
+import { ensureProducts } from '../lib/auto-product';
 
 const invoices = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 invoices.use('*', authMiddleware);
@@ -81,6 +82,8 @@ invoices.post('/', zValidator('json', createSchema), async (c) => {
 
   await db.prepare('INSERT INTO audit_log (id, user_id, action, entity_type, entity_id, changes) VALUES (?, ?, ?, ?, ?, ?)')
     .bind(`al-${uuidv4().slice(0, 8)}`, user.id, 'create', 'invoice', id, JSON.stringify({ invoice_number: data.invoice_number, total })).run();
+
+  await ensureProducts(db, user.id, data.items);
 
   const invoice = await db.prepare('SELECT * FROM invoices WHERE id = ?').bind(id).first();
   const items = await db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY sort_order').bind(id).all();
