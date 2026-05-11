@@ -5,35 +5,16 @@ import { Bindings, Variables } from '../types';
 const website = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 website.use('*', authMiddleware);
 
-website.post('/', async (c) => {
-  const user = c.get('user');
-  const db = c.env.DB;
-
-  const row = await db.prepare('SELECT * FROM company_settings WHERE user_id = ?').bind(user.id).first<Record<string,string>>();
-  const company = {
-    name: row?.name || 'My Company',
-    tagline: row?.tagline || '',
-    address: row?.address || 'Hong Kong',
-    phone: row?.phone || '',
-    email: row?.email || user.email || '',
-    website: row?.website || '',
-    bank_name: row?.bank_name || '',
-    bank_account: row?.bank_account || '',
-  };
-
-  const apiKey = c.env.DEEPSEEK_API_KEY;
-  if (!apiKey) return c.json({ error: 'DeepSeek API key not configured' }, 503);
-
-  const prompt = `Generate a complete, modern, professional single-page company website in HTML/CSS for "${company.name}".
+const DEFAULT_PROMPT = `Generate a complete, modern, professional single-page company website in HTML/CSS for "{name}".
 
 Company details:
-- Name: ${company.name}
-- Tagline: ${company.tagline || 'Professional Services'}
-- Address: ${company.address}
-- Phone: ${company.phone || 'N/A'}
-- Email: ${company.email}
-- Website: ${company.website || 'N/A'}
-- Bank: ${company.bank_name || 'N/A'}
+- Name: {name}
+- Tagline: {tagline}
+- Address: {address}
+- Phone: {phone}
+- Email: {email}
+- Website: {website}
+- Bank: {bank}
 
 Requirements:
 - Single HTML file with embedded CSS (no external dependencies)
@@ -48,6 +29,40 @@ Requirements:
 - DO NOT wrap in markdown code blocks — output raw HTML directly starting with <!DOCTYPE html>
 
 Output ONLY the HTML code, nothing else.`;
+
+function buildPrompt(template: string, company: Record<string, string>): string {
+  return template
+    .replace(/\{name\}/g, company.name)
+    .replace(/\{tagline\}/g, company.tagline || 'Professional Services')
+    .replace(/\{address\}/g, company.address)
+    .replace(/\{phone\}/g, company.phone || 'N/A')
+    .replace(/\{email\}/g, company.email)
+    .replace(/\{website\}/g, company.website || 'N/A')
+    .replace(/\{bank\}/g, company.bank_name || 'N/A');
+}
+
+website.post('/', async (c) => {
+  const user = c.get('user');
+  const db = c.env.DB;
+  const body = await c.req.json().catch(() => ({})) as { customPrompt?: string };
+
+  const row = await db.prepare('SELECT * FROM company_settings WHERE user_id = ?').bind(user.id).first<Record<string, string>>();
+  const company = {
+    name: row?.name || 'My Company',
+    tagline: row?.tagline || '',
+    address: row?.address || 'Hong Kong',
+    phone: row?.phone || '',
+    email: row?.email || user.email || '',
+    website: row?.website || '',
+    bank_name: row?.bank_name || '',
+    bank_account: row?.bank_account || '',
+  };
+
+  const apiKey = c.env.DEEPSEEK_API_KEY;
+  if (!apiKey) return c.json({ error: 'DeepSeek API key not configured' }, 503);
+
+  const promptTemplate = body.customPrompt?.trim() || DEFAULT_PROMPT;
+  const prompt = buildPrompt(promptTemplate, company);
 
   try {
     const resp = await fetch('https://api.deepseek.com/chat/completions', {
@@ -75,16 +90,61 @@ Output ONLY the HTML code, nothing else.`;
       html = '<!DOCTYPE html>\n<html lang="zh-HK">\n<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>' + company.name + '</title></head>\n<body>\n' + html + '\n</body>\n</html>';
     }
 
-    return c.json({ html, company_name: company.name });
+    // Auto-save version
+    const maxVer = await db.prepare('SELECT MAX(version_number) as v FROM website_versions WHERE user_id = ?').bind(user.id).first<{ v: number | null }>();
+    const version_number = (maxVer?.v || 0) + 1;
+    const id = `wv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    await db.prepare(
+      'INSERT INTO website_versions (id, user_id, version_number, html, prompt, company_name) VALUES (?, ?, ?, ?, ?, ?)'
+    ).bind(id, user.id, version_number, html, promptTemplate, company.name).run();
+
+    return c.json({ html, company_name: company.name, version: { id, version_number } });
   } catch (e: any) {
     return c.json({ error: e.message || 'Generation failed' }, 500);
   }
+});
+
+// List versions
+website.get('/versions', async (c) => {
+  const user = c.get('user');
+  const db = c.env.DB;
+  const { results } = await db.prepare(
+    'SELECT id, version_number, company_name, prompt, created_at FROM website_versions WHERE user_id = ? ORDER BY version_number DESC'
+  ).bind(user.id).all();
+  return c.json({ data: results });
+});
+
+// Get single version
+website.get('/versions/:id', async (c) => {
+  const user = c.get('user');
+  const db = c.env.DB;
+  const row = await db.prepare(
+    'SELECT * FROM website_versions WHERE id = ? AND user_id = ?'
+  ).bind(c.req.param('id'), user.id).first();
+  if (!row) return c.json({ error: 'Version not found' }, 404);
+  return c.json({ data: row });
+});
+
+// Delete version
+website.delete('/versions/:id', async (c) => {
+  const user = c.get('user');
+  const db = c.env.DB;
+  const existing = await db.prepare('SELECT id FROM website_versions WHERE id = ? AND user_id = ?').bind(c.req.param('id'), user.id).first();
+  if (!existing) return c.json({ error: 'Version not found' }, 404);
+  await db.prepare('DELETE FROM website_versions WHERE id = ? AND user_id = ?').bind(c.req.param('id'), user.id).run();
+  return c.json({ ok: true });
 });
 
 website.post('/preview', async (c) => {
   const body = await c.req.json();
   const html = body.html || '';
   return c.html(html.startsWith('<!DOCTYPE') ? html : '<!DOCTYPE html><html><body>' + html + '</body></html>');
+});
+
+// Get default prompt template
+website.get('/default-prompt', async (c) => {
+  return c.json({ prompt: DEFAULT_PROMPT });
 });
 
 export { website as websiteRoutes };

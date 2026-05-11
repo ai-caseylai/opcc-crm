@@ -548,3 +548,16 @@ CREATE INDEX IF NOT EXISTS idx_bank_statements_period ON bank_statements(user_id
 CREATE INDEX IF NOT EXISTS idx_bank_transactions_stmt ON bank_transactions(bank_statement_id);
 CREATE INDEX IF NOT EXISTS idx_bank_transactions_user ON bank_transactions(user_id);
 CREATE INDEX IF NOT EXISTS idx_bank_transactions_date ON bank_transactions(user_id, transaction_date);
+
+-- Website Generator Versions
+CREATE TABLE IF NOT EXISTS website_versions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  version_number INTEGER NOT NULL,
+  html TEXT NOT NULL,
+  prompt TEXT NOT NULL DEFAULT '',
+  company_name TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_website_versions_user ON website_versions(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_website_versions_user_ver ON website_versions(user_id, version_number);
