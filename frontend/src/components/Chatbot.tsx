@@ -6,6 +6,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 interface Message {
+  id?: string;
   role: 'user' | 'assistant';
   content: string;
 }
@@ -53,7 +54,7 @@ export default function Chatbot({ onClose, className }: ChatbotPanelProps) {
     try {
       const data = await api(`/chat/sessions/${id}`);
       setSessionId(id);
-      setMessages((data.messages || []).map((m: any) => ({ role: m.role, content: m.content })));
+      setMessages((data.messages || []).map((m: any) => ({ id: m.id, role: m.role, content: m.content })));
       setShowHistory(false);
     } catch {}
   };
@@ -74,6 +75,14 @@ export default function Chatbot({ onClose, className }: ChatbotPanelProps) {
     setSessionId('');
     setMessages([]);
     setShowHistory(false);
+  };
+
+  const deleteMessage = async (index: number) => {
+    const msg = messages[index];
+    if (msg?.id && sessionId) {
+      try { await api(`/chat/messages/${msg.id}`, { method: 'DELETE' }); } catch {}
+    }
+    setMessages(prev => prev.filter((_, i) => i !== index));
   };
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -193,7 +202,7 @@ export default function Chatbot({ onClose, className }: ChatbotPanelProps) {
               </div>
             )}
             {messages.map((m, i) => (
-              <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div key={m.id || i} className={`group relative flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                 <div className={`max-w-[85%] px-3 py-2 rounded-lg text-sm ${
                   m.role === 'user'
                     ? 'bg-primary text-primary-foreground rounded-br-sm whitespace-pre-wrap'
@@ -205,6 +214,11 @@ export default function Chatbot({ onClose, className }: ChatbotPanelProps) {
                     </div>
                   ) : m.content}
                 </div>
+                <button onClick={() => deleteMessage(i)}
+                  className="absolute -top-1 right-0 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded bg-card border shadow-sm hover:bg-destructive hover:text-destructive-foreground"
+                  title="刪除訊息">
+                  <Trash2 className="h-3 w-3" />
+                </button>
               </div>
             ))}
             {busy && (

@@ -893,6 +893,19 @@ chat.delete('/sessions/:id', async (c) => {
   return c.json({ success: true });
 });
 
+// Delete a single message
+chat.delete('/messages/:id', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  const msg = await c.env.DB.prepare('SELECT session_id FROM chat_messages WHERE id = ?').bind(id).first<{ session_id: string }>();
+  if (!msg) return c.json({ error: 'Message not found' }, 404);
+  // Verify session belongs to user
+  const session = await c.env.DB.prepare('SELECT id FROM chat_sessions WHERE id = ? AND user_id = ?').bind(msg.session_id, user.id).first();
+  if (!session) return c.json({ error: 'Unauthorized' }, 403);
+  await c.env.DB.prepare('DELETE FROM chat_messages WHERE id = ?').bind(id).run();
+  return c.json({ success: true });
+});
+
 // ── Chat (send message) ──
 
 chat.post('/', async (c) => {
