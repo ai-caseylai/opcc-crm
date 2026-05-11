@@ -29,6 +29,7 @@ export default function Customers() {
   const deleteMut = useMutation({
     mutationFn: (id: string) => api(`/customers/${id}`, { method: 'DELETE' }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['customers'] }),
+    onError: (err) => alert(err.message || '刪除失敗'),
   });
 
   function resetForm() {

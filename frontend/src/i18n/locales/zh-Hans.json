@@ -26,7 +26,8 @@
     "websiteGenerator": "网站生成",
     "mail": "收件箱",
     "payment": "收款",
-    "communication": "通讯"
+    "communication": "通讯",
+    "fileStorage": "文件存储"
   },
   "auth": {
     "login": "登录",
@@ -321,5 +322,19 @@
     "desc": "管理待办事项清单",
     "placeholder": "新增待办事项...",
     "empty": "尚无待办事项"
+  },
+  "fileStorage": {
+    "title": "文件存储",
+    "desc": "上传、整理及管理文件",
+    "upload": "上传文件",
+    "folder": "文件夹",
+    "folderPlaceholder": "例如：合同、报告",
+    "description": "描述",
+    "search": "搜索文件...",
+    "allFolders": "全部文件夹",
+    "noData": "尚未上传任何文件",
+    "dragDrop": "拖拉文件到这里",
+    "dropHere": "放开以上传文件",
+    "orClick": "或点击选择文件"
   }
 }

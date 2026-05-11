@@ -26,7 +26,8 @@
     "websiteGenerator": "Website Gen",
     "mail": "Inbox",
     "payment": "Payments",
-    "communication": "Comm"
+    "communication": "Comm",
+    "fileStorage": "File Storage"
   },
   "auth": {
     "login": "Login",
@@ -321,5 +322,19 @@
     "desc": "Manage your todo list",
     "placeholder": "Add a new todo...",
     "empty": "No todos yet"
+  },
+  "fileStorage": {
+    "title": "File Storage",
+    "desc": "Upload, organize, and manage files",
+    "upload": "Upload File",
+    "folder": "Folder",
+    "folderPlaceholder": "e.g. Contracts, Reports",
+    "description": "Description",
+    "search": "Search files...",
+    "allFolders": "All Folders",
+    "noData": "No files uploaded yet",
+    "dragDrop": "Drag & drop files here",
+    "dropHere": "Drop files here",
+    "orClick": "or click to browse"
   }
 }

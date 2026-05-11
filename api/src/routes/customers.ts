@@ -18,7 +18,7 @@ customers.get('/', async (c) => {
   const limit = parseInt(c.req.query('limit') || '50');
   const offset = (page - 1) * limit;
 
-  let query = 'SELECT * FROM customers WHERE user_id = ?';
+  let query = 'SELECT * FROM customers WHERE user_id = ? AND is_active = 1';
   const params: any[] = [user.id];
   if (search) { query += ' AND (name LIKE ? OR company_name LIKE ? OR email LIKE ?)'; params.push(`%${search}%`, `%${search}%`, `%${search}%`); }
   query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
@@ -26,7 +26,7 @@ customers.get('/', async (c) => {
 
   const rows = await db.prepare(query).bind(...params).all();
   const countRow = await db.prepare(
-    'SELECT COUNT(*) as count FROM customers WHERE user_id = ?' +
+    'SELECT COUNT(*) as count FROM customers WHERE user_id = ? AND is_active = 1' +
     (search ? ' AND (name LIKE ? OR company_name LIKE ? OR email LIKE ?)' : '')
   ).bind(...(search ? [user.id, `%${search}%`, `%${search}%`, `%${search}%`] : [user.id])).first<{ count: number }>();
 

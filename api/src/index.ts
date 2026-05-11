@@ -25,11 +25,10 @@ import { wsRoutes } from './routes/ws';
 import { mailRoutes } from './routes/mail';
 import { paymentRoutes } from './routes/payment';
 import { websiteRoutes } from './routes/website';
-import { bankStatementRoutes } from './routes/bank-statements';
 import { expenseReceiptRoutes } from './routes/expense-receipts';
 import { chatRoutes } from './routes/chat';
 import { serviceRoutes } from './routes/services';
-import { wsRoutes } from './routes/ws';
+import { fileStorageRoutes } from './routes/file-storage';
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -67,13 +66,13 @@ app.route('/api/mail', mailRoutes);
 app.route('/api/payment', paymentRoutes);
 app.route('/api/company/website', websiteRoutes);
 app.route('/api/chat', chatRoutes);
-app.route('/api/ws', wsRoutes);
 app.route('/api/calendar', calendarRoutes);
 app.route('/api/services', serviceRoutes);
 app.route('/api/wb/v1', workbuddyV1Routes);
 app.route('/api/admin', adminRoutes);
 app.route('/api/documents', documentRoutes);
 app.route('/api/wb', workbuddyMgmtRoutes);
+app.route('/api/file-storage', fileStorageRoutes);
 
 // 404
 app.notFound((c) => c.json({ error: 'Not found' }, 404));

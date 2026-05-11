@@ -26,7 +26,8 @@
     "websiteGenerator": "網站生成",
     "mail": "收件箱",
     "payment": "收款",
-    "communication": "通訊"
+    "communication": "通訊",
+    "fileStorage": "檔案儲存"
   },
   "auth": {
     "login": "登入",
@@ -321,5 +322,19 @@
     "desc": "管理待辦事項清單",
     "placeholder": "新增待辦事項...",
     "empty": "尚未有待辦事項"
+  },
+  "fileStorage": {
+    "title": "檔案儲存",
+    "desc": "上傳、整理及管理檔案",
+    "upload": "上傳檔案",
+    "folder": "資料夾",
+    "folderPlaceholder": "例如：合約、報告",
+    "description": "描述",
+    "search": "搜尋檔案...",
+    "allFolders": "全部資料夾",
+    "noData": "尚未上傳任何檔案",
+    "dragDrop": "拖拉檔案到這裡",
+    "dropHere": "放開以上傳檔案",
+    "orClick": "或點擊選擇檔案"
   }
 }

@@ -28,6 +28,7 @@ import PaymentPage from './pages/PaymentPage';
 import CommunicationPage from './pages/CommunicationPage';
 import WebsiteGenerator from './pages/WebsiteGenerator';
 import Settings from './pages/Settings';
+import FileStorage from './pages/FileStorage';
 
 const queryClient = new QueryClient();
 
@@ -59,6 +60,7 @@ const FEATURE_ROUTES: Record<string, string> = {
   '/calendar': 'calendar',
   '/messages': 'messages',
   '/documents': 'documents',
+  '/file-storage': 'fileStorage',
 };
 
 function FeatureGuard({ children }: { children: React.ReactNode }) {
@@ -100,6 +102,7 @@ function AppRoutes() {
       <Route path="/mail" element={<ProtectedRoute><MailInbox /></ProtectedRoute>} />
       <Route path="/messages" element={<ProtectedRoute><FeatureGuard><Messages /></FeatureGuard></ProtectedRoute>} />
       <Route path="/documents" element={<ProtectedRoute><FeatureGuard><Documents /></FeatureGuard></ProtectedRoute>} />
+      <Route path="/file-storage" element={<ProtectedRoute><FeatureGuard><FileStorage /></FeatureGuard></ProtectedRoute>} />
       <Route path="/modules" element={<ProtectedRoute><Modules /></ProtectedRoute>} />
       <Route path="/payment" element={<ProtectedRoute><PaymentPage /></ProtectedRoute>} />
       <Route path="/communication" element={<ProtectedRoute><CommunicationPage /></ProtectedRoute>} />

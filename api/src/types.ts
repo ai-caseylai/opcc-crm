@@ -5,6 +5,11 @@ export type Bindings = {
   KV: KVNamespace;
   JWT_SECRET: string;
   ENVIRONMENT?: string;
+  FILE_BUCKET: R2Bucket;
+  AI: any;
+  CF_API_TOKEN: string;
+  CF_ACCOUNT_ID: string;
+  CF_ZONE_ID: string;
 };
 
 export type Variables = {

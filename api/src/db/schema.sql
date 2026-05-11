@@ -404,3 +404,22 @@ CREATE INDEX IF NOT EXISTS idx_services_user ON services(user_id);
 CREATE INDEX IF NOT EXISTS idx_bookings_user ON service_bookings(user_id);
 CREATE INDEX IF NOT EXISTS idx_bookings_date ON service_bookings(booking_date);
 CREATE INDEX IF NOT EXISTS idx_bookings_customer ON service_bookings(customer_id);
+
+-- File Storage (R2-backed)
+CREATE TABLE IF NOT EXISTS file_records (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  folder TEXT NOT NULL DEFAULT 'General',
+  filename TEXT NOT NULL,
+  original_name TEXT NOT NULL,
+  file_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+  file_size INTEGER NOT NULL DEFAULT 0,
+  r2_key TEXT NOT NULL,
+  description TEXT DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_file_records_user ON file_records(user_id);
+CREATE INDEX IF NOT EXISTS idx_file_records_folder ON file_records(user_id, folder);
+CREATE INDEX IF NOT EXISTS idx_file_records_name ON file_records(user_id, filename);

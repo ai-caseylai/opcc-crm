@@ -7,7 +7,7 @@ import { api } from '../lib/api';
 import Chatbot from './Chatbot';
 import {
   LayoutDashboard, Users, Truck, Package, FileText, FileSpreadsheet, Mail,
-  Calculator, Upload, Settings, LogOut, Menu, X, MessageCircle, Calendar, Briefcase, FolderOpen, Plug, SlidersHorizontal, Landmark, Receipt, CheckSquare, Globe, CreditCard, Smartphone,
+  Calculator, Upload, Settings, LogOut, Menu, X, MessageCircle, Calendar, Briefcase, FolderOpen, Plug, SlidersHorizontal, Landmark, Receipt, CheckSquare, Globe, CreditCard, Smartphone, HardDrive,
 } from 'lucide-react';
 
 const navGroups = [
@@ -52,6 +52,7 @@ const navGroups = [
   {
     label: '工具 Tools',
     items: [
+      { to: '/file-storage', icon: HardDrive, key: 'fileStorage' },
       { to: '/todos', icon: CheckSquare, key: 'todos' },
       { to: '/documents', icon: FolderOpen, key: 'documents' },
       { to: '/import', icon: Upload, key: 'import' },
@@ -90,6 +91,7 @@ const NAV_FEATURE_MAP: Record<string, string> = {
   calendar: 'calendar',
   messages: 'messages',
   documents: 'documents',
+  fileStorage: 'fileStorage',
 };
 
 export default function Layout({ children }: { children: React.ReactNode }) {
