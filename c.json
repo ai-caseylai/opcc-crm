@@ -1,0 +1,34 @@
+{
+  "company": {
+    "name": "OPCC",
+    "legal_name": "OPCC Company Limited",
+    "short_name": "OPCC",
+    "tagline": "One Person Company Club",
+    "address": "Hong Kong",
+    "phone": "",
+    "email": "hello@opcc-crm.techforliving.net",
+    "website": "https://opcc-crm.techforliving.net",
+    "tax_id": "",
+    "logo_url": ""
+  },
+  "defaults": {
+    "currency": "HKD",
+    "locale": "zh-HK",
+    "timezone": "Asia/Hong_Kong",
+    "tax_rate": 0,
+    "tax_label": "Tax",
+    "payment_terms": "Net 30",
+    "invoice_prefix": "INV-",
+    "quotation_prefix": "QUO-",
+    "invoice_due_days": 30,
+    "quotation_valid_days": 30
+  },
+  "features": {
+    "multi_user": false,
+    "bookkeeping": true,
+    "audit_log": true,
+    "csv_import": true,
+    "workbuddy_api": true,
+    "pdf_generation": true
+  }
+}

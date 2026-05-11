@@ -1,0 +1,406 @@
+-- oppc-crm Database Schema
+-- Multi-user CRM with customers, suppliers, invoices, quotations, and bookkeeping
+
+-- Users table (multi-user support)
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY,
+  email TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
+  name TEXT NOT NULL,
+  company_name TEXT,
+  role TEXT NOT NULL DEFAULT 'user', -- 'admin', 'user', 'auditor'
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Customers
+CREATE TABLE IF NOT EXISTS customers (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  name TEXT NOT NULL,
+  company_name TEXT,
+  email TEXT,
+  phone TEXT,
+  address TEXT,
+  city TEXT,
+  state TEXT,
+  postal_code TEXT,
+  country TEXT DEFAULT 'Hong Kong',
+  notes TEXT,
+  tax_id TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Suppliers
+CREATE TABLE IF NOT EXISTS suppliers (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  name TEXT NOT NULL,
+  company_name TEXT,
+  email TEXT,
+  phone TEXT,
+  address TEXT,
+  city TEXT,
+  state TEXT,
+  postal_code TEXT,
+  country TEXT DEFAULT 'Hong Kong',
+  notes TEXT,
+  tax_id TEXT,
+  payment_terms TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Products / Services
+CREATE TABLE IF NOT EXISTS products (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  name TEXT NOT NULL,
+  description TEXT,
+  unit_price REAL NOT NULL DEFAULT 0,
+  currency TEXT NOT NULL DEFAULT 'HKD',
+  unit TEXT DEFAULT 'pcs',
+  category TEXT,
+  sku TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Invoices
+CREATE TABLE IF NOT EXISTS invoices (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  invoice_number TEXT NOT NULL,
+  customer_id TEXT NOT NULL REFERENCES customers(id),
+  supplier_id TEXT REFERENCES suppliers(id),
+  status TEXT NOT NULL DEFAULT 'draft', -- draft, sent, paid, overdue, cancelled
+  issue_date TEXT NOT NULL DEFAULT (datetime('now')),
+  due_date TEXT NOT NULL,
+  subtotal REAL NOT NULL DEFAULT 0,
+  tax_rate REAL NOT NULL DEFAULT 0,
+  tax_amount REAL NOT NULL DEFAULT 0,
+  discount_amount REAL NOT NULL DEFAULT 0,
+  total REAL NOT NULL DEFAULT 0,
+  currency TEXT NOT NULL DEFAULT 'HKD',
+  notes TEXT,
+  terms TEXT,
+  pdf_url TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(user_id, invoice_number)
+);
+
+-- Invoice Line Items
+CREATE TABLE IF NOT EXISTS invoice_items (
+  id TEXT PRIMARY KEY,
+  invoice_id TEXT NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+  product_id TEXT REFERENCES products(id),
+  description TEXT NOT NULL,
+  quantity REAL NOT NULL DEFAULT 1,
+  unit_price REAL NOT NULL DEFAULT 0,
+  amount REAL NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0
+);
+
+-- Quotations
+CREATE TABLE IF NOT EXISTS quotations (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  quotation_number TEXT NOT NULL,
+  customer_id TEXT NOT NULL REFERENCES customers(id),
+  status TEXT NOT NULL DEFAULT 'draft', -- draft, sent, accepted, rejected, expired, converted
+  issue_date TEXT NOT NULL DEFAULT (datetime('now')),
+  valid_until TEXT NOT NULL,
+  subtotal REAL NOT NULL DEFAULT 0,
+  tax_rate REAL NOT NULL DEFAULT 0,
+  tax_amount REAL NOT NULL DEFAULT 0,
+  discount_amount REAL NOT NULL DEFAULT 0,
+  total REAL NOT NULL DEFAULT 0,
+  currency TEXT NOT NULL DEFAULT 'HKD',
+  notes TEXT,
+  terms TEXT,
+  pdf_url TEXT,
+  converted_invoice_id TEXT REFERENCES invoices(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(user_id, quotation_number)
+);
+
+-- Quotation Line Items
+CREATE TABLE IF NOT EXISTS quotation_items (
+  id TEXT PRIMARY KEY,
+  quotation_id TEXT NOT NULL REFERENCES quotations(id) ON DELETE CASCADE,
+  product_id TEXT REFERENCES products(id),
+  description TEXT NOT NULL,
+  quantity REAL NOT NULL DEFAULT 1,
+  unit_price REAL NOT NULL DEFAULT 0,
+  amount REAL NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0
+);
+
+-- Bookkeeping / Journal Entries
+CREATE TABLE IF NOT EXISTS journal_entries (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  entry_number TEXT NOT NULL,
+  entry_date TEXT NOT NULL DEFAULT (datetime('now')),
+  description TEXT NOT NULL,
+  reference_type TEXT, -- 'invoice', 'bill', 'expense', 'journal'
+  reference_id TEXT,
+  status TEXT NOT NULL DEFAULT 'posted', -- draft, posted, reconciled
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(user_id, entry_number)
+);
+
+-- Journal Entry Lines (double-entry)
+CREATE TABLE IF NOT EXISTS journal_lines (
+  id TEXT PRIMARY KEY,
+  entry_id TEXT NOT NULL REFERENCES journal_entries(id) ON DELETE CASCADE,
+  account_code TEXT NOT NULL,
+  account_name TEXT NOT NULL,
+  description TEXT,
+  debit REAL NOT NULL DEFAULT 0,
+  credit REAL NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0
+);
+
+-- Chart of Accounts
+CREATE TABLE IF NOT EXISTS accounts (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  account_code TEXT NOT NULL,
+  account_name TEXT NOT NULL,
+  account_type TEXT NOT NULL, -- asset, liability, equity, revenue, expense
+  parent_code TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(user_id, account_code)
+);
+
+-- Audit Trail
+CREATE TABLE IF NOT EXISTS audit_log (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  action TEXT NOT NULL,
+  entity_type TEXT NOT NULL,
+  entity_id TEXT,
+  changes TEXT, -- JSON string of changes
+  ip_address TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- API Tokens for WorkBuddy integration
+CREATE TABLE IF NOT EXISTS api_tokens (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  name TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  scopes TEXT NOT NULL DEFAULT 'read',
+  last_used_at TEXT,
+  expires_at TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Indexes
+CREATE INDEX IF NOT EXISTS idx_customers_user ON customers(user_id);
+CREATE INDEX IF NOT EXISTS idx_suppliers_user ON suppliers(user_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_user ON invoices(user_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_customer ON invoices(customer_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_quotations_user ON quotations(user_id);
+CREATE INDEX IF NOT EXISTS idx_quotations_customer ON quotations(customer_id);
+CREATE INDEX IF NOT EXISTS idx_quotations_status ON quotations(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_journal_entries_user ON journal_entries(user_id);
+CREATE INDEX IF NOT EXISTS idx_journal_entries_date ON journal_entries(user_id, entry_date);
+CREATE INDEX IF NOT EXISTS idx_products_user ON products(user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(user_id);
+-- ═══════════════════════════════════════════
+-- OpenClaw Messaging System
+-- Telegram + WhatsApp + unified messaging
+-- ═══════════════════════════════════════════
+
+-- Bot / Channel configurations
+CREATE TABLE IF NOT EXISTS channels (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  channel_type TEXT NOT NULL, -- 'telegram', 'whatsapp', 'email'
+  name TEXT NOT NULL,
+  bot_token TEXT,            -- Telegram bot token (encrypted)
+  webhook_url TEXT,
+  webhook_secret TEXT,
+  phone_number TEXT,          -- WhatsApp phone
+  api_key TEXT,              -- WhatsApp API key
+  session_data TEXT,          -- JSON: WhatsApp session / pairing data
+  is_active INTEGER NOT NULL DEFAULT 1,
+  metadata TEXT,              -- JSON: extra config
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Conversations (grouped by channel + contact)
+CREATE TABLE IF NOT EXISTS conversations (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  channel_id TEXT REFERENCES channels(id),
+  customer_id TEXT REFERENCES customers(id),
+  channel_type TEXT NOT NULL,
+  external_id TEXT,           -- Telegram chat_id / WhatsApp JID
+  contact_name TEXT,
+  contact_phone TEXT,
+  contact_username TEXT,
+  subject TEXT,               -- conversation topic
+  status TEXT NOT NULL DEFAULT 'active', -- active, resolved, archived
+  last_message_at TEXT,
+  last_message_preview TEXT,
+  unread_count INTEGER NOT NULL DEFAULT 0,
+  tags TEXT,                  -- JSON array
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Messages
+CREATE TABLE IF NOT EXISTS messages (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  channel_type TEXT NOT NULL,
+  direction TEXT NOT NULL DEFAULT 'inbound', -- inbound, outbound
+  message_type TEXT NOT NULL DEFAULT 'text', -- text, image, document, audio, location, template
+  external_message_id TEXT,   -- platform-specific ID
+  content TEXT NOT NULL,
+  media_url TEXT,
+  media_type TEXT,
+  caption TEXT,
+  metadata TEXT,              -- JSON: buttons, interactive, etc.
+  status TEXT NOT NULL DEFAULT 'pending', -- pending, sent, delivered, read, failed
+  read_at TEXT,
+  delivered_at TEXT,
+  replied_to_id TEXT REFERENCES messages(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- WhatsApp device sessions (wuzapi-cli migration)
+CREATE TABLE IF NOT EXISTS wuzapi_sessions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  device_name TEXT NOT NULL,
+  phone_number TEXT,
+  jid TEXT,                   -- WhatsApp JID
+  session_data TEXT NOT NULL, -- encrypted session blob
+  pair_code TEXT,             -- QR pairing code
+  pair_status TEXT NOT NULL DEFAULT 'pending', -- pending, paired, expired, disconnected
+  last_connected_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Webhook event log (incoming from Telegram/WhatsApp)
+CREATE TABLE IF NOT EXISTS webhook_events (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  channel_type TEXT NOT NULL,
+  event_type TEXT NOT NULL,   -- message, callback, status, delivery
+  external_id TEXT,
+  from_contact TEXT,
+  payload TEXT NOT NULL,      -- full JSON payload
+  processed INTEGER NOT NULL DEFAULT 0,
+  processed_at TEXT,
+  error TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Quick replies / templates
+CREATE TABLE IF NOT EXISTS message_templates (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  name TEXT NOT NULL,
+  channel_type TEXT NOT NULL DEFAULT 'all',
+  content TEXT NOT NULL,
+  shortcut TEXT,              -- /shortcut name
+  category TEXT,
+  variables TEXT,             -- JSON array of variable names
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Message indexes
+CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id);
+CREATE INDEX IF NOT EXISTS idx_conversations_customer ON conversations(customer_id);
+CREATE INDEX IF NOT EXISTS idx_conversations_status ON conversations(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_conversations_channel ON conversations(channel_id);
+CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(conversation_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_messages_external ON messages(external_message_id);
+CREATE INDEX IF NOT EXISTS idx_channels_user ON channels(user_id);
+CREATE INDEX IF NOT EXISTS idx_webhook_events_created ON webhook_events(created_at);
+-- ═══════════════════════════════════════════
+-- Calendar Events
+-- ═══════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS calendar_events (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  customer_id TEXT REFERENCES customers(id),
+  title TEXT NOT NULL,
+  description TEXT,
+  event_type TEXT NOT NULL DEFAULT 'appointment', -- appointment, meeting, deadline, reminder, invoice_due
+  start_time TEXT NOT NULL,
+  end_time TEXT,
+  all_day INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'scheduled', -- scheduled, completed, cancelled
+  color TEXT DEFAULT '#2563eb',
+  location TEXT,
+  reference_type TEXT,        -- 'invoice', 'quotation', 'service_booking'
+  reference_id TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ═══════════════════════════════════════════
+-- Services & Bookings
+-- ═══════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS services (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  name TEXT NOT NULL,
+  description TEXT,
+  category TEXT DEFAULT 'general',
+  duration_minutes INTEGER NOT NULL DEFAULT 60,
+  price REAL NOT NULL DEFAULT 0,
+  currency TEXT NOT NULL DEFAULT 'HKD',
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS service_bookings (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  service_id TEXT NOT NULL REFERENCES services(id),
+  customer_id TEXT NOT NULL REFERENCES customers(id),
+  booking_date TEXT NOT NULL,
+  start_time TEXT NOT NULL,
+  end_time TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'confirmed', -- confirmed, completed, cancelled, no_show
+  notes TEXT,
+  price REAL,
+  invoice_id TEXT REFERENCES invoices(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Indexes
+CREATE INDEX IF NOT EXISTS idx_calendar_user ON calendar_events(user_id);
+CREATE INDEX IF NOT EXISTS idx_calendar_dates ON calendar_events(user_id, start_time, end_time);
+CREATE INDEX IF NOT EXISTS idx_calendar_customer ON calendar_events(customer_id);
+CREATE INDEX IF NOT EXISTS idx_services_user ON services(user_id);
+CREATE INDEX IF NOT EXISTS idx_bookings_user ON service_bookings(user_id);
+CREATE INDEX IF NOT EXISTS idx_bookings_date ON service_bookings(booking_date);
+CREATE INDEX IF NOT EXISTS idx_bookings_customer ON service_bookings(customer_id);
