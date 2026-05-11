@@ -23,7 +23,15 @@ CRITICAL DELETE RULES:
 - When the user asks to delete something, FIRST list all items that will be deleted (show ID, number, status, amount)
 - Then ask the user to confirm by replying "確認" or "yes" before proceeding
 - Only after explicit user confirmation should you call the delete function(s)
-- If the user does not confirm, do NOT delete anything`;
+- If the user does not confirm, do NOT delete anything
+
+CRITICAL BOOKKEEPING RULES:
+- NEVER call create_bookkeeping_transaction, update_journal_entry, or delete_journal_entry immediately
+- When the user asks to create, modify, or delete a journal entry, FIRST show the full details of what will be done (date, description, all debit/credit lines with account codes and amounts)
+- Then ask the user to confirm by replying "確認" or "yes" before proceeding
+- Only after explicit user confirmation should you execute the function
+- If the user does not confirm, do NOT make any changes
+- When modifying an existing entry, use update_journal_entry to change it directly rather than creating offsetting entries`;
 
 const TOOLS: any[] = [
   // ── Dashboard / Summary ──
@@ -110,6 +118,8 @@ const TOOLS: any[] = [
   { type: 'function', function: { name: 'get_bookkeeping', description: 'Get P&L (income statement) for a date range', parameters: { type: 'object', properties: { start_date: { type: 'string', description: 'YYYY-MM-DD' }, end_date: { type: 'string', description: 'YYYY-MM-DD' } }, required: [] } } },
   { type: 'function', function: { name: 'get_bookkeeping_transactions', description: 'Get detailed transactions for a specific account code (e.g. 2102 for Director Loan, 1101 for Cash). Returns each entry with date, description, debit, credit, and running balance.', parameters: { type: 'object', properties: { account_code: { type: 'string', description: 'Account code (e.g. 2102, 1101, 4100)' }, start_date: { type: 'string', description: 'YYYY-MM-DD' }, end_date: { type: 'string', description: 'YYYY-MM-DD' } }, required: ['account_code'] } } },
   { type: 'function', function: { name: 'create_bookkeeping_transaction', description: 'Create a double-entry journal entry. Debits must equal credits. Use this to record transactions like Director Loans, repayments, revenue, expenses, etc.', parameters: { type: 'object', properties: { date: { type: 'string', description: 'Entry date YYYY-MM-DD' }, description: { type: 'string', description: 'Description of the journal entry' }, entries: { type: 'array', description: 'Array of line items. Each line has account_code, debit (number, default 0), credit (number, default 0), description (optional)', items: { type: 'object', properties: { account_code: { type: 'string', description: 'Account code (e.g. 1101, 2102, 4100)' }, debit: { type: 'number' }, credit: { type: 'number' }, description: { type: 'string' } }, required: ['account_code'] } } }, required: ['date', 'description', 'entries'] } } },
+  { type: 'function', function: { name: 'update_journal_entry', description: 'Update an existing journal entry. Can change date, description, and line items. Debits must equal credits. Pass ALL lines (existing lines not included will be deleted).', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Journal entry ID (e.g. je-xxxxxxxx)' }, date: { type: 'string', description: 'New entry date YYYY-MM-DD' }, description: { type: 'string', description: 'New description' }, entries: { type: 'array', description: 'New array of line items (replaces all existing lines)', items: { type: 'object', properties: { account_code: { type: 'string' }, debit: { type: 'number' }, credit: { type: 'number' }, description: { type: 'string' } }, required: ['account_code'] } } }, required: ['id'] } } },
+  { type: 'function', function: { name: 'delete_journal_entry', description: 'Delete a journal entry and all its line items', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Journal entry ID (e.g. je-xxxxxxxx)' } }, required: ['id'] } } },
   { type: 'function', function: { name: 'get_recent_activity', description: 'Get recent audit log entries (recent changes)', parameters: { type: 'object', properties: { limit: { type: 'number' } }, required: [] } } },
 
   // ── Bank Statements ──
@@ -331,6 +341,50 @@ async function executeTool(name: string, db: D1Database, userId: string, args: a
         ).bind(entryId, e.account_code, e.account_name, e.description || null, Number(e.debit) || 0, Number(e.credit) || 0, i).run();
       }
       return JSON.stringify({ success: true, entry_id: entryId, entry_number: entryNumber, date, description: desc, total_debit: totalDr, total_credit: totalCr });
+    }
+    case 'update_journal_entry': {
+      const entryId = args?.id;
+      if (!entryId) return JSON.stringify({ error: 'id is required' });
+      const existing = await db.prepare('SELECT * FROM journal_entries WHERE id = ? AND user_id = ?').bind(entryId, userId).first();
+      if (!existing) return JSON.stringify({ error: 'Journal entry not found' });
+      const updates: string[] = [];
+      const params: any[] = [];
+      if (args?.date) { updates.push('entry_date = ?'); params.push(args.date); }
+      if (args?.description) { updates.push('description = ?'); params.push(args.description); }
+      if (updates.length > 0) {
+        updates.push("updated_at = datetime('now')");
+        params.push(entryId, userId);
+        await db.prepare(`UPDATE journal_entries SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`).bind(...params).run();
+      }
+      // If entries provided, replace all lines
+      if (Array.isArray(args?.entries) && args.entries.length >= 2) {
+        const totalDr = args.entries.reduce((s: number, e: any) => s + (Number(e.debit) || 0), 0);
+        const totalCr = args.entries.reduce((s: number, e: any) => s + (Number(e.credit) || 0), 0);
+        if (Math.abs(totalDr - totalCr) > 0.01) return JSON.stringify({ error: `Debits (${totalDr}) must equal credits (${totalCr})` });
+        for (const e of args.entries) {
+          const acct = await db.prepare('SELECT account_code, account_name FROM accounts WHERE user_id = ? AND account_code = ?').bind(userId, e.account_code).first();
+          if (!acct) return JSON.stringify({ error: `Account code ${e.account_code} not found` });
+          e.account_name = acct.account_name as string;
+        }
+        await db.prepare('DELETE FROM journal_lines WHERE entry_id = ?').bind(entryId).run();
+        for (let i = 0; i < args.entries.length; i++) {
+          const e = args.entries[i];
+          await db.prepare('INSERT INTO journal_lines (entry_id, account_code, account_name, description, debit, credit, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)')
+            .bind(entryId, e.account_code, e.account_name, e.description || null, Number(e.debit) || 0, Number(e.credit) || 0, i).run();
+        }
+      }
+      const updated = await db.prepare('SELECT * FROM journal_entries WHERE id = ?').bind(entryId).first();
+      const lines = await db.prepare('SELECT account_code, account_name, description, debit, credit FROM journal_lines WHERE entry_id = ? ORDER BY sort_order').bind(entryId).all();
+      return JSON.stringify({ success: true, entry: updated, lines: lines.results });
+    }
+    case 'delete_journal_entry': {
+      const entryId = args?.id;
+      if (!entryId) return JSON.stringify({ error: 'id is required' });
+      const existing = await db.prepare('SELECT * FROM journal_entries WHERE id = ? AND user_id = ?').bind(entryId, userId).first();
+      if (!existing) return JSON.stringify({ error: 'Journal entry not found' });
+      await db.prepare('DELETE FROM journal_lines WHERE entry_id = ?').bind(entryId).run();
+      await db.prepare('DELETE FROM journal_entries WHERE id = ? AND user_id = ?').bind(entryId, userId).run();
+      return JSON.stringify({ success: true, deleted: entryId, entry_number: existing.entry_number, description: existing.description });
     }
     case 'get_recent_activity': {
       const rows = await db.prepare(
