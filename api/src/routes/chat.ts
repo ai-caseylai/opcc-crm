@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { v4 as uuidv4 } from 'uuid';
 import { authMiddleware } from '../middleware/auth';
 import { Bindings, Variables } from '../types';
 
@@ -15,7 +16,14 @@ Rules:
 - Reply in the SAME language as the user (繁體中文, 简体中文, or English)
 - Be concise and direct
 - When presenting numbers, format them clearly
-- When presenting lists, show key fields in a readable format`;
+- When presenting lists, show key fields in a readable format
+
+CRITICAL DELETE RULES:
+- NEVER call delete_invoice, delete_quotation, delete_purchase_order, or delete_service_order immediately
+- When the user asks to delete something, FIRST list all items that will be deleted (show ID, number, status, amount)
+- Then ask the user to confirm by replying "確認" or "yes" before proceeding
+- Only after explicit user confirmation should you call the delete function(s)
+- If the user does not confirm, do NOT delete anything`;
 
 const TOOLS: any[] = [
   { type: 'function', function: { name: 'get_counts', description: 'Get counts of all CRM records for the current user', parameters: { type: 'object', properties: {}, required: [] } } },
@@ -177,15 +185,64 @@ async function callDeepSeek(apiKey: string, messages: any[], tools?: any[]): Pro
   return resp.json();
 }
 
+// ── Chat Sessions ──
+
+// List sessions
+chat.get('/sessions', async (c) => {
+  const user = c.get('user');
+  const rows = await c.env.DB.prepare(
+    'SELECT id, title, created_at, updated_at FROM chat_sessions WHERE user_id = ? ORDER BY updated_at DESC LIMIT 50'
+  ).bind(user.id).all();
+  return c.json({ data: rows.results });
+});
+
+// Get session with messages
+chat.get('/sessions/:id', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  const session = await c.env.DB.prepare(
+    'SELECT * FROM chat_sessions WHERE id = ? AND user_id = ?'
+  ).bind(id, user.id).first();
+  if (!session) return c.json({ error: 'Session not found' }, 404);
+  const msgs = await c.env.DB.prepare(
+    'SELECT id, role, content, created_at FROM chat_messages WHERE session_id = ? ORDER BY created_at ASC'
+  ).bind(id).all();
+  return c.json({ ...session, messages: msgs.results });
+});
+
+// Delete session
+chat.delete('/sessions/:id', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  await c.env.DB.prepare('DELETE FROM chat_messages WHERE session_id IN (SELECT id FROM chat_sessions WHERE id = ? AND user_id = ?)').bind(id, user.id).run();
+  await c.env.DB.prepare('DELETE FROM chat_sessions WHERE id = ? AND user_id = ?').bind(id, user.id).run();
+  return c.json({ success: true });
+});
+
+// ── Chat (send message) ──
+
 chat.post('/', async (c) => {
   const user = c.get('user');
   const body = await c.req.json();
-  const { message, history, file } = body;
+  const { message, history, file, session_id } = body;
 
   if (!message && !file) return c.json({ reply: 'Message required' });
 
   const apiKey = c.env.DEEPSEEK_API_KEY;
   if (!apiKey) return c.json({ reply: 'DeepSeek API key not configured' });
+
+  const db = c.env.DB;
+
+  // Get or create session
+  let sid = session_id || '';
+  if (sid) {
+    const existing = await db.prepare('SELECT id FROM chat_sessions WHERE id = ? AND user_id = ?').bind(sid, user.id).first();
+    if (!existing) sid = '';
+  }
+  if (!sid) {
+    sid = `cs-${uuidv4().slice(0, 8)}`;
+    await db.prepare('INSERT INTO chat_sessions (id, user_id, title) VALUES (?, ?, ?)').bind(sid, user.id, '').run();
+  }
 
   // Pre-process file attachments into the message
   let userMessage = message || '';
@@ -214,6 +271,17 @@ chat.post('/', async (c) => {
 
   if (!userMessage) return c.json({ reply: 'Message required' });
 
+  // Save user message
+  const userMsgId = `cm-${uuidv4().slice(0, 8)}`;
+  await db.prepare('INSERT INTO chat_messages (id, session_id, role, content) VALUES (?, ?, ?, ?)').bind(userMsgId, sid, 'user', userMessage).run();
+
+  // Auto-title from first message
+  const existingTitle = await db.prepare('SELECT title FROM chat_sessions WHERE id = ?').bind(sid).first<{ title: string }>();
+  if (existingTitle && !existingTitle.title) {
+    const title = userMessage.slice(0, 60).replace(/\n/g, ' ');
+    await db.prepare('UPDATE chat_sessions SET title = ? WHERE id = ?').bind(title, sid).run();
+  }
+
   try {
     const messages: any[] = [{ role: 'system', content: SYSTEM_PROMPT }];
     if (Array.isArray(history)) {
@@ -227,23 +295,65 @@ chat.post('/', async (c) => {
     const choice = response1.choices?.[0];
     const toolCalls = choice?.message?.tool_calls;
 
+    let reply: string;
+
     if (toolCalls && toolCalls.length > 0) {
       messages.push(choice.message);
       for (const tc of toolCalls) {
         const fnName = tc.function?.name;
         let fnArgs: any = {};
         try { fnArgs = JSON.parse(tc.function?.arguments || '{}'); } catch {}
-        const result = fnName ? await executeTool(fnName, c.env.DB, user.id, fnArgs) : '{}';
+        const result = fnName ? await executeTool(fnName, db, user.id, fnArgs) : '{}';
         messages.push({ role: 'tool', tool_call_id: tc.id, content: result });
       }
 
       const response2 = await callDeepSeek(apiKey, messages);
-      const reply = response2.choices?.[0]?.message?.content || 'Sorry, I could not process that.';
-      return c.json({ reply });
+      reply = response2.choices?.[0]?.message?.content || 'Sorry, I could not process that.';
+    } else {
+      reply = choice?.message?.content || 'Sorry, I could not process that.';
+
+      // Handle DSML-format tool calls in text (DeepSeek fallback)
+      // Match both full-width ｜ and regular | pipe variants
+      const P = '[\uff5c|]'; // fullwidth pipe or regular pipe
+      const dsmlRegex = new RegExp(`<${P}{2}DSML${P}{2}tool_calls>([\\s\\S]*?)<\\/${P}{2}DSML${P}{2}tool_calls>`);
+      const dsmlMatch = reply.match(dsmlRegex);
+      if (dsmlMatch) {
+        const invokeRegex = new RegExp(`<${P}{2}DSML${P}{2}invoke name="(\\w+)">([\\s\\S]*?)<\\/${P}{2}DSML${P}{2}invoke>`, 'g');
+        let m;
+        const toolResults: string[] = [];
+        while ((m = invokeRegex.exec(dsmlMatch[1])) !== null) {
+          const fnName = m[1];
+          const paramRegex = new RegExp(`<${P}{2}DSML${P}{2}parameter name="(\\w+)"[^>]*>([\\s\\S]*?)<\\/${P}{2}DSML${P}{2}parameter>`, 'g');
+          const fnArgs: Record<string, string> = {};
+          let pm;
+          while ((pm = paramRegex.exec(m[2])) !== null) {
+            fnArgs[pm[1]] = pm[2].trim();
+          }
+          const result = await executeTool(fnName, db, user.id, fnArgs);
+          toolResults.push(`${fnName}: ${result}`);
+        }
+
+        if (toolResults.length > 0) {
+          messages.push({ role: 'assistant', content: reply.replace(dsmlRegex, '').trim() });
+          messages.push({ role: 'user', content: `[Tool results]\n${toolResults.join('\n')}\n\nPlease summarize the results concisely.` });
+          const resp2 = await callDeepSeek(apiKey, messages);
+          reply = resp2.choices?.[0]?.message?.content || reply.replace(dsmlRegex, '').trim();
+        } else {
+          reply = reply.replace(dsmlRegex, '').trim();
+        }
+      }
+
+      // Final cleanup: strip any remaining DSML-like tags
+      reply = reply.replace(new RegExp(`<${P}{2}DSML${P}{2}\\w+>[\\s\\S]*?(<\\/${P}{2}DSML${P}{2}\\w+>)?`, 'g'), '').trim();
+      reply = reply.replace(new RegExp(`<${P}{2}DSML${P}{2}[^>]*>`, 'g'), '').trim();
     }
 
-    const reply = choice?.message?.content || 'Sorry, I could not process that.';
-    return c.json({ reply });
+    // Save assistant reply
+    const asstMsgId = `cm-${uuidv4().slice(0, 8)}`;
+    await db.prepare('INSERT INTO chat_messages (id, session_id, role, content) VALUES (?, ?, ?, ?)').bind(asstMsgId, sid, 'assistant', reply).run();
+    await db.prepare("UPDATE chat_sessions SET updated_at = datetime('now') WHERE id = ?").bind(sid).run();
+
+    return c.json({ reply, session_id: sid });
   } catch (e: any) {
     return c.json({ reply: `AI error: ${e.message || 'unknown'}` }, 500);
   }

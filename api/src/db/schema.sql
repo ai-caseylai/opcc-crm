@@ -561,3 +561,24 @@ CREATE TABLE IF NOT EXISTS website_versions (
 );
 CREATE INDEX IF NOT EXISTS idx_website_versions_user ON website_versions(user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_website_versions_user_ver ON website_versions(user_id, version_number);
+
+-- Chat Sessions (AI assistant conversation history)
+CREATE TABLE IF NOT EXISTS chat_sessions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  title TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  role TEXT NOT NULL,
+  content TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_user ON chat_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_updated ON chat_sessions(user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id);

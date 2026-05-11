@@ -39,9 +39,15 @@ workbuddy.get('/manifest', (c) => {
       { name: 'list_invoices', description: 'List invoices with status filter', endpoint: '/invoices', method: 'GET', parameters: { status: 'draft/sent/paid/overdue', q: 'search' } },
       { name: 'create_invoice', description: 'Create invoice with line items', endpoint: '/invoices', method: 'POST', parameters: { invoice_number: '# *', customer_id: 'ID *', items: '[{description,quantity,unit_price,amount}]', due_date: 'Due date' } },
       { name: 'update_invoice_status', description: 'Update invoice status', endpoint: '/invoices/:id/status', method: 'PATCH', parameters: { status: 'draft/sent/paid/overdue' } },
+      { name: 'delete_invoice', description: 'Delete draft invoice', endpoint: '/invoices/:id', method: 'DELETE', parameters: { id: 'Invoice ID *' } },
       { name: 'list_quotations', description: 'List quotations', endpoint: '/quotations', method: 'GET', parameters: { status: 'draft/sent/accepted/rejected' } },
       { name: 'create_quotation', description: 'Create quotation', endpoint: '/quotations', method: 'POST', parameters: { quotation_number: '# *', customer_id: 'ID *', items: '[{description,quantity,unit_price,amount}]', valid_until: 'Date' } },
       { name: 'convert_quotation', description: 'Convert quotation to invoice', endpoint: '/quotations/:id/convert', method: 'POST' },
+      { name: 'delete_quotation', description: 'Delete draft quotation', endpoint: '/quotations/:id', method: 'DELETE', parameters: { id: 'Quotation ID *' } },
+      { name: 'list_purchase_orders', description: 'List purchase orders', endpoint: '/purchase-orders', method: 'GET', parameters: { status: 'draft/approved/received/paid/cancelled' } },
+      { name: 'delete_purchase_order', description: 'Delete draft purchase order', endpoint: '/purchase-orders/:id', method: 'DELETE', parameters: { id: 'PO ID *' } },
+      { name: 'list_service_orders', description: 'List service orders', endpoint: '/service-orders', method: 'GET', parameters: { status: 'draft/active/completed/cancelled' } },
+      { name: 'delete_service_order', description: 'Delete draft service order', endpoint: '/service-orders/:id', method: 'DELETE', parameters: { id: 'SO ID *' } },
       { name: 'generate_pdf', description: 'Download invoice/quotation PDF (public)', endpoint: '/pdf/:type/:id', method: 'GET', parameters: { type: 'invoice or quotation', id: 'Document ID' } },
       { name: 'list_todos', description: 'List todo items', endpoint: '/todos', method: 'GET', parameters: { status: 'pending/completed' } },
       { name: 'create_todo', description: 'Create todo item', endpoint: '/todos', method: 'POST', parameters: { title: 'Title *', priority: 'high/medium/low', due_date: 'YYYY-MM-DD' } },
@@ -163,6 +169,79 @@ workbuddy.post('/invoices', tokenAuth, async (c) => {
   }
   const row = await c.env.DB.prepare('SELECT * FROM invoices WHERE id = ?').bind(id).first();
   return c.json(row, 201);
+});
+
+workbuddy.delete('/invoices/:id', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  const existing = await c.env.DB.prepare('SELECT id, status FROM invoices WHERE id = ? AND user_id = ?').bind(id, user.id).first<{ id: string; status: string }>();
+  if (!existing) return c.json({ error: 'Invoice not found' }, 404);
+  await c.env.DB.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').bind(id).run();
+  await c.env.DB.prepare('DELETE FROM invoices WHERE id = ? AND user_id = ?').bind(id, user.id).run();
+  return c.json({ success: true, deleted: id, status: existing.status });
+});
+
+workbuddy.get('/purchase-orders', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const status = c.req.query('status');
+  let query = 'SELECT po.*, s.name as supplier_name FROM purchase_orders po LEFT JOIN suppliers s ON po.supplier_id = s.id WHERE po.user_id = ?';
+  const params: any[] = [user.id];
+  if (status) { query += ' AND po.status = ?'; params.push(status); }
+  query += ' ORDER BY po.created_at DESC LIMIT 50';
+  const rows = await c.env.DB.prepare(query).bind(...params).all();
+  return c.json({ data: rows.results });
+});
+
+workbuddy.delete('/purchase-orders/:id', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  const existing = await c.env.DB.prepare('SELECT id, status FROM purchase_orders WHERE id = ? AND user_id = ?').bind(id, user.id).first<{ id: string; status: string }>();
+  if (!existing) return c.json({ error: 'Purchase order not found' }, 404);
+  await c.env.DB.prepare('DELETE FROM purchase_order_items WHERE po_id = ?').bind(id).run();
+  await c.env.DB.prepare('DELETE FROM purchase_orders WHERE id = ? AND user_id = ?').bind(id, user.id).run();
+  return c.json({ success: true, deleted: id, status: existing.status });
+});
+
+workbuddy.get('/quotations', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const status = c.req.query('status');
+  let query = 'SELECT * FROM quotations WHERE user_id = ?';
+  const params: any[] = [user.id];
+  if (status) { query += ' AND status = ?'; params.push(status); }
+  query += ' ORDER BY created_at DESC LIMIT 50';
+  const rows = await c.env.DB.prepare(query).bind(...params).all();
+  return c.json({ data: rows.results });
+});
+
+workbuddy.delete('/quotations/:id', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  const existing = await c.env.DB.prepare('SELECT id, status FROM quotations WHERE id = ? AND user_id = ?').bind(id, user.id).first<{ id: string; status: string }>();
+  if (!existing) return c.json({ error: 'Quotation not found' }, 404);
+  await c.env.DB.prepare('DELETE FROM quotation_items WHERE quotation_id = ?').bind(id).run();
+  await c.env.DB.prepare('DELETE FROM quotations WHERE id = ? AND user_id = ?').bind(id, user.id).run();
+  return c.json({ success: true, deleted: id, status: existing.status });
+});
+
+workbuddy.get('/service-orders', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const status = c.req.query('status');
+  let query = 'SELECT so.*, c.name as customer_name FROM service_orders so LEFT JOIN customers c ON so.customer_id = c.id WHERE so.user_id = ?';
+  const params: any[] = [user.id];
+  if (status) { query += ' AND so.status = ?'; params.push(status); }
+  query += ' ORDER BY so.created_at DESC LIMIT 50';
+  const rows = await c.env.DB.prepare(query).bind(...params).all();
+  return c.json({ data: rows.results });
+});
+
+workbuddy.delete('/service-orders/:id', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  const existing = await c.env.DB.prepare('SELECT id, status FROM service_orders WHERE id = ? AND user_id = ?').bind(id, user.id).first<{ id: string; status: string }>();
+  if (!existing) return c.json({ error: 'Service order not found' }, 404);
+  await c.env.DB.prepare('DELETE FROM service_order_items WHERE so_id = ?').bind(id).run();
+  await c.env.DB.prepare('DELETE FROM service_orders WHERE id = ? AND user_id = ?').bind(id, user.id).run();
+  return c.json({ success: true, deleted: id, status: existing.status });
 });
 
 // ── One-click onboard — dual auth: JWT or API token ──
