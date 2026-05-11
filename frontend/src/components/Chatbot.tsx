@@ -2,6 +2,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import { MessageCircle, X, Send, Minimize2, Maximize2, Paperclip, Plus, Trash2, History } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -203,12 +205,16 @@ export default function Chatbot() {
                 )}
                 {messages.map((m, i) => (
                   <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    <div className={`max-w-[85%] px-3 py-2 rounded-lg text-sm whitespace-pre-wrap ${
+                    <div className={`max-w-[85%] px-3 py-2 rounded-lg text-sm ${
                       m.role === 'user'
-                        ? 'bg-primary text-primary-foreground rounded-br-sm'
+                        ? 'bg-primary text-primary-foreground rounded-br-sm whitespace-pre-wrap'
                         : 'bg-muted text-foreground rounded-bl-sm'
                     }`}>
-                      {m.content}
+                      {m.role === 'assistant' ? (
+                        <div className="prose prose-sm max-w-none dark:prose-invert [&_table]:text-xs [&_table]:w-full [&_th]:px-2 [&_th]:py-1 [&_td]:px-2 [&_td]:py-1 [&_table]:border-collapse [&_th]:border [&_td]:border [&_th]:bg-muted/50 [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 [&_p]:my-1">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                        </div>
+                      ) : m.content}
                     </div>
                   </div>
                 ))}

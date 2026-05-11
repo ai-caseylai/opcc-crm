@@ -244,6 +244,319 @@ workbuddy.delete('/service-orders/:id', tokenAuth, async (c) => {
   return c.json({ success: true, deleted: id, status: existing.status });
 });
 
+// ── Customer Update / Delete ──
+workbuddy.put('/customers/:id', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  const body = await c.req.json();
+  const fields = ['name', 'company_name', 'email', 'phone', 'address', 'city', 'state', 'postal_code', 'country', 'notes', 'tax_id'];
+  const sets: string[] = [];
+  const params: any[] = [];
+  for (const f of fields) {
+    if (body[f] !== undefined) { sets.push(`${f} = ?`); params.push(body[f]); }
+  }
+  if (sets.length === 0) return c.json({ error: 'No fields to update' }, 400);
+  sets.push("updated_at = datetime('now')");
+  params.push(id, user.id);
+  await c.env.DB.prepare(`UPDATE customers SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).bind(...params).run();
+  const row = await c.env.DB.prepare('SELECT * FROM customers WHERE id = ?').bind(id).first();
+  return c.json(row);
+});
+
+workbuddy.delete('/customers/:id', tokenAuth, async (c) => {
+  const user = c.get('user');
+  await c.env.DB.prepare("UPDATE customers SET is_active = 0, updated_at = datetime('now') WHERE id = ? AND user_id = ?").bind(c.req.param('id'), user.id).run();
+  return c.json({ success: true });
+});
+
+// ── Supplier Create / Update / Delete ──
+workbuddy.post('/suppliers', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json();
+  const id = `s-${uuidv4().slice(0, 8)}`;
+  await c.env.DB.prepare('INSERT INTO suppliers (id, user_id, name, company_name, email, phone, address, payment_terms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(id, user.id, body.name, body.company_name || null, body.email || null, body.phone || null, body.address || null, body.payment_terms || null).run();
+  const row = await c.env.DB.prepare('SELECT * FROM suppliers WHERE id = ?').bind(id).first();
+  return c.json(row, 201);
+});
+
+workbuddy.put('/suppliers/:id', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  const body = await c.req.json();
+  const fields = ['name', 'company_name', 'email', 'phone', 'address', 'payment_terms'];
+  const sets: string[] = [];
+  const params: any[] = [];
+  for (const f of fields) {
+    if (body[f] !== undefined) { sets.push(`${f} = ?`); params.push(body[f]); }
+  }
+  if (sets.length === 0) return c.json({ error: 'No fields to update' }, 400);
+  sets.push("updated_at = datetime('now')");
+  params.push(id, user.id);
+  await c.env.DB.prepare(`UPDATE suppliers SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).bind(...params).run();
+  const row = await c.env.DB.prepare('SELECT * FROM suppliers WHERE id = ?').bind(id).first();
+  return c.json(row);
+});
+
+workbuddy.delete('/suppliers/:id', tokenAuth, async (c) => {
+  const user = c.get('user');
+  await c.env.DB.prepare("UPDATE suppliers SET is_active = 0, updated_at = datetime('now') WHERE id = ? AND user_id = ?").bind(c.req.param('id'), user.id).run();
+  return c.json({ success: true });
+});
+
+// ── Product Create / Update / Delete ──
+workbuddy.post('/products', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json();
+  const id = `p-${uuidv4().slice(0, 8)}`;
+  await c.env.DB.prepare('INSERT INTO products (id, user_id, name, unit_price, currency, unit, category, sku, description) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(id, user.id, body.name, body.unit_price || 0, body.currency || 'HKD', body.unit || 'pcs', body.category || null, body.sku || null, body.description || null).run();
+  const row = await c.env.DB.prepare('SELECT * FROM products WHERE id = ?').bind(id).first();
+  return c.json(row, 201);
+});
+
+workbuddy.put('/products/:id', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  const body = await c.req.json();
+  const fields = ['name', 'unit_price', 'currency', 'unit', 'category', 'sku', 'description'];
+  const sets: string[] = [];
+  const params: any[] = [];
+  for (const f of fields) {
+    if (body[f] !== undefined) { sets.push(`${f} = ?`); params.push(body[f]); }
+  }
+  if (sets.length === 0) return c.json({ error: 'No fields to update' }, 400);
+  sets.push("updated_at = datetime('now')");
+  params.push(id, user.id);
+  await c.env.DB.prepare(`UPDATE products SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).bind(...params).run();
+  const row = await c.env.DB.prepare('SELECT * FROM products WHERE id = ?').bind(id).first();
+  return c.json(row);
+});
+
+workbuddy.delete('/products/:id', tokenAuth, async (c) => {
+  const user = c.get('user');
+  await c.env.DB.prepare("UPDATE products SET is_active = 0, updated_at = datetime('now') WHERE id = ? AND user_id = ?").bind(c.req.param('id'), user.id).run();
+  return c.json({ success: true });
+});
+
+// ── Single entity GET (invoices, quotations, POs, SOs) ──
+workbuddy.get('/invoices/:id', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const inv = await c.env.DB.prepare('SELECT i.*, c.name as customer_name FROM invoices i LEFT JOIN customers c ON i.customer_id = c.id WHERE i.id = ? AND i.user_id = ?').bind(c.req.param('id'), user.id).first();
+  if (!inv) return c.json({ error: 'Invoice not found' }, 404);
+  const items = await c.env.DB.prepare('SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY sort_order').bind(c.req.param('id')).all();
+  return c.json({ ...inv, items: items.results });
+});
+
+workbuddy.patch('/invoices/:id/status', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const { status } = await c.req.json();
+  if (!status) return c.json({ error: 'status required' }, 400);
+  await c.env.DB.prepare("UPDATE invoices SET status = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?").bind(status, c.req.param('id'), user.id).run();
+  if (status === 'paid') await c.env.DB.prepare("UPDATE invoices SET paid_date = datetime('now') WHERE id = ?").bind(c.req.param('id')).run();
+  return c.json({ success: true, status });
+});
+
+workbuddy.get('/quotations/:id', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const row = await c.env.DB.prepare('SELECT q.*, c.name as customer_name FROM quotations q LEFT JOIN customers c ON q.customer_id = c.id WHERE q.id = ? AND q.user_id = ?').bind(c.req.param('id'), user.id).first();
+  if (!row) return c.json({ error: 'Quotation not found' }, 404);
+  const items = await c.env.DB.prepare('SELECT * FROM quotation_items WHERE quotation_id = ? ORDER BY sort_order').bind(c.req.param('id')).all();
+  return c.json({ ...row, items: items.results });
+});
+
+workbuddy.post('/quotations', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json();
+  const id = `q-${uuidv4().slice(0, 8)}`;
+  const items: any[] = body.items || [];
+  const subtotal = items.reduce((s: number, i: any) => s + (i.amount || 0), 0);
+  await c.env.DB.prepare(
+    'INSERT INTO quotations (id, user_id, quotation_number, customer_id, issue_date, valid_until, subtotal, total, currency) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).bind(id, user.id, body.quotation_number, body.customer_id, body.issue_date || new Date().toISOString().split('T')[0], body.valid_until, subtotal, subtotal, body.currency || 'HKD').run();
+  for (let idx = 0; idx < items.length; idx++) {
+    const it = items[idx];
+    await c.env.DB.prepare('INSERT INTO quotation_items (id, quotation_id, description, quantity, unit_price, amount, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .bind(`qi-${uuidv4().slice(0, 8)}`, id, it.description, it.quantity || 1, it.unit_price || 0, it.amount || 0, idx).run();
+  }
+  const row = await c.env.DB.prepare('SELECT * FROM quotations WHERE id = ?').bind(id).first();
+  return c.json(row, 201);
+});
+
+workbuddy.post('/quotations/:id/convert', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const quo = await c.env.DB.prepare('SELECT * FROM quotations WHERE id = ? AND user_id = ?').bind(c.req.param('id'), user.id).first<any>();
+  if (!quo) return c.json({ error: 'Quotation not found' }, 404);
+  const invId = `i-${uuidv4().slice(0, 8)}`;
+  const invNum = `INV-${Date.now().toString(36).toUpperCase()}`;
+  await c.env.DB.prepare('INSERT INTO invoices (id, user_id, invoice_number, customer_id, issue_date, subtotal, total, currency) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(invId, user.id, invNum, quo.customer_id, new Date().toISOString().split('T')[0], quo.subtotal, quo.total, quo.currency).run();
+  const qItems = await c.env.DB.prepare('SELECT * FROM quotation_items WHERE quotation_id = ?').bind(c.req.param('id')).all();
+  for (const qi of qItems.results as any[]) {
+    await c.env.DB.prepare('INSERT INTO invoice_items (id, invoice_id, description, quantity, unit_price, amount, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .bind(`ii-${uuidv4().slice(0, 8)}`, invId, qi.description, qi.quantity, qi.unit_price, qi.amount, qi.sort_order).run();
+  }
+  await c.env.DB.prepare("UPDATE quotations SET status = 'converted', converted_invoice_id = ? WHERE id = ?").bind(invId, c.req.param('id')).run();
+  return c.json({ success: true, invoice_id: invId, invoice_number: invNum });
+});
+
+workbuddy.get('/purchase-orders/:id', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const row = await c.env.DB.prepare('SELECT po.*, s.name as supplier_name FROM purchase_orders po LEFT JOIN suppliers s ON po.supplier_id = s.id WHERE po.id = ? AND po.user_id = ?').bind(c.req.param('id'), user.id).first();
+  if (!row) return c.json({ error: 'Purchase order not found' }, 404);
+  const items = await c.env.DB.prepare('SELECT * FROM purchase_order_items WHERE po_id = ? ORDER BY sort_order').bind(c.req.param('id')).all();
+  return c.json({ ...row, items: items.results });
+});
+
+workbuddy.post('/purchase-orders', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json();
+  const id = `po-${uuidv4().slice(0, 8)}`;
+  const items: any[] = body.items || [];
+  const subtotal = items.reduce((s: number, i: any) => s + (i.amount || 0), 0);
+  await c.env.DB.prepare(
+    'INSERT INTO purchase_orders (id, user_id, po_number, supplier_id, issue_date, due_date, subtotal, total, currency, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).bind(id, user.id, body.po_number || `PO-${Date.now().toString(36).toUpperCase()}`, body.supplier_id || null, new Date().toISOString().split('T')[0], body.due_date, subtotal, subtotal, body.currency || 'HKD', body.notes || null).run();
+  for (let idx = 0; idx < items.length; idx++) {
+    const it = items[idx];
+    await c.env.DB.prepare('INSERT INTO purchase_order_items (id, po_id, description, quantity, unit_price, amount, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .bind(`poi-${uuidv4().slice(0, 8)}`, id, it.description, it.quantity || 1, it.unit_price || 0, it.amount || 0, idx).run();
+  }
+  const row = await c.env.DB.prepare('SELECT * FROM purchase_orders WHERE id = ?').bind(id).first();
+  return c.json(row, 201);
+});
+
+workbuddy.patch('/purchase-orders/:id/status', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const { status } = await c.req.json();
+  if (!status) return c.json({ error: 'status required' }, 400);
+  await c.env.DB.prepare("UPDATE purchase_orders SET status = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?").bind(status, c.req.param('id'), user.id).run();
+  if (status === 'paid') await c.env.DB.prepare("UPDATE purchase_orders SET paid_date = datetime('now') WHERE id = ?").bind(c.req.param('id')).run();
+  return c.json({ success: true, status });
+});
+
+workbuddy.get('/service-orders/:id', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const row = await c.env.DB.prepare('SELECT so.*, c.name as customer_name FROM service_orders so LEFT JOIN customers c ON so.customer_id = c.id WHERE so.id = ? AND so.user_id = ?').bind(c.req.param('id'), user.id).first();
+  if (!row) return c.json({ error: 'Service order not found' }, 404);
+  const items = await c.env.DB.prepare('SELECT * FROM service_order_items WHERE so_id = ? ORDER BY sort_order').bind(c.req.param('id')).all();
+  return c.json({ ...row, items: items.results });
+});
+
+workbuddy.post('/service-orders', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json();
+  const id = `so-${uuidv4().slice(0, 8)}`;
+  const items: any[] = body.items || [];
+  const subtotal = items.reduce((s: number, i: any) => s + (i.amount || 0), 0);
+  await c.env.DB.prepare(
+    'INSERT INTO service_orders (id, user_id, so_number, customer_id, issue_date, valid_from, valid_until, subtotal, total, currency) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).bind(id, user.id, body.so_number || `SO-${Date.now().toString(36).toUpperCase()}`, body.customer_id, new Date().toISOString().split('T')[0], body.valid_from, body.valid_until, subtotal, subtotal, body.currency || 'HKD').run();
+  for (let idx = 0; idx < items.length; idx++) {
+    const it = items[idx];
+    await c.env.DB.prepare('INSERT INTO service_order_items (id, so_id, description, quantity, unit_price, amount, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .bind(`soi-${uuidv4().slice(0, 8)}`, id, it.description, it.quantity || 1, it.unit_price || 0, it.amount || 0, idx).run();
+  }
+  const row = await c.env.DB.prepare('SELECT * FROM service_orders WHERE id = ?').bind(id).first();
+  return c.json(row, 201);
+});
+
+workbuddy.patch('/service-orders/:id/status', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const { status } = await c.req.json();
+  if (!status) return c.json({ error: 'status required' }, 400);
+  await c.env.DB.prepare("UPDATE service_orders SET status = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?").bind(status, c.req.param('id'), user.id).run();
+  return c.json({ success: true, status });
+});
+
+// ── Services ──
+workbuddy.get('/services', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const rows = await c.env.DB.prepare('SELECT * FROM services WHERE user_id = ? AND is_active = 1 ORDER BY name').bind(user.id).all();
+  return c.json({ data: rows.results });
+});
+
+workbuddy.post('/services', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json();
+  const id = `svc-${uuidv4().slice(0, 8)}`;
+  await c.env.DB.prepare('INSERT INTO services (id, user_id, name, price, duration_minutes, category) VALUES (?, ?, ?, ?, ?, ?)')
+    .bind(id, user.id, body.name, body.price || 0, body.duration_minutes || 60, body.category || 'general').run();
+  const row = await c.env.DB.prepare('SELECT * FROM services WHERE id = ?').bind(id).first();
+  return c.json(row, 201);
+});
+
+// ── Bookings ──
+workbuddy.get('/services/bookings', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const date = c.req.query('date');
+  let q = 'SELECT sb.*, s.name as service_name, c.name as customer_name FROM service_bookings sb JOIN services s ON sb.service_id = s.id LEFT JOIN customers c ON sb.customer_id = c.id WHERE sb.user_id = ?';
+  const params: any[] = [user.id];
+  if (date) { q += ' AND sb.booking_date = ?'; params.push(date); }
+  q += ' ORDER BY sb.start_time';
+  const rows = await c.env.DB.prepare(q).bind(...params).all();
+  return c.json({ data: rows.results });
+});
+
+workbuddy.post('/services/bookings', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json();
+  const id = `bk-${uuidv4().slice(0, 8)}`;
+  await c.env.DB.prepare('INSERT INTO service_bookings (id, user_id, service_id, customer_id, booking_date, start_time, end_time, notes, price) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(id, user.id, body.service_id, body.customer_id, body.booking_date, body.start_time, body.end_time || null, body.notes || null, body.price || null).run();
+  const row = await c.env.DB.prepare('SELECT * FROM service_bookings WHERE id = ?').bind(id).first();
+  return c.json(row, 201);
+});
+
+// ── Calendar ──
+workbuddy.get('/calendar/events', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const start = c.req.query('start') || new Date().toISOString().split('T')[0];
+  const end = c.req.query('end') || new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
+  const rows = await c.env.DB.prepare('SELECT * FROM calendar_events WHERE user_id = ? AND start_time BETWEEN ? AND ? ORDER BY start_time').bind(user.id, start, end).all();
+  return c.json({ data: rows.results });
+});
+
+workbuddy.post('/calendar/events', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json();
+  const id = `evt-${uuidv4().slice(0, 8)}`;
+  await c.env.DB.prepare('INSERT INTO calendar_events (id, user_id, title, start_time, end_time, description, location, customer_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(id, user.id, body.title, body.start_time, body.end_time || null, body.description || null, body.location || null, body.customer_id || null).run();
+  const row = await c.env.DB.prepare('SELECT * FROM calendar_events WHERE id = ?').bind(id).first();
+  return c.json(row, 201);
+});
+
+workbuddy.delete('/calendar/events/:id', tokenAuth, async (c) => {
+  const user = c.get('user');
+  await c.env.DB.prepare('DELETE FROM calendar_events WHERE id = ? AND user_id = ?').bind(c.req.param('id'), user.id).run();
+  return c.json({ success: true });
+});
+
+// ── Company Profile ──
+workbuddy.get('/company', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const row = await c.env.DB.prepare('SELECT * FROM company_settings WHERE user_id = ?').bind(user.id).first();
+  return c.json(row || {});
+});
+
+workbuddy.put('/company', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json();
+  const fields = ['name', 'address', 'phone', 'email', 'website', 'tagline', 'legal_name', 'short_name', 'tax_id', 'bank_name', 'bank_account'];
+  const sets: string[] = [];
+  const params: any[] = [];
+  for (const f of fields) {
+    if (body[f] !== undefined) { sets.push(`${f} = ?`); params.push(body[f]); }
+  }
+  if (sets.length === 0) return c.json({ error: 'No fields to update' }, 400);
+  sets.push("updated_at = datetime('now')");
+  params.push(user.id);
+  await c.env.DB.prepare(`UPDATE company_settings SET ${sets.join(', ')} WHERE user_id = ?`).bind(...params).run();
+  const row = await c.env.DB.prepare('SELECT * FROM company_settings WHERE user_id = ?').bind(user.id).first();
+  return c.json(row);
+});
+
 // ── One-click onboard — dual auth: JWT or API token ──
 workbuddy.post('/admin/onboard', async (c) => {
   const authHeader = c.req.header('Authorization');

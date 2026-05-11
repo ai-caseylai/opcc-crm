@@ -26,19 +26,79 @@ CRITICAL DELETE RULES:
 - If the user does not confirm, do NOT delete anything`;
 
 const TOOLS: any[] = [
+  // ── Dashboard / Summary ──
   { type: 'function', function: { name: 'get_counts', description: 'Get counts of all CRM records for the current user', parameters: { type: 'object', properties: {}, required: [] } } },
   { type: 'function', function: { name: 'get_summary', description: 'Get dashboard summary: customer/supplier/invoice/quotation counts plus P&L (income, expense, net)', parameters: { type: 'object', properties: {}, required: [] } } },
-  { type: 'function', function: { name: 'list_invoices', description: 'List recent invoices with optional status filter', parameters: { type: 'object', properties: { status: { type: 'string', description: 'draft, sent, paid, overdue' }, limit: { type: 'number' } }, required: [] } } },
-  { type: 'function', function: { name: 'get_invoice', description: 'Get full invoice details by ID including line items', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Invoice ID' } }, required: ['id'] } } },
-  { type: 'function', function: { name: 'list_quotations', description: 'List recent quotations with optional status filter', parameters: { type: 'object', properties: { status: { type: 'string', description: 'draft, sent, accepted, rejected, converted' }, limit: { type: 'number' } }, required: [] } } },
+
+  // ── Customers ──
   { type: 'function', function: { name: 'list_customers', description: 'List recent active customers', parameters: { type: 'object', properties: { limit: { type: 'number' } }, required: [] } } },
   { type: 'function', function: { name: 'search_customers', description: 'Search customers by name, email, or company', parameters: { type: 'object', properties: { query: { type: 'string', description: 'Search keyword' }, limit: { type: 'number' } }, required: ['query'] } } },
   { type: 'function', function: { name: 'get_customer', description: 'Get customer details by ID', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Customer ID' } }, required: ['id'] } } },
+  { type: 'function', function: { name: 'create_customer', description: 'Create a new customer', parameters: { type: 'object', properties: { name: { type: 'string', description: 'Customer name' }, company_name: { type: 'string' }, email: { type: 'string' }, phone: { type: 'string' }, address: { type: 'string' } }, required: ['name'] } } },
+  { type: 'function', function: { name: 'update_customer', description: 'Update customer fields', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Customer ID' }, name: { type: 'string' }, company_name: { type: 'string' }, email: { type: 'string' }, phone: { type: 'string' }, address: { type: 'string' } }, required: ['id'] } } },
+  { type: 'function', function: { name: 'delete_customer', description: 'Soft-delete a customer', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Customer ID' } }, required: ['id'] } } },
+
+  // ── Suppliers ──
+  { type: 'function', function: { name: 'list_suppliers', description: 'List recent active suppliers', parameters: { type: 'object', properties: { limit: { type: 'number' } }, required: [] } } },
+  { type: 'function', function: { name: 'get_supplier', description: 'Get supplier details by ID', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Supplier ID' } }, required: ['id'] } } },
+  { type: 'function', function: { name: 'create_supplier', description: 'Create a new supplier', parameters: { type: 'object', properties: { name: { type: 'string' }, company_name: { type: 'string' }, email: { type: 'string' }, phone: { type: 'string' }, address: { type: 'string' } }, required: ['name'] } } },
+  { type: 'function', function: { name: 'update_supplier', description: 'Update supplier fields', parameters: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' }, company_name: { type: 'string' }, email: { type: 'string' }, phone: { type: 'string' } }, required: ['id'] } } },
+  { type: 'function', function: { name: 'delete_supplier', description: 'Soft-delete a supplier', parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } } },
+
+  // ── Products ──
   { type: 'function', function: { name: 'list_products', description: 'List all active products and services', parameters: { type: 'object', properties: {}, required: [] } } },
   { type: 'function', function: { name: 'search_products', description: 'Search products by name or category', parameters: { type: 'object', properties: { query: { type: 'string', description: 'Search keyword' } }, required: ['query'] } } },
-  { type: 'function', function: { name: 'list_suppliers', description: 'List recent active suppliers', parameters: { type: 'object', properties: { limit: { type: 'number' } }, required: [] } } },
+  { type: 'function', function: { name: 'create_product', description: 'Create a new product or service', parameters: { type: 'object', properties: { name: { type: 'string' }, unit_price: { type: 'number' }, currency: { type: 'string', description: 'HKD/USD/CNY' }, unit: { type: 'string', description: 'pcs/hr/etc' }, category: { type: 'string' } }, required: ['name', 'unit_price'] } } },
+  { type: 'function', function: { name: 'update_product', description: 'Update product fields', parameters: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' }, unit_price: { type: 'number' }, category: { type: 'string' } }, required: ['id'] } } },
+  { type: 'function', function: { name: 'delete_product', description: 'Soft-delete a product', parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } } },
+
+  // ── Invoices ──
+  { type: 'function', function: { name: 'list_invoices', description: 'List recent invoices with optional status filter', parameters: { type: 'object', properties: { status: { type: 'string', description: 'draft, sent, paid, overdue' }, limit: { type: 'number' } }, required: [] } } },
+  { type: 'function', function: { name: 'get_invoice', description: 'Get full invoice details by ID including line items', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Invoice ID' } }, required: ['id'] } } },
+  { type: 'function', function: { name: 'create_invoice', description: 'Create a new invoice', parameters: { type: 'object', properties: { customer_id: { type: 'string' }, invoice_number: { type: 'string' }, items: { type: 'array', description: 'Array of {description, quantity, unit_price, amount}', items: { type: 'object' } }, due_date: { type: 'string', description: 'YYYY-MM-DD' }, currency: { type: 'string' }, notes: { type: 'string' } }, required: ['customer_id'] } } },
+  { type: 'function', function: { name: 'update_invoice_status', description: 'Update invoice status (e.g. mark as sent/paid)', parameters: { type: 'object', properties: { id: { type: 'string' }, status: { type: 'string', description: 'draft, sent, paid, overdue, cancelled' } }, required: ['id', 'status'] } } },
+  { type: 'function', function: { name: 'delete_invoice', description: 'Delete an invoice by ID', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Invoice ID' } }, required: ['id'] } } },
+
+  // ── Quotations ──
+  { type: 'function', function: { name: 'list_quotations', description: 'List recent quotations with optional status filter', parameters: { type: 'object', properties: { status: { type: 'string', description: 'draft, sent, accepted, rejected, converted' }, limit: { type: 'number' } }, required: [] } } },
+  { type: 'function', function: { name: 'get_quotation', description: 'Get quotation details by ID', parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } } },
+  { type: 'function', function: { name: 'create_quotation', description: 'Create a new quotation', parameters: { type: 'object', properties: { customer_id: { type: 'string' }, quotation_number: { type: 'string' }, items: { type: 'array', description: 'Array of {description, quantity, unit_price, amount}', items: { type: 'object' } }, valid_until: { type: 'string', description: 'YYYY-MM-DD' }, currency: { type: 'string' } }, required: ['customer_id'] } } },
+  { type: 'function', function: { name: 'convert_quotation', description: 'Convert a quotation to an invoice', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Quotation ID' } }, required: ['id'] } } },
+  { type: 'function', function: { name: 'delete_quotation', description: 'Delete a quotation by ID', parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } } },
+
+  // ── Purchase Orders ──
   { type: 'function', function: { name: 'list_purchase_orders', description: 'List recent purchase orders with optional status filter', parameters: { type: 'object', properties: { status: { type: 'string', description: 'draft, approved, received, paid, cancelled' }, limit: { type: 'number' } }, required: [] } } },
+  { type: 'function', function: { name: 'create_purchase_order', description: 'Create a new purchase order', parameters: { type: 'object', properties: { supplier_id: { type: 'string' }, items: { type: 'array', description: 'Array of {description, quantity, unit_price, amount}', items: { type: 'object' } }, due_date: { type: 'string', description: 'YYYY-MM-DD' }, currency: { type: 'string' }, notes: { type: 'string' } }, required: [] } } },
+  { type: 'function', function: { name: 'update_purchase_order_status', description: 'Update PO status', parameters: { type: 'object', properties: { id: { type: 'string' }, status: { type: 'string', description: 'draft, approved, received, paid, cancelled' } }, required: ['id', 'status'] } } },
+  { type: 'function', function: { name: 'delete_purchase_order', description: 'Delete a purchase order by ID', parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } } },
+
+  // ── Service Orders ──
+  { type: 'function', function: { name: 'list_service_orders', description: 'List recent service orders', parameters: { type: 'object', properties: { status: { type: 'string', description: 'draft, active, completed, cancelled' }, limit: { type: 'number' } }, required: [] } } },
+  { type: 'function', function: { name: 'create_service_order', description: 'Create a new service order', parameters: { type: 'object', properties: { customer_id: { type: 'string' }, items: { type: 'array', description: 'Array of {description, quantity, unit_price, amount}', items: { type: 'object' } }, valid_from: { type: 'string', description: 'YYYY-MM-DD' }, valid_until: { type: 'string' }, currency: { type: 'string' } }, required: ['customer_id'] } } },
+  { type: 'function', function: { name: 'update_service_order_status', description: 'Update SO status', parameters: { type: 'object', properties: { id: { type: 'string' }, status: { type: 'string', description: 'draft, active, completed, cancelled' } }, required: ['id', 'status'] } } },
+  { type: 'function', function: { name: 'delete_service_order', description: 'Delete a service order by ID', parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } } },
+
+  // ── Services & Bookings ──
+  { type: 'function', function: { name: 'list_services', description: 'List all active services', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'create_service', description: 'Create a new service', parameters: { type: 'object', properties: { name: { type: 'string' }, price: { type: 'number' }, duration_minutes: { type: 'number' }, category: { type: 'string' } }, required: ['name', 'price'] } } },
+  { type: 'function', function: { name: 'list_bookings', description: 'List service bookings', parameters: { type: 'object', properties: { date: { type: 'string', description: 'YYYY-MM-DD' } }, required: [] } } },
+
+  // ── Todos ──
   { type: 'function', function: { name: 'list_todos', description: 'List pending todos, sorted by priority', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'create_todo', description: 'Create a todo item', parameters: { type: 'object', properties: { title: { type: 'string' }, priority: { type: 'string', description: 'high, medium, low' }, due_date: { type: 'string', description: 'YYYY-MM-DD' }, description: { type: 'string' } }, required: ['title'] } } },
+  { type: 'function', function: { name: 'update_todo', description: 'Update a todo (complete, edit)', parameters: { type: 'object', properties: { id: { type: 'string' }, status: { type: 'string', description: 'pending, completed' }, title: { type: 'string' }, priority: { type: 'string' } }, required: ['id'] } } },
+  { type: 'function', function: { name: 'delete_todo', description: 'Delete a todo item', parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } } },
+
+  // ── Calendar ──
+  { type: 'function', function: { name: 'list_calendar_events', description: 'List calendar events for a date range', parameters: { type: 'object', properties: { start: { type: 'string', description: 'YYYY-MM-DD' }, end: { type: 'string', description: 'YYYY-MM-DD' } }, required: [] } } },
+  { type: 'function', function: { name: 'create_calendar_event', description: 'Create a calendar event', parameters: { type: 'object', properties: { title: { type: 'string' }, start_time: { type: 'string', description: 'ISO datetime' }, end_time: { type: 'string' }, description: { type: 'string' }, location: { type: 'string' }, customer_id: { type: 'string' } }, required: ['title', 'start_time'] } } },
+  { type: 'function', function: { name: 'delete_calendar_event', description: 'Delete a calendar event', parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } } },
+
+  // ── Company / Profile ──
+  { type: 'function', function: { name: 'get_company', description: 'Get company profile settings', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'update_company', description: 'Update company profile fields', parameters: { type: 'object', properties: { name: { type: 'string' }, address: { type: 'string' }, phone: { type: 'string' }, email: { type: 'string' }, website: { type: 'string' }, tagline: { type: 'string' } }, required: [] } } },
+
+  // ── Bookkeeping / Reports ──
   { type: 'function', function: { name: 'get_bookkeeping', description: 'Get P&L (income statement) for a date range', parameters: { type: 'object', properties: { start_date: { type: 'string', description: 'YYYY-MM-DD' }, end_date: { type: 'string', description: 'YYYY-MM-DD' } }, required: [] } } },
   { type: 'function', function: { name: 'get_recent_activity', description: 'Get recent audit log entries (recent changes)', parameters: { type: 'object', properties: { limit: { type: 'number' } }, required: [] } } },
 ];
@@ -146,10 +206,29 @@ async function executeTool(name: string, db: D1Database, userId: string, args: a
     case 'get_bookkeeping': {
       const startDate = args?.start_date || '2020-01-01';
       const endDate = args?.end_date || '2099-12-31';
-      const rows = await db.prepare(
-        "SELECT a.code, a.name, a.type, SUM(COALESCE(jl.debit,0)) as total_debit, SUM(COALESCE(jl.credit,0)) as total_credit FROM journal_lines jl JOIN chart_of_accounts a ON jl.account_id = a.id JOIN journal_entries je ON jl.entry_id = je.id WHERE je.user_id = ? AND je.entry_date BETWEEN ? AND ? GROUP BY a.code, a.name, a.type ORDER BY a.code"
-      ).bind(userId, startDate, endDate).all();
-      return JSON.stringify(rows.results);
+      // Try journal entries first
+      try {
+        const jlRows = await db.prepare(
+          "SELECT a.account_code as code, a.account_name as name, a.account_type as type, SUM(COALESCE(jl.debit,0)) as total_debit, SUM(COALESCE(jl.credit,0)) as total_credit FROM journal_lines jl JOIN accounts a ON jl.account_code = a.account_code JOIN journal_entries je ON jl.entry_id = je.id WHERE je.user_id = ? AND je.entry_date BETWEEN ? AND ? GROUP BY a.account_code, a.account_name, a.account_type ORDER BY a.account_code"
+        ).bind(userId, startDate, endDate).all();
+        if (jlRows.results.length > 0) return JSON.stringify(jlRows.results);
+      } catch {}
+      // Fallback: bank transactions
+      try {
+        const deposits = await db.prepare(
+          'SELECT COALESCE(SUM(deposit_amount),0) as total FROM bank_transactions WHERE user_id = ? AND transaction_date >= ? AND transaction_date <= ?'
+        ).bind(userId, startDate, endDate).first<{ total: number }>();
+        const withdrawals = await db.prepare(
+          'SELECT COALESCE(SUM(withdrawal_amount),0) as total FROM bank_transactions WHERE user_id = ? AND transaction_date >= ? AND transaction_date <= ?'
+        ).bind(userId, startDate, endDate).first<{ total: number }>();
+        return JSON.stringify([
+          { code: 'REV', name: 'Revenue (Bank Deposits)', type: 'revenue', total_credit: deposits?.total || 0 },
+          { code: 'EXP', name: 'Expenses (Bank Withdrawals)', type: 'expense', total_debit: withdrawals?.total || 0 },
+          { code: 'NET', name: 'Net Income', type: 'equity', total_credit: (deposits?.total || 0) - (withdrawals?.total || 0) },
+        ]);
+      } catch {
+        return JSON.stringify([]);
+      }
     }
     case 'get_recent_activity': {
       const rows = await db.prepare(
@@ -157,6 +236,291 @@ async function executeTool(name: string, db: D1Database, userId: string, args: a
       ).bind(userId, limit).all();
       return JSON.stringify(rows.results);
     }
+
+    // ── Customers CRUD ──
+    case 'create_customer': {
+      const id = `c-${uuidv4().slice(0, 8)}`;
+      await db.prepare('INSERT INTO customers (id, user_id, name, company_name, email, phone, address) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .bind(id, userId, args.name, args.company_name || null, args.email || null, args.phone || null, args.address || null).run();
+      const row = await db.prepare('SELECT * FROM customers WHERE id = ?').bind(id).first();
+      return JSON.stringify({ success: true, customer: row });
+    }
+    case 'update_customer': {
+      const fields = ['name', 'company_name', 'email', 'phone', 'address'];
+      const sets: string[] = [];
+      const params: any[] = [];
+      for (const f of fields) {
+        if (args[f] !== undefined) { sets.push(`${f} = ?`); params.push(args[f]); }
+      }
+      if (sets.length === 0) return JSON.stringify({ error: 'No fields to update' });
+      sets.push("updated_at = datetime('now')");
+      params.push(args.id, userId);
+      await db.prepare(`UPDATE customers SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).bind(...params).run();
+      const row = await db.prepare('SELECT * FROM customers WHERE id = ?').bind(args.id).first();
+      return JSON.stringify({ success: true, customer: row });
+    }
+    case 'delete_customer': {
+      await db.prepare('UPDATE customers SET is_active = 0, updated_at = datetime(\'now\') WHERE id = ? AND user_id = ?').bind(args.id, userId).run();
+      return JSON.stringify({ success: true, deleted: args.id });
+    }
+
+    // ── Suppliers CRUD ──
+    case 'get_supplier': {
+      const row = await db.prepare('SELECT * FROM suppliers WHERE id = ? AND user_id = ?').bind(args.id, userId).first();
+      if (!row) return JSON.stringify({ error: 'Supplier not found' });
+      return JSON.stringify(row);
+    }
+    case 'create_supplier': {
+      const id = `s-${uuidv4().slice(0, 8)}`;
+      await db.prepare('INSERT INTO suppliers (id, user_id, name, company_name, email, phone, address) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .bind(id, userId, args.name, args.company_name || null, args.email || null, args.phone || null, args.address || null).run();
+      const row = await db.prepare('SELECT * FROM suppliers WHERE id = ?').bind(id).first();
+      return JSON.stringify({ success: true, supplier: row });
+    }
+    case 'update_supplier': {
+      const fields = ['name', 'company_name', 'email', 'phone', 'address'];
+      const sets: string[] = [];
+      const params: any[] = [];
+      for (const f of fields) {
+        if (args[f] !== undefined) { sets.push(`${f} = ?`); params.push(args[f]); }
+      }
+      if (sets.length === 0) return JSON.stringify({ error: 'No fields to update' });
+      sets.push("updated_at = datetime('now')");
+      params.push(args.id, userId);
+      await db.prepare(`UPDATE suppliers SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).bind(...params).run();
+      const row = await db.prepare('SELECT * FROM suppliers WHERE id = ?').bind(args.id).first();
+      return JSON.stringify({ success: true, supplier: row });
+    }
+    case 'delete_supplier': {
+      await db.prepare('UPDATE suppliers SET is_active = 0, updated_at = datetime(\'now\') WHERE id = ? AND user_id = ?').bind(args.id, userId).run();
+      return JSON.stringify({ success: true, deleted: args.id });
+    }
+
+    // ── Products CRUD ──
+    case 'create_product': {
+      const id = `p-${uuidv4().slice(0, 8)}`;
+      await db.prepare('INSERT INTO products (id, user_id, name, unit_price, currency, unit, category) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .bind(id, userId, args.name, args.unit_price || 0, args.currency || 'HKD', args.unit || 'pcs', args.category || null).run();
+      const row = await db.prepare('SELECT * FROM products WHERE id = ?').bind(id).first();
+      return JSON.stringify({ success: true, product: row });
+    }
+    case 'update_product': {
+      const fields = ['name', 'unit_price', 'currency', 'unit', 'category'];
+      const sets: string[] = [];
+      const params: any[] = [];
+      for (const f of fields) {
+        if (args[f] !== undefined) { sets.push(`${f} = ?`); params.push(args[f]); }
+      }
+      if (sets.length === 0) return JSON.stringify({ error: 'No fields to update' });
+      sets.push("updated_at = datetime('now')");
+      params.push(args.id, userId);
+      await db.prepare(`UPDATE products SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).bind(...params).run();
+      const row = await db.prepare('SELECT * FROM products WHERE id = ?').bind(args.id).first();
+      return JSON.stringify({ success: true, product: row });
+    }
+    case 'delete_product': {
+      await db.prepare('UPDATE products SET is_active = 0, updated_at = datetime(\'now\') WHERE id = ? AND user_id = ?').bind(args.id, userId).run();
+      return JSON.stringify({ success: true, deleted: args.id });
+    }
+
+    // ── Invoices Create / Status ──
+    case 'create_invoice': {
+      const id = `i-${uuidv4().slice(0, 8)}`;
+      const items: any[] = args.items || [];
+      const subtotal = items.reduce((s: number, i: any) => s + (i.amount || (i.quantity || 1) * (i.unit_price || 0)), 0);
+      const invNum = args.invoice_number || `INV-${Date.now().toString(36).toUpperCase()}`;
+      await db.prepare(
+        'INSERT INTO invoices (id, user_id, invoice_number, customer_id, issue_date, due_date, subtotal, total, currency, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      ).bind(id, userId, invNum, args.customer_id, args.issue_date || new Date().toISOString().split('T')[0], args.due_date || null, subtotal, subtotal, args.currency || 'HKD', args.notes || null).run();
+      for (let idx = 0; idx < items.length; idx++) {
+        const it = items[idx];
+        await db.prepare('INSERT INTO invoice_items (id, invoice_id, description, quantity, unit_price, amount, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)')
+          .bind(`ii-${uuidv4().slice(0, 8)}`, id, it.description, it.quantity || 1, it.unit_price || 0, it.amount || 0, idx).run();
+      }
+      const row = await db.prepare('SELECT * FROM invoices WHERE id = ?').bind(id).first();
+      return JSON.stringify({ success: true, invoice: row });
+    }
+    case 'update_invoice_status': {
+      await db.prepare("UPDATE invoices SET status = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?").bind(args.status, args.id, userId).run();
+      if (args.status === 'paid') await db.prepare("UPDATE invoices SET paid_date = datetime('now') WHERE id = ?").bind(args.id).run();
+      return JSON.stringify({ success: true, id: args.id, status: args.status });
+    }
+
+    // ── Quotations Create / Get / Convert ──
+    case 'get_quotation': {
+      const row = await db.prepare('SELECT q.*, c.name as customer_name FROM quotations q LEFT JOIN customers c ON q.customer_id = c.id WHERE q.id = ? AND q.user_id = ?').bind(args.id, userId).first();
+      if (!row) return JSON.stringify({ error: 'Quotation not found' });
+      const items = await db.prepare('SELECT description, quantity, unit_price, amount FROM quotation_items WHERE quotation_id = ? ORDER BY sort_order').bind(args.id).all();
+      return JSON.stringify({ ...row, items: items.results });
+    }
+    case 'create_quotation': {
+      const id = `q-${uuidv4().slice(0, 8)}`;
+      const items: any[] = args.items || [];
+      const subtotal = items.reduce((s: number, i: any) => s + (i.amount || (i.quantity || 1) * (i.unit_price || 0)), 0);
+      const qNum = args.quotation_number || `QUO-${Date.now().toString(36).toUpperCase()}`;
+      await db.prepare(
+        'INSERT INTO quotations (id, user_id, quotation_number, customer_id, issue_date, valid_until, subtotal, total, currency) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      ).bind(id, userId, qNum, args.customer_id, new Date().toISOString().split('T')[0], args.valid_until || null, subtotal, subtotal, args.currency || 'HKD').run();
+      for (let idx = 0; idx < items.length; idx++) {
+        const it = items[idx];
+        await db.prepare('INSERT INTO quotation_items (id, quotation_id, description, quantity, unit_price, amount, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)')
+          .bind(`qi-${uuidv4().slice(0, 8)}`, id, it.description, it.quantity || 1, it.unit_price || 0, it.amount || 0, idx).run();
+      }
+      const row = await db.prepare('SELECT * FROM quotations WHERE id = ?').bind(id).first();
+      return JSON.stringify({ success: true, quotation: row });
+    }
+    case 'convert_quotation': {
+      const quo = await db.prepare('SELECT * FROM quotations WHERE id = ? AND user_id = ?').bind(args.id, userId).first<any>();
+      if (!quo) return JSON.stringify({ error: 'Quotation not found' });
+      const invId = `i-${uuidv4().slice(0, 8)}`;
+      const invNum = `INV-${Date.now().toString(36).toUpperCase()}`;
+      await db.prepare('INSERT INTO invoices (id, user_id, invoice_number, customer_id, issue_date, due_date, subtotal, total, currency) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .bind(invId, userId, invNum, quo.customer_id, new Date().toISOString().split('T')[0], null, quo.subtotal, quo.total, quo.currency).run();
+      const qItems = await db.prepare('SELECT * FROM quotation_items WHERE quotation_id = ?').bind(args.id).all();
+      for (const qi of qItems.results as any[]) {
+        await db.prepare('INSERT INTO invoice_items (id, invoice_id, description, quantity, unit_price, amount, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)')
+          .bind(`ii-${uuidv4().slice(0, 8)}`, invId, qi.description, qi.quantity, qi.unit_price, qi.amount, qi.sort_order).run();
+      }
+      await db.prepare("UPDATE quotations SET status = 'converted', converted_invoice_id = ? WHERE id = ?").bind(invId, args.id).run();
+      return JSON.stringify({ success: true, invoice_id: invId, invoice_number: invNum });
+    }
+
+    // ── Purchase Orders Create / Status ──
+    case 'create_purchase_order': {
+      const id = `po-${uuidv4().slice(0, 8)}`;
+      const items: any[] = args.items || [];
+      const subtotal = items.reduce((s: number, i: any) => s + (i.amount || (i.quantity || 1) * (i.unit_price || 0)), 0);
+      const poNum = args.po_number || `PO-${Date.now().toString(36).toUpperCase()}`;
+      await db.prepare(
+        'INSERT INTO purchase_orders (id, user_id, po_number, supplier_id, issue_date, due_date, subtotal, total, currency, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      ).bind(id, userId, poNum, args.supplier_id || null, new Date().toISOString().split('T')[0], args.due_date || null, subtotal, subtotal, args.currency || 'HKD', args.notes || null).run();
+      for (let idx = 0; idx < items.length; idx++) {
+        const it = items[idx];
+        await db.prepare('INSERT INTO purchase_order_items (id, po_id, description, quantity, unit_price, amount, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)')
+          .bind(`poi-${uuidv4().slice(0, 8)}`, id, it.description, it.quantity || 1, it.unit_price || 0, it.amount || 0, idx).run();
+      }
+      const row = await db.prepare('SELECT * FROM purchase_orders WHERE id = ?').bind(id).first();
+      return JSON.stringify({ success: true, purchase_order: row });
+    }
+    case 'update_purchase_order_status': {
+      await db.prepare("UPDATE purchase_orders SET status = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?").bind(args.status, args.id, userId).run();
+      if (args.status === 'paid') await db.prepare("UPDATE purchase_orders SET paid_date = datetime('now') WHERE id = ?").bind(args.id).run();
+      return JSON.stringify({ success: true, id: args.id, status: args.status });
+    }
+
+    // ── Service Orders Create / Status ──
+    case 'list_service_orders': {
+      let q = `SELECT so.id, so.so_number, so.status, so.total, so.currency, so.issue_date, so.valid_from, so.valid_until, c.name as customer_name FROM service_orders so LEFT JOIN customers c ON so.customer_id = c.id WHERE so.user_id = ?`;
+      const params: any[] = [userId];
+      if (args?.status) { q += ' AND so.status = ?'; params.push(args.status); }
+      q += ' ORDER BY so.created_at DESC LIMIT ?'; params.push(limit);
+      const rows = await db.prepare(q).bind(...params).all();
+      return JSON.stringify(rows.results);
+    }
+    case 'create_service_order': {
+      const id = `so-${uuidv4().slice(0, 8)}`;
+      const items: any[] = args.items || [];
+      const subtotal = items.reduce((s: number, i: any) => s + (i.amount || (i.quantity || 1) * (i.unit_price || 0)), 0);
+      const soNum = args.so_number || `SO-${Date.now().toString(36).toUpperCase()}`;
+      await db.prepare(
+        'INSERT INTO service_orders (id, user_id, so_number, customer_id, issue_date, valid_from, valid_until, subtotal, total, currency) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      ).bind(id, userId, soNum, args.customer_id, new Date().toISOString().split('T')[0], args.valid_from || null, args.valid_until || null, subtotal, subtotal, args.currency || 'HKD').run();
+      for (let idx = 0; idx < items.length; idx++) {
+        const it = items[idx];
+        await db.prepare('INSERT INTO service_order_items (id, so_id, description, quantity, unit_price, amount, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)')
+          .bind(`soi-${uuidv4().slice(0, 8)}`, id, it.description, it.quantity || 1, it.unit_price || 0, it.amount || 0, idx).run();
+      }
+      const row = await db.prepare('SELECT * FROM service_orders WHERE id = ?').bind(id).first();
+      return JSON.stringify({ success: true, service_order: row });
+    }
+    case 'update_service_order_status': {
+      await db.prepare("UPDATE service_orders SET status = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?").bind(args.status, args.id, userId).run();
+      return JSON.stringify({ success: true, id: args.id, status: args.status });
+    }
+
+    // ── Services & Bookings ──
+    case 'list_services': {
+      const rows = await db.prepare('SELECT id, name, category, price, duration_minutes FROM services WHERE user_id = ? AND is_active = 1 ORDER BY name').bind(userId).all();
+      return JSON.stringify(rows.results);
+    }
+    case 'create_service': {
+      const id = `svc-${uuidv4().slice(0, 8)}`;
+      await db.prepare('INSERT INTO services (id, user_id, name, price, duration_minutes, category) VALUES (?, ?, ?, ?, ?, ?)')
+        .bind(id, userId, args.name, args.price || 0, args.duration_minutes || 60, args.category || 'general').run();
+      return JSON.stringify({ success: true, id });
+    }
+    case 'list_bookings': {
+      let q = 'SELECT sb.*, s.name as service_name, c.name as customer_name FROM service_bookings sb JOIN services s ON sb.service_id = s.id LEFT JOIN customers c ON sb.customer_id = c.id WHERE sb.user_id = ?';
+      const params: any[] = [userId];
+      if (args?.date) { q += ' AND sb.booking_date = ?'; params.push(args.date); }
+      q += ' ORDER BY sb.booking_date DESC, sb.start_time LIMIT ?'; params.push(limit);
+      const rows = await db.prepare(q).bind(...params).all();
+      return JSON.stringify(rows.results);
+    }
+
+    // ── Todos CRUD ──
+    case 'create_todo': {
+      const id = `td-${uuidv4().slice(0, 8)}`;
+      await db.prepare('INSERT INTO todos (id, user_id, title, description, priority, due_date) VALUES (?, ?, ?, ?, ?, ?)')
+        .bind(id, userId, args.title, args.description || null, args.priority || 'medium', args.due_date || null).run();
+      return JSON.stringify({ success: true, id, title: args.title });
+    }
+    case 'update_todo': {
+      const fields = ['title', 'description', 'status', 'priority', 'due_date'];
+      const sets: string[] = [];
+      const params: any[] = [];
+      for (const f of fields) {
+        if (args[f] !== undefined) { sets.push(`${f} = ?`); params.push(args[f]); }
+      }
+      if (sets.length === 0) return JSON.stringify({ error: 'No fields to update' });
+      params.push(args.id, userId);
+      await db.prepare(`UPDATE todos SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).bind(...params).run();
+      return JSON.stringify({ success: true, id: args.id });
+    }
+    case 'delete_todo': {
+      await db.prepare('DELETE FROM todos WHERE id = ? AND user_id = ?').bind(args.id, userId).run();
+      return JSON.stringify({ success: true, deleted: args.id });
+    }
+
+    // ── Calendar ──
+    case 'list_calendar_events': {
+      const start = args?.start || new Date().toISOString().split('T')[0];
+      const end = args?.end || new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
+      const rows = await db.prepare('SELECT id, title, event_type, start_time, end_time, all_day, status, location FROM calendar_events WHERE user_id = ? AND start_time BETWEEN ? AND ? ORDER BY start_time')
+        .bind(userId, start, end).all();
+      return JSON.stringify(rows.results);
+    }
+    case 'create_calendar_event': {
+      const id = `evt-${uuidv4().slice(0, 8)}`;
+      await db.prepare('INSERT INTO calendar_events (id, user_id, title, start_time, end_time, description, location, customer_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .bind(id, userId, args.title, args.start_time, args.end_time || null, args.description || null, args.location || null, args.customer_id || null).run();
+      return JSON.stringify({ success: true, id, title: args.title });
+    }
+    case 'delete_calendar_event': {
+      await db.prepare('DELETE FROM calendar_events WHERE id = ? AND user_id = ?').bind(args.id, userId).run();
+      return JSON.stringify({ success: true, deleted: args.id });
+    }
+
+    // ── Company ──
+    case 'get_company': {
+      const row = await db.prepare('SELECT * FROM company_settings WHERE user_id = ?').bind(userId).first();
+      if (!row) return JSON.stringify({ error: 'Company not configured' });
+      return JSON.stringify(row);
+    }
+    case 'update_company': {
+      const fields = ['name', 'address', 'phone', 'email', 'website', 'tagline', 'legal_name', 'short_name', 'tax_id'];
+      const sets: string[] = [];
+      const params: any[] = [];
+      for (const f of fields) {
+        if (args[f] !== undefined) { sets.push(`${f} = ?`); params.push(args[f]); }
+      }
+      if (sets.length === 0) return JSON.stringify({ error: 'No fields to update' });
+      sets.push("updated_at = datetime('now')");
+      params.push(userId);
+      await db.prepare(`UPDATE company_settings SET ${sets.join(', ')} WHERE user_id = ?`).bind(...params).run();
+      return JSON.stringify({ success: true });
+    }
+
     default:
       return '{}';
   }
@@ -164,7 +528,7 @@ async function executeTool(name: string, db: D1Database, userId: string, args: a
 
 async function callDeepSeek(apiKey: string, messages: any[], tools?: any[]): Promise<any> {
   const body: any = {
-    model: 'deepseek-v4-flash',
+    model: 'deepseek-chat',
     messages,
     max_tokens: 800,
     temperature: 0.3,
@@ -283,7 +647,9 @@ chat.post('/', async (c) => {
   }
 
   try {
-    const messages: any[] = [{ role: 'system', content: SYSTEM_PROMPT }];
+    const today = new Date().toISOString().split('T')[0];
+    const systemPrompt = SYSTEM_PROMPT + `\n\nCurrent date: ${today}`;
+    const messages: any[] = [{ role: 'system', content: systemPrompt }];
     if (Array.isArray(history)) {
       for (const msg of history.slice(-8)) {
         if (msg.role && msg.content) messages.push({ role: msg.role, content: msg.content });
@@ -312,40 +678,47 @@ chat.post('/', async (c) => {
     } else {
       reply = choice?.message?.content || 'Sorry, I could not process that.';
 
-      // Handle DSML-format tool calls in text (DeepSeek fallback)
-      // Match both full-width ｜ and regular | pipe variants
-      const P = '[\uff5c|]'; // fullwidth pipe or regular pipe
-      const dsmlRegex = new RegExp(`<${P}{2}DSML${P}{2}tool_calls>([\\s\\S]*?)<\\/${P}{2}DSML${P}{2}tool_calls>`);
-      const dsmlMatch = reply.match(dsmlRegex);
-      if (dsmlMatch) {
-        const invokeRegex = new RegExp(`<${P}{2}DSML${P}{2}invoke name="(\\w+)">([\\s\\S]*?)<\\/${P}{2}DSML${P}{2}invoke>`, 'g');
-        let m;
+      // Handle DSML or XML-like tool calls in text (fallback for models without structured tool calling)
+      // Broad match: any tag containing "DSML" or "tool_call"
+      const tagPattern = /<[^>]*DSML[^>]*>|<[^>]*tool_call[^>]*>/i;
+      const hasToolTags = tagPattern.test(reply);
+
+      if (hasToolTags) {
+        // Try to extract function name and parameters from various formats
         const toolResults: string[] = [];
-        while ((m = invokeRegex.exec(dsmlMatch[1])) !== null) {
-          const fnName = m[1];
-          const paramRegex = new RegExp(`<${P}{2}DSML${P}{2}parameter name="(\\w+)"[^>]*>([\\s\\S]*?)<\\/${P}{2}DSML${P}{2}parameter>`, 'g');
+
+        // Pattern 1: <...invoke name="fnName">...<...parameter name="key">value</...>...</...invoke>
+        const invokePattern = /<[^>]*invoke\s+name="(\w+)"[^>]*>([\s\S]*?)<\/[^>]*invoke>/gi;
+        let im;
+        while ((im = invokePattern.exec(reply)) !== null) {
+          const fnName = im[1];
+          const paramPattern = /<[^>]*parameter\s+name="(\w+)"[^>]*>([\s\S]*?)<\/[^>]*parameter>/gi;
           const fnArgs: Record<string, string> = {};
           let pm;
-          while ((pm = paramRegex.exec(m[2])) !== null) {
+          while ((pm = paramPattern.exec(im[2])) !== null) {
             fnArgs[pm[1]] = pm[2].trim();
           }
           const result = await executeTool(fnName, db, user.id, fnArgs);
           toolResults.push(`${fnName}: ${result}`);
         }
 
+        // Strip all DSML/tool_call tags from reply
+        const cleanReply = reply
+          .replace(/<[^>]*DSML[^>]*>[\s\S]*?(<\/[^>]*DSML[^>]*>)?/gi, '')
+          .replace(/<[^>]*tool_call[^>]*>[\s\S]*?(<\/[^>]*tool_call[^>]*>)?/gi, '')
+          .replace(/<[^>]*invoke[^>]*>[\s\S]*?<\/[^>]*invoke>/gi, '')
+          .replace(/<[^>]*parameter[^>]*>[\s\S]*?<\/[^>]*parameter>/gi, '')
+          .trim();
+
         if (toolResults.length > 0) {
-          messages.push({ role: 'assistant', content: reply.replace(dsmlRegex, '').trim() });
+          messages.push({ role: 'assistant', content: cleanReply });
           messages.push({ role: 'user', content: `[Tool results]\n${toolResults.join('\n')}\n\nPlease summarize the results concisely.` });
           const resp2 = await callDeepSeek(apiKey, messages);
-          reply = resp2.choices?.[0]?.message?.content || reply.replace(dsmlRegex, '').trim();
+          reply = resp2.choices?.[0]?.message?.content || cleanReply || 'Done.';
         } else {
-          reply = reply.replace(dsmlRegex, '').trim();
+          reply = cleanReply || 'Done.';
         }
       }
-
-      // Final cleanup: strip any remaining DSML-like tags
-      reply = reply.replace(new RegExp(`<${P}{2}DSML${P}{2}\\w+>[\\s\\S]*?(<\\/${P}{2}DSML${P}{2}\\w+>)?`, 'g'), '').trim();
-      reply = reply.replace(new RegExp(`<${P}{2}DSML${P}{2}[^>]*>`, 'g'), '').trim();
     }
 
     // Save assistant reply

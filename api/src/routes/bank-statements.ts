@@ -7,7 +7,6 @@ import { authMiddleware } from '../middleware/auth';
 const bank = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 // ── Download file (token-protected) ──
-// Supports: Authorization header OR ?token=jwt_query_param
 bank.get('/:id/file', async (c) => {
   let userId: string | null = null;
   const auth = c.req.header('Authorization');
@@ -77,6 +76,141 @@ bank.get('/', async (c) => {
   return c.json({ data: rows.results });
 });
 
+// ── Auto-match bank deposits to invoices ──
+bank.post('/auto-match', async (c) => {
+  const user = c.get('user');
+  const db = c.env.DB;
+
+  const deposits = await db.prepare(
+    `SELECT id, transaction_date, description, deposit_amount, reference
+     FROM bank_transactions
+     WHERE user_id = ? AND deposit_amount > 0 AND match_status = 'unmatched'
+     ORDER BY transaction_date`
+  ).bind(user.id).all();
+
+  const invoices = await db.prepare(
+    `SELECT id, invoice_number, total, currency, issue_date, due_date, customer_id
+     FROM invoices
+     WHERE user_id = ? AND status NOT IN ('paid', 'cancelled')`
+  ).bind(user.id).all();
+
+  const matched: any[] = [];
+  const usedInvoiceIds = new Set<string>();
+
+  for (const tx of deposits.results as any[]) {
+    let bestMatch: any = null;
+    let bestConfidence = '';
+
+    for (const inv of (invoices.results as any[]).filter(i => !usedInvoiceIds.has(i.id))) {
+      const amountMatch = Math.abs(tx.deposit_amount - inv.total) < 0.01;
+      if (!amountMatch) continue;
+
+      const descHasInv = tx.description.toUpperCase().includes(inv.invoice_number.toUpperCase())
+        || (tx.reference && tx.reference.toUpperCase().includes(inv.invoice_number.toUpperCase()));
+
+      if (descHasInv) {
+        bestMatch = inv;
+        bestConfidence = 'high';
+        break;
+      }
+
+      const txDate = new Date(tx.transaction_date);
+      const issueDate = new Date(inv.issue_date);
+      const dueDate = new Date(inv.due_date || inv.issue_date);
+      dueDate.setDate(dueDate.getDate() + 7);
+
+      if (txDate >= issueDate && txDate <= dueDate) {
+        if (!bestMatch || bestConfidence !== 'high') {
+          bestMatch = inv;
+          bestConfidence = 'medium';
+        }
+      } else if (!bestMatch) {
+        bestMatch = inv;
+        bestConfidence = 'low';
+      }
+    }
+
+    if (bestMatch) {
+      const reason = bestConfidence === 'high'
+        ? `金額 $${tx.deposit_amount} 相符且描述含發票號 ${bestMatch.invoice_number}`
+        : bestConfidence === 'medium'
+        ? `金額 $${tx.deposit_amount} 相符且日期在發票期間內`
+        : `金額 $${tx.deposit_amount} 相符`;
+
+      await db.prepare(
+        `UPDATE bank_transactions SET invoice_id = ?, match_confidence = ?, match_status = 'suggested' WHERE id = ?`
+      ).bind(bestMatch.id, bestConfidence, tx.id).run();
+
+      matched.push({
+        transaction_id: tx.id,
+        invoice_id: bestMatch.id,
+        invoice_number: bestMatch.invoice_number,
+        amount: tx.deposit_amount,
+        confidence: bestConfidence,
+        reason,
+      });
+      usedInvoiceIds.add(bestMatch.id);
+    }
+  }
+
+  const unmatchedCount = (deposits.results as any[]).length - matched.length;
+  return c.json({ matched, unmatched_count: unmatchedCount });
+});
+
+// ── List match suggestions ──
+bank.get('/match-suggestions', async (c) => {
+  const user = c.get('user');
+  const rows = await c.env.DB.prepare(
+    `SELECT bt.id, bt.transaction_date, bt.description, bt.deposit_amount, bt.match_confidence,
+     i.id as invoice_id, i.invoice_number, i.total as invoice_total, i.status as invoice_status
+     FROM bank_transactions bt
+     JOIN invoices i ON bt.invoice_id = i.id
+     WHERE bt.user_id = ? AND bt.match_status = 'suggested'
+     ORDER BY bt.transaction_date`
+  ).bind(user.id).all();
+  return c.json({ data: rows.results });
+});
+
+// ── Confirm or unlink a match ──
+bank.patch('/transactions/:id/match', async (c) => {
+  const user = c.get('user');
+  const db = c.env.DB;
+  const txId = c.req.param('id');
+  const body = await c.req.json();
+  const { invoice_id, action } = body;
+
+  const tx = await db.prepare(
+    'SELECT id, transaction_date FROM bank_transactions WHERE id = ? AND user_id = ?'
+  ).bind(txId, user.id).first<{ id: string; transaction_date: string }>();
+  if (!tx) return c.json({ error: 'Transaction not found' }, 404);
+
+  if (action === 'confirm' && invoice_id) {
+    const inv = await db.prepare(
+      'SELECT id FROM invoices WHERE id = ? AND user_id = ?'
+    ).bind(invoice_id, user.id).first();
+    if (!inv) return c.json({ error: 'Invoice not found' }, 404);
+
+    await db.prepare(
+      `UPDATE bank_transactions SET invoice_id = ?, match_confidence = 'manual', match_status = 'confirmed' WHERE id = ?`
+    ).bind(invoice_id, txId).run();
+
+    await db.prepare(
+      `UPDATE invoices SET status = 'paid', paid_date = ?, updated_at = datetime('now') WHERE id = ?`
+    ).bind(tx.transaction_date, invoice_id).run();
+
+    return c.json({ success: true, invoice_status: 'paid', paid_date: tx.transaction_date });
+  }
+
+  if (action === 'unlink') {
+    await db.prepare(
+      `UPDATE bank_transactions SET invoice_id = NULL, match_confidence = NULL, match_status = 'unmatched' WHERE id = ?`
+    ).bind(txId).run();
+    return c.json({ success: true });
+  }
+
+  return c.json({ error: 'action must be confirm or unlink' }, 400);
+});
+
 // ── Get single (with transactions) ──
 bank.get('/:id', async (c) => {
   const user = c.get('user');
@@ -89,10 +223,14 @@ bank.get('/:id', async (c) => {
   if (!stmt) return c.json({ error: 'Not found' }, 404);
 
   const txs = await c.env.DB.prepare(
-    `SELECT id, transaction_date, description, deposit_amount, withdrawal_amount,
-     balance, account_type, reference, sort_order
-     FROM bank_transactions WHERE bank_statement_id = ?
-     ORDER BY sort_order`
+    `SELECT bt.id, bt.transaction_date, bt.description, bt.deposit_amount, bt.withdrawal_amount,
+     bt.balance, bt.account_type, bt.reference, bt.sort_order,
+     bt.invoice_id, bt.match_confidence, bt.match_status,
+     i.invoice_number, i.total as invoice_total, i.status as invoice_status
+     FROM bank_transactions bt
+     LEFT JOIN invoices i ON bt.invoice_id = i.id
+     WHERE bt.bank_statement_id = ?
+     ORDER BY bt.sort_order`
   ).bind(c.req.param('id')).all();
 
   return c.json({ ...stmt, transactions: txs.results });

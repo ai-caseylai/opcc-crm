@@ -2,7 +2,7 @@ import React, { useState, useCallback, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
-import { Upload, Download, Trash2, Search, Pencil, X, Check, File, FileText, FileSpreadsheet, Image, FolderOpen, Folder, ChevronRight, ChevronDown } from 'lucide-react';
+import { Upload, Download, Trash2, Search, Pencil, X, Check, File, FileText, FileSpreadsheet, Image, FolderOpen, Folder, ChevronRight, ChevronDown, Zap } from 'lucide-react';
 
 function formatSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -54,6 +54,10 @@ interface FileItem {
   file_size: number;
   folder: string;
   description?: string;
+  category?: string;
+  direction?: string;
+  payment_status?: string;
+  amount?: number;
   created_at: string;
 }
 
@@ -88,9 +92,10 @@ function buildTree(files: FileItem[]): TreeNode {
   return root;
 }
 
-function FolderTree({ node, depth, expanded, toggle, onFileAction }: {
+function FolderTree({ node, depth, expanded, toggle, onFileAction, onSetDirection }: {
   node: TreeNode; depth: number; expanded: Set<string>; toggle: (p: string) => void;
   onFileAction: (action: string, f: FileItem) => void;
+  onSetDirection: (id: string, direction: string) => void;
 }) {
   const { t } = useTranslation();
   const isExpanded = expanded.has(node.path) || depth === 0;
@@ -111,7 +116,7 @@ function FolderTree({ node, depth, expanded, toggle, onFileAction }: {
       {isExpanded && (
         <>
           {node.children.map(child => (
-            <FolderTree key={child.path} node={child} depth={depth + 1} expanded={expanded} toggle={toggle} onFileAction={onFileAction} />
+            <FolderTree key={child.path} node={child} depth={depth + 1} expanded={expanded} toggle={toggle} onFileAction={onFileAction} onSetDirection={onSetDirection} />
           ))}
           {node.files.map(f => (
             <div key={f.id} className="flex items-center justify-between hover:bg-muted/30 rounded-md px-2 py-1.5"
@@ -123,11 +128,36 @@ function FolderTree({ node, depth, expanded, toggle, onFileAction }: {
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
                     <span>{formatSize(f.file_size || 0)}</span>
                     <span>{f.created_at?.slice(0, 10)}</span>
+                    {f.category === 'invoice' && f.direction && (
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                        f.direction === 'outgoing' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' : 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300'
+                      }`}>{f.direction === 'outgoing' ? '銷售' : '採購'}</span>
+                    )}
+                    {f.category === 'invoice' && f.payment_status && f.payment_status !== 'unmatched' && (
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                        f.payment_status === 'received' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
+                        : f.payment_status === 'paid' ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300'
+                        : 'bg-gray-100 text-gray-700'
+                      }`}>{f.payment_status === 'received' ? '已收' : f.payment_status === 'paid' ? '已付' : f.payment_status}</span>
+                    )}
+                    {f.category === 'invoice' && f.amount != null && (
+                      <span className="font-mono">${f.amount.toLocaleString()}</span>
+                    )}
                     {f.description && <span className="truncate max-w-[200px]">— {f.description}</span>}
                   </div>
                 </div>
               </div>
               <div className="flex gap-1 ml-2 shrink-0">
+                {f.category === 'invoice' && (
+                  <button onClick={() => onSetDirection(f.id, f.direction === 'outgoing' ? 'incoming' : 'outgoing')}
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${
+                      f.direction === 'outgoing' ? 'border-blue-300 text-blue-600 hover:bg-blue-50' :
+                      f.direction === 'incoming' ? 'border-orange-300 text-orange-600 hover:bg-orange-50' :
+                      'border-gray-300 text-gray-500 hover:bg-gray-50'
+                    }`} title="切換銷售/採購">
+                    {!f.direction ? '?' : f.direction === 'outgoing' ? '銷' : '採'}
+                  </button>
+                )}
                 <button onClick={() => downloadFile(f.id, f.filename || 'file')} className="p-1 hover:bg-muted rounded"><Download className="h-3.5 w-3.5" /></button>
                 <button onClick={() => onFileAction('edit', f)} className="p-1 hover:bg-muted rounded"><Pencil className="h-3.5 w-3.5" /></button>
                 <button onClick={() => { if (confirm(t('common.confirmDelete'))) onFileAction('delete', f); }} className="p-1 hover:bg-muted rounded text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
@@ -197,6 +227,14 @@ export default function FileStorage() {
     },
   });
 
+  const autoMatchMut = useMutation({
+    mutationFn: () => api('/file-storage/auto-match-invoices', { method: 'POST' }),
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ['file-storage'] });
+      alert(`配對完成：${data.matched?.length || 0} 筆成功，${data.unmatched || 0} 筆未配對`);
+    },
+  });
+
   const uploadFiles = useCallback((fileList: FileList | File[]) => {
     const arr = Array.from(fileList);
     if (arr.length === 0) return;
@@ -249,6 +287,16 @@ export default function FileStorage() {
     } else if (action === 'delete') {
       deleteMut.mutate(f.id);
     }
+  };
+
+  const directionMut = useMutation({
+    mutationFn: ({ id, direction }: { id: string; direction: string }) =>
+      api(`/file-storage/${id}/direction`, { method: 'PATCH', body: JSON.stringify({ direction }) }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['file-storage'] }),
+  });
+
+  const handleSetDirection = (id: string, direction: string) => {
+    directionMut.mutate({ id, direction });
   };
 
   const fileList = (files?.data || []) as FileItem[];
@@ -305,6 +353,10 @@ export default function FileStorage() {
           {folderList.map(f => <option key={f} value={f}>{f}</option>)}
         </select>
         <span className="text-xs text-muted-foreground">{fileList.length} 個檔案</span>
+        <button onClick={() => autoMatchMut.mutate()} disabled={autoMatchMut.isPending}
+          className="flex items-center gap-1 px-3 py-2 bg-primary text-primary-foreground rounded-md text-xs hover:opacity-90 disabled:opacity-40">
+          <Zap className="h-3 w-3" /> 配對發票
+        </button>
       </div>
 
       {/* Folder Tree View */}
@@ -331,7 +383,7 @@ export default function FileStorage() {
         ) : fileList.length === 0 ? (
           <p className="text-sm text-muted-foreground text-center py-8">{t('fileStorage.noData')}</p>
         ) : (
-          <FolderTree node={tree} depth={0} expanded={expanded} toggle={toggleFolder} onFileAction={handleFileAction} />
+          <FolderTree node={tree} depth={0} expanded={expanded} toggle={toggleFolder} onFileAction={handleFileAction} onSetDirection={handleSetDirection} />
         )}
       </div>
     </div>

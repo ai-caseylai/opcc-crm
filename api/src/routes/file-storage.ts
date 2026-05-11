@@ -4,11 +4,29 @@ import { Bindings, Variables } from '../types';
 import { authMiddleware } from '../middleware/auth';
 import { wsBroadcast } from './ws';
 
+// Extract the largest dollar amount from OCR text
+function extractAmount(ocrText: string): number | null {
+  const amounts: number[] = [];
+  // Match patterns like $10,000.00 or HKD 10000 or 10,000.00
+  for (const match of ocrText.matchAll(/(?:\$|HKD|HK\$)\s*([\d,]+\.?\d*)/gi)) {
+    const n = parseFloat(match[1].replace(/,/g, ''));
+    if (n > 0) amounts.push(n);
+  }
+  // Also match "Total: 10,000.00" patterns
+  for (const match of ocrText.matchAll(/(?:total|金額|金額|合計|合计|amount)\s*[:：]?\s*([\d,]+\.?\d*)/gi)) {
+    const n = parseFloat(match[1].replace(/,/g, ''));
+    if (n > 0) amounts.push(n);
+  }
+  if (amounts.length === 0) return null;
+  // Return the largest amount (likely the total)
+  return Math.max(...amounts);
+}
+
 const files = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 files.use('*', authMiddleware);
 
 // Auto-classify file based on filename patterns
-function classifyFile(filename: string, fileType: string): { folder: string; category: string } {
+function classifyFile(filename: string, fileType: string, ocrText?: string): { folder: string; category: string; direction?: string } {
   const name = filename.toLowerCase();
   const type = fileType.toLowerCase();
 
@@ -40,9 +58,17 @@ function classifyFile(filename: string, fileType: string): { folder: string; cat
   if (/rental|lease|tenancy|租約|租约|租單|租单|tenancy\s*agreement|lease\s*agreement/i.test(name)) {
     return { folder: 'Rental Leases', category: 'rl' };
   }
-  // Invoices
+  // Invoices — try to detect direction from OCR text
   if (/invoice|發票|发票|inv[_-]?\d/i.test(name)) {
-    return { folder: 'Invoices', category: 'invoice' };
+    let direction: string | undefined;
+    const txt = (ocrText || '').toUpperCase();
+    // If OCR mentions "payment" or "bill to" or common purchase patterns, it's incoming
+    if (/BILL\s*TO|PURCHASE|PAYMENT\s*DUE|AMOUNT\s*DUE|供應商|供應商發票/i.test(txt)) {
+      direction = 'incoming';
+    } else if (/RECEIPT|收據|PAYMENT\s*RECEIVED|已收款/i.test(txt)) {
+      direction = 'outgoing';
+    }
+    return { folder: 'Invoices', category: 'invoice', direction };
   }
   // Receipts
   if (/receipt|收據|收据/i.test(name)) {
@@ -148,6 +174,8 @@ files.post('/upload', async (c) => {
 
   // Run OCR
   const ocrResult = await runOcr(file_data, file_type || '', c.env.AI);
+  const ocrDirection = classifyFile(safeName, file_type || '', ocrResult.text).direction || classification.direction;
+  const ocrAmount = classification.category === 'invoice' ? extractAmount(ocrResult.text) : null;
 
   const cleanBase64 = file_data.replace(/^data:.*?;base64,/, '');
   const binary = Uint8Array.from(atob(cleanBase64), ch => ch.charCodeAt(0));
@@ -158,11 +186,12 @@ files.post('/upload', async (c) => {
   });
 
   await c.env.DB.prepare(
-    `INSERT INTO file_records (id, user_id, folder, filename, original_name, file_type, file_size, r2_key, description, ocr_text, ocr_status, category)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO file_records (id, user_id, folder, filename, original_name, file_type, file_size, r2_key, description, ocr_text, ocr_status, category, direction, amount)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(id, user.id, folder, displayName, safeName,
     file_type || 'application/octet-stream', file_size || binary.byteLength,
-    r2Key, description || '', ocrResult.text, ocrResult.status, classification.category).run();
+    r2Key, description || '', ocrResult.text, ocrResult.status, classification.category,
+    ocrDirection || null, ocrAmount).run();
 
   const row = await c.env.DB.prepare(
     'SELECT id, folder, filename, original_name, file_type, file_size, description, ocr_status, category, created_at FROM file_records WHERE id = ?'
@@ -418,6 +447,74 @@ files.post('/:id/ocr-result', async (c) => {
   await db.prepare(`UPDATE file_records SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).bind(...params).run();
   const row = await db.prepare('SELECT id, filename, ocr_status, ocr_text, category, folder FROM file_records WHERE id = ?').bind(id).first();
   return c.json(row);
+});
+
+// ── Auto-match invoice files with bank transactions ──
+files.post('/auto-match-invoices', async (c) => {
+  const user = c.get('user');
+  const db = c.env.DB;
+
+  // Get unmatched invoice files with amounts
+  const invoiceFiles = await db.prepare(
+    `SELECT id, filename, original_name, ocr_text, direction, amount, category
+     FROM file_records
+     WHERE user_id = ? AND category = 'invoice' AND payment_status = 'unmatched' AND amount IS NOT NULL AND amount > 0`
+  ).bind(user.id).all();
+
+  // Get unmatched bank transactions
+  const deposits = await db.prepare(
+    `SELECT id, transaction_date, description, deposit_amount
+     FROM bank_transactions WHERE user_id = ? AND deposit_amount > 0 AND match_status = 'unmatched'`
+  ).bind(user.id).all();
+
+  const withdrawals = await db.prepare(
+    `SELECT id, transaction_date, description, withdrawal_amount
+     FROM bank_transactions WHERE user_id = ? AND withdrawal_amount > 0 AND match_status = 'unmatched'`
+  ).bind(user.id).all();
+
+  const matched: any[] = [];
+
+  for (const file of invoiceFiles.results as any[]) {
+    const isOutgoing = file.direction === 'outgoing' || !file.direction;
+    const candidates = isOutgoing ? deposits.results : withdrawals.results;
+    const amountKey = isOutgoing ? 'deposit_amount' : 'withdrawal_amount';
+    const newStatus = isOutgoing ? 'received' : 'paid';
+
+    for (const tx of candidates as any[]) {
+      if (Math.abs(file.amount - tx[amountKey]) < 0.01) {
+        await db.prepare(
+          `UPDATE file_records SET payment_status = ? WHERE id = ?`
+        ).bind(newStatus, file.id).run();
+
+        matched.push({
+          file_id: file.id,
+          filename: file.original_name || file.filename,
+          direction: isOutgoing ? 'outgoing' : 'incoming',
+          amount: file.amount,
+          transaction_id: tx.id,
+          transaction_date: tx.transaction_date,
+          new_status: newStatus,
+        });
+        break;
+      }
+    }
+  }
+
+  return c.json({ matched, unmatched: (invoiceFiles.results as any[]).length - matched.length });
+});
+
+// ── Update file direction manually ──
+files.patch('/:id/direction', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+  const { direction } = await c.req.json();
+  if (!['outgoing', 'incoming'].includes(direction)) {
+    return c.json({ error: 'direction must be outgoing or incoming' }, 400);
+  }
+  await c.env.DB.prepare(
+    'UPDATE file_records SET direction = ? WHERE id = ? AND user_id = ?'
+  ).bind(direction, id, user.id).run();
+  return c.json({ success: true });
 });
 
 export { files as fileStorageRoutes };

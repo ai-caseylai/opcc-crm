@@ -421,6 +421,9 @@ CREATE TABLE IF NOT EXISTS file_records (
   ocr_text TEXT DEFAULT '',
   ocr_status TEXT DEFAULT 'pending',
   category TEXT DEFAULT '',
+  direction TEXT,
+  payment_status TEXT DEFAULT 'unmatched',
+  amount REAL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -540,6 +543,9 @@ CREATE TABLE IF NOT EXISTS bank_transactions (
   account_type TEXT,
   reference TEXT,
   sort_order INTEGER NOT NULL DEFAULT 0,
+  invoice_id TEXT REFERENCES invoices(id),
+  match_confidence TEXT,
+  match_status TEXT NOT NULL DEFAULT 'unmatched',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
