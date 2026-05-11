@@ -111,6 +111,28 @@ const TOOLS: any[] = [
   { type: 'function', function: { name: 'get_bookkeeping_transactions', description: 'Get detailed transactions for a specific account code (e.g. 2102 for Director Loan, 1101 for Cash). Returns each entry with date, description, debit, credit, and running balance.', parameters: { type: 'object', properties: { account_code: { type: 'string', description: 'Account code (e.g. 2102, 1101, 4100)' }, start_date: { type: 'string', description: 'YYYY-MM-DD' }, end_date: { type: 'string', description: 'YYYY-MM-DD' } }, required: ['account_code'] } } },
   { type: 'function', function: { name: 'create_bookkeeping_transaction', description: 'Create a double-entry journal entry. Debits must equal credits. Use this to record transactions like Director Loans, repayments, revenue, expenses, etc.', parameters: { type: 'object', properties: { date: { type: 'string', description: 'Entry date YYYY-MM-DD' }, description: { type: 'string', description: 'Description of the journal entry' }, entries: { type: 'array', description: 'Array of line items. Each line has account_code, debit (number, default 0), credit (number, default 0), description (optional)', items: { type: 'object', properties: { account_code: { type: 'string', description: 'Account code (e.g. 1101, 2102, 4100)' }, debit: { type: 'number' }, credit: { type: 'number' }, description: { type: 'string' } }, required: ['account_code'] } } }, required: ['date', 'description', 'entries'] } } },
   { type: 'function', function: { name: 'get_recent_activity', description: 'Get recent audit log entries (recent changes)', parameters: { type: 'object', properties: { limit: { type: 'number' } }, required: [] } } },
+
+  // ── Bank Statements ──
+  { type: 'function', function: { name: 'list_bank_statements', description: 'List bank statements with optional year filter', parameters: { type: 'object', properties: { year: { type: 'number', description: 'Filter by year (e.g. 2025)' }, limit: { type: 'number' } }, required: [] } } },
+  { type: 'function', function: { name: 'get_bank_statement', description: 'Get a bank statement with all its transactions', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Bank statement ID' } }, required: ['id'] } } },
+  { type: 'function', function: { name: 'delete_bank_statement', description: 'Delete a bank statement and its transactions', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Bank statement ID' } }, required: ['id'] } } },
+
+  // ── Expense Receipts ──
+  { type: 'function', function: { name: 'list_expense_receipts', description: 'List expense receipts with optional category and year filter', parameters: { type: 'object', properties: { category: { type: 'string', description: 'Filter by category' }, year: { type: 'number', description: 'Filter by year' }, limit: { type: 'number' } }, required: [] } } },
+  { type: 'function', function: { name: 'get_expense_receipt', description: 'Get expense receipt details', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Receipt ID' } }, required: ['id'] } } },
+  { type: 'function', function: { name: 'delete_expense_receipt', description: 'Delete an expense receipt', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Receipt ID' } }, required: ['id'] } } },
+
+  // ── File Storage ──
+  { type: 'function', function: { name: 'list_files', description: 'List files with optional folder and search filter', parameters: { type: 'object', properties: { folder: { type: 'string', description: 'Filter by folder name' }, query: { type: 'string', description: 'Search filename, description, or OCR text' }, limit: { type: 'number' } }, required: [] } } },
+  { type: 'function', function: { name: 'get_file', description: 'Get file metadata details', parameters: { type: 'object', properties: { id: { type: 'string', description: 'File ID' } }, required: ['id'] } } },
+  { type: 'function', function: { name: 'update_file', description: 'Update file metadata (filename, folder, description)', parameters: { type: 'object', properties: { id: { type: 'string', description: 'File ID' }, filename: { type: 'string' }, folder: { type: 'string' }, description: { type: 'string' } }, required: ['id'] } } },
+  { type: 'function', function: { name: 'delete_file', description: 'Delete a file', parameters: { type: 'object', properties: { id: { type: 'string', description: 'File ID' } }, required: ['id'] } } },
+
+  // ── Documents (BR/CI/EI etc.) ──
+  { type: 'function', function: { name: 'list_documents', description: 'List documents (BR, CI, EI, EC, TC, RL) with optional type filter', parameters: { type: 'object', properties: { type: { type: 'string', description: 'Document type: br, ci, ei, ec, tc, rl' }, limit: { type: 'number' } }, required: [] } } },
+  { type: 'function', function: { name: 'get_document', description: 'Get document details', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Document ID' } }, required: ['id'] } } },
+  { type: 'function', function: { name: 'update_document', description: 'Update document metadata (br_number, company_name, issue_date, expiry_date)', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Document ID' }, br_number: { type: 'string' }, company_name: { type: 'string' }, issue_date: { type: 'string' }, expiry_date: { type: 'string' } }, required: ['id'] } } },
+  { type: 'function', function: { name: 'delete_document', description: 'Delete a document', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Document ID' } }, required: ['id'] } } },
 ];
 
 async function executeTool(name: string, db: D1Database, userId: string, args: any = {}): Promise<string> {
@@ -647,6 +669,112 @@ async function executeTool(name: string, db: D1Database, userId: string, args: a
       params.push(userId);
       await db.prepare(`UPDATE company_settings SET ${sets.join(', ')} WHERE user_id = ?`).bind(...params).run();
       return JSON.stringify({ success: true });
+    }
+
+    // ── Bank Statements ──
+    case 'list_bank_statements': {
+      let q = 'SELECT id, bank_name, account_number, statement_year, statement_month, opening_balance, closing_balance, file_name, created_at FROM bank_statements WHERE user_id = ?';
+      const params: any[] = [userId];
+      if (args?.year) { q += ' AND statement_year = ?'; params.push(args.year); }
+      q += ' ORDER BY statement_year DESC, statement_month DESC LIMIT ?'; params.push(limit);
+      const rows = await db.prepare(q).bind(...params).all();
+      return JSON.stringify(rows.results);
+    }
+    case 'get_bank_statement': {
+      const bs = await db.prepare('SELECT * FROM bank_statements WHERE id = ? AND user_id = ?').bind(args.id, userId).first();
+      if (!bs) return JSON.stringify({ error: 'Bank statement not found' });
+      const txns = await db.prepare('SELECT id, transaction_date, description, deposit_amount, withdrawal_amount, balance, reference, match_status, invoice_id FROM bank_transactions WHERE bank_statement_id = ? ORDER BY sort_order').bind(args.id).all();
+      return JSON.stringify({ ...bs, transactions: txns.results });
+    }
+    case 'delete_bank_statement': {
+      await db.prepare('DELETE FROM bank_transactions WHERE bank_statement_id = ? AND user_id = ?').bind(args.id, userId).run();
+      await db.prepare('DELETE FROM bank_statements WHERE id = ? AND user_id = ?').bind(args.id, userId).run();
+      return JSON.stringify({ success: true, deleted: args.id });
+    }
+
+    // ── Expense Receipts ──
+    case 'list_expense_receipts': {
+      let q = 'SELECT id, file_name, vendor_name, amount, expense_date, category, description, payment_method, status, created_at FROM expense_receipts WHERE user_id = ?';
+      const params: any[] = [userId];
+      if (args?.category) { q += ' AND category = ?'; params.push(args.category); }
+      if (args?.year) { q += " AND substr(expense_date,1,4) = ?"; params.push(String(args.year)); }
+      q += ' ORDER BY created_at DESC LIMIT ?'; params.push(limit);
+      const rows = await db.prepare(q).bind(...params).all();
+      return JSON.stringify(rows.results);
+    }
+    case 'get_expense_receipt': {
+      const row = await db.prepare('SELECT * FROM expense_receipts WHERE id = ? AND user_id = ?').bind(args.id, userId).first();
+      if (!row) return JSON.stringify({ error: 'Expense receipt not found' });
+      return JSON.stringify(row);
+    }
+    case 'delete_expense_receipt': {
+      await db.prepare('DELETE FROM expense_receipts WHERE id = ? AND user_id = ?').bind(args.id, userId).run();
+      return JSON.stringify({ success: true, deleted: args.id });
+    }
+
+    // ── File Storage ──
+    case 'list_files': {
+      let q = 'SELECT id, folder, filename, file_type, file_size, category, direction, ocr_status, description, created_at FROM file_records WHERE user_id = ?';
+      const params: any[] = [userId];
+      if (args?.folder) { q += ' AND folder = ?'; params.push(args.folder); }
+      if (args?.query) { q += ' AND (filename LIKE ? OR description LIKE ? OR ocr_text LIKE ?)'; params.push(`%${args.query}%`, `%${args.query}%`, `%${args.query}%`); }
+      q += ' ORDER BY created_at DESC LIMIT ?'; params.push(limit);
+      const rows = await db.prepare(q).bind(...params).all();
+      return JSON.stringify(rows.results);
+    }
+    case 'get_file': {
+      const row = await db.prepare('SELECT id, folder, filename, original_name, file_type, file_size, category, direction, ocr_status, ocr_text, description, amount, payment_status, created_at FROM file_records WHERE id = ? AND user_id = ?').bind(args.id, userId).first();
+      if (!row) return JSON.stringify({ error: 'File not found' });
+      return JSON.stringify(row);
+    }
+    case 'update_file': {
+      const fields = ['filename', 'folder', 'description'];
+      const sets: string[] = [];
+      const params: any[] = [];
+      for (const f of fields) {
+        if (args[f] !== undefined) { sets.push(`${f} = ?`); params.push(args[f]); }
+      }
+      if (sets.length === 0) return JSON.stringify({ error: 'No fields to update' });
+      sets.push("updated_at = datetime('now')");
+      params.push(args.id, userId);
+      await db.prepare(`UPDATE file_records SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).bind(...params).run();
+      return JSON.stringify({ success: true, id: args.id });
+    }
+    case 'delete_file': {
+      await db.prepare('DELETE FROM file_records WHERE id = ? AND user_id = ?').bind(args.id, userId).run();
+      return JSON.stringify({ success: true, deleted: args.id });
+    }
+
+    // ── Documents ──
+    case 'list_documents': {
+      let q = 'SELECT id, doc_type, doc_year, file_name, br_number, company_name_ocr, issue_date, expiry_date, status, created_at FROM documents WHERE user_id = ?';
+      const params: any[] = [userId];
+      if (args?.type) { q += ' AND doc_type = ?'; params.push(args.type); }
+      q += ' ORDER BY created_at DESC LIMIT ?'; params.push(limit);
+      const rows = await db.prepare(q).bind(...params).all();
+      return JSON.stringify(rows.results);
+    }
+    case 'get_document': {
+      const row = await db.prepare('SELECT * FROM documents WHERE id = ? AND user_id = ?').bind(args.id, userId).first();
+      if (!row) return JSON.stringify({ error: 'Document not found' });
+      return JSON.stringify(row);
+    }
+    case 'update_document': {
+      const fields = ['br_number', 'company_name_ocr', 'issue_date', 'expiry_date', 'doc_year'];
+      const sets: string[] = [];
+      const params: any[] = [];
+      for (const f of fields) {
+        if (args[f] !== undefined) { sets.push(`${f} = ?`); params.push(args[f]); }
+      }
+      if (sets.length === 0) return JSON.stringify({ error: 'No fields to update' });
+      sets.push("updated_at = datetime('now')");
+      params.push(args.id, userId);
+      await db.prepare(`UPDATE documents SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).bind(...params).run();
+      return JSON.stringify({ success: true, id: args.id });
+    }
+    case 'delete_document': {
+      await db.prepare('DELETE FROM documents WHERE id = ? AND user_id = ?').bind(args.id, userId).run();
+      return JSON.stringify({ success: true, deleted: args.id });
     }
 
     default:
