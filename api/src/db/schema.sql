@@ -418,6 +418,9 @@ CREATE TABLE IF NOT EXISTS file_records (
   file_size INTEGER NOT NULL DEFAULT 0,
   r2_key TEXT NOT NULL,
   description TEXT DEFAULT '',
+  ocr_text TEXT DEFAULT '',
+  ocr_status TEXT DEFAULT 'pending',
+  category TEXT DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -497,3 +500,51 @@ CREATE TABLE IF NOT EXISTS service_order_items (
 
 CREATE INDEX IF NOT EXISTS idx_purchase_orders_user ON purchase_orders(user_id);
 CREATE INDEX IF NOT EXISTS idx_service_orders_user ON service_orders(user_id);
+
+-- Bank Statements (enhanced with R2 support)
+CREATE TABLE IF NOT EXISTS bank_statements (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  file_name TEXT,
+  file_type TEXT DEFAULT 'application/pdf',
+  file_data TEXT DEFAULT '',
+  r2_key TEXT,
+  bank_name TEXT,
+  account_number TEXT,
+  branch TEXT,
+  currency TEXT DEFAULT 'HKD',
+  account_type TEXT,
+  statement_year INTEGER,
+  statement_month INTEGER,
+  period_start TEXT,
+  period_end TEXT,
+  opening_balance REAL,
+  closing_balance REAL,
+  page_count INTEGER,
+  ocr_text TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Bank Transactions (individual records within a statement)
+CREATE TABLE IF NOT EXISTS bank_transactions (
+  id TEXT PRIMARY KEY,
+  bank_statement_id TEXT NOT NULL REFERENCES bank_statements(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  transaction_date TEXT NOT NULL,
+  description TEXT NOT NULL,
+  deposit_amount REAL DEFAULT 0,
+  withdrawal_amount REAL DEFAULT 0,
+  balance REAL DEFAULT 0,
+  account_type TEXT,
+  reference TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_bank_statements_user ON bank_statements(user_id);
+CREATE INDEX IF NOT EXISTS idx_bank_statements_period ON bank_statements(user_id, statement_year, statement_month);
+CREATE INDEX IF NOT EXISTS idx_bank_transactions_stmt ON bank_transactions(bank_statement_id);
+CREATE INDEX IF NOT EXISTS idx_bank_transactions_user ON bank_transactions(user_id);
+CREATE INDEX IF NOT EXISTS idx_bank_transactions_date ON bank_transactions(user_id, transaction_date);

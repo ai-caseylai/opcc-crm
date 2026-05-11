@@ -16,6 +16,9 @@ export default function Products() {
     queryFn: () => api(`/products?q=${search}&page=${page}&limit=20`),
   });
 
+  // Filter out Service-category items (shown on Services page instead)
+  const products = (data?.data || []).filter((p: any) => p.category !== 'Service');
+
   const createMut = useMutation({
     mutationFn: (body: any) => api('/products', { method: 'POST', body }),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['products'] }); setShowForm(false); resetForm(); },
@@ -32,8 +35,7 @@ export default function Products() {
   });
 
   function resetForm() {
-    setForm({ name: '', description: '', unit_price: 0, currency: 'HKD', unit: 'pcs', category: '', sku: '' });
-    setEditId(null);
+    setForm({ name: '', description: '', unit_price: 0, currency: 'HKD', unit: 'pcs', category: 'Product', sku: '' });    setEditId(null);
   }
 
   function openEdit(p: any) {
@@ -48,14 +50,12 @@ export default function Products() {
     else createMut.mutate(form);
   }
 
-  const products = data?.data || [];
-
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold">產品 Products</h2>
-          <p className="text-muted-foreground mt-1">管理產品與服務</p>
+          <p className="text-muted-foreground mt-1">管理產品（服務類項目請到服務頁）</p>
         </div>
         <button onClick={() => { resetForm(); setShowForm(true); }}
           className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:opacity-90">

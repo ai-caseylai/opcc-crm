@@ -1,9 +1,49 @@
 import { Hono } from 'hono';
 import { v4 as uuidv4 } from 'uuid';
+import { verify as jwtVerify } from 'jsonwebtoken';
 import { Bindings, Variables } from '../types';
 import { authMiddleware } from '../middleware/auth';
 
 const expenses = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+
+// ── Download file (token-protected) ──
+// Supports: Authorization header OR ?token=jwt_query_param
+expenses.get('/:id/file', async (c) => {
+  let userId: string | null = null;
+  const auth = c.req.header('Authorization');
+  if (auth?.startsWith('Bearer ')) {
+    try {
+      const payload = jwtVerify(auth.slice(7), c.env.JWT_SECRET || 'dev-secret-change-me') as { id: string };
+      userId = payload.id;
+    } catch {}
+  }
+  if (!userId) {
+    const token = c.req.query('token');
+    if (token) {
+      try {
+        const payload = jwtVerify(token, c.env.JWT_SECRET || 'dev-secret-change-me') as { id: string };
+        userId = payload.id;
+      } catch {}
+    }
+  }
+  if (!userId) return c.json({ error: 'Authentication required' }, 401);
+
+  const row = await c.env.DB.prepare(
+    'SELECT file_data, file_type, file_name, user_id FROM expense_receipts WHERE id = ?'
+  ).bind(c.req.param('id')).first<{ file_data: string; file_type: string; file_name: string; user_id: string }>();
+  if (!row) return c.json({ error: 'Not found' }, 404);
+  if (row.user_id !== userId) return c.json({ error: 'Not found' }, 404);
+
+  const base64 = row.file_data.replace(/^data:.*?;base64,/, '');
+  const binary = Uint8Array.from(atob(base64), ch => ch.charCodeAt(0));
+  return new Response(binary, {
+    headers: {
+      'Content-Type': row.file_type || 'image/png',
+      'Content-Disposition': `inline; filename="${row.file_name || 'receipt'}"`,
+    },
+  });
+});
+
 expenses.use('*', authMiddleware);
 
 // ── List ──
@@ -80,22 +120,6 @@ expenses.post('/upload', async (c) => {
   return c.json({ ...row, ocr_used: c.env.AI ? !!ocrText && ocrText.length > 20 : false }, 201);
 });
 
-// ── Download file ──
-expenses.get('/:id/file', async (c) => {
-  const user = c.get('user');
-  const row = await c.env.DB.prepare('SELECT file_data, file_type, file_name FROM expense_receipts WHERE id = ? AND user_id = ?')
-    .bind(c.req.param('id'), user.id).first<{ file_data: string; file_type: string; file_name: string }>();
-  if (!row) return c.json({ error: 'Not found' }, 404);
-
-  const base64 = row.file_data.replace(/^data:.*?;base64,/, '');
-  const binary = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
-  return new Response(binary, {
-    headers: {
-      'Content-Type': row.file_type || 'image/png',
-      'Content-Disposition': `inline; filename="${row.file_name || 'receipt'}"`,
-    },
-  });
-});
 
 // ── Delete ──
 expenses.delete('/:id', async (c) => {

@@ -9,6 +9,45 @@ import { ensureProducts } from '../lib/auto-product';
 const invoices = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 invoices.use('*', authMiddleware);
 
+async function generateInvoiceNumber(db: D1Database, userId: string): Promise<string> {
+  const row = await db.prepare(
+    'SELECT invoice_number_pattern FROM company_settings WHERE user_id = ?'
+  ).bind(userId).first<{ invoice_number_pattern: string }>();
+
+  const pattern = row?.invoice_number_pattern || 'INV{YY}{MM}-{NNN}';
+  const now = new Date();
+  const YYYY = now.getFullYear().toString();
+  const YY = YYYY.slice(-2);
+  const MM = (now.getMonth() + 1).toString().padStart(2, '0');
+  const DD = now.getDate().toString().padStart(2, '0');
+
+  // Expand date tokens to get prefix before counter
+  let prefix = pattern
+    .replace('{YYYY}', YYYY)
+    .replace('{YY}', YY)
+    .replace('{MM}', MM)
+    .replace('{DD}', DD);
+
+  // Extract counter length from {N+} placeholder
+  const counterMatch = pattern.match(/\{(N+)\}/);
+  const counterLen = counterMatch ? counterMatch[1].length : 4;
+  prefix = prefix.replace(/\{N+\}/, '');
+
+  // Find highest existing number with this prefix
+  const result = await db.prepare(
+    'SELECT invoice_number FROM invoices WHERE user_id = ? AND invoice_number LIKE ? ORDER BY invoice_number DESC LIMIT 1'
+  ).bind(userId, `${prefix}%`).first<{ invoice_number: string }>();
+
+  let counter = 1;
+  if (result) {
+    const numPart = result.invoice_number.substring(prefix.length);
+    const num = parseInt(numPart, 10);
+    if (!isNaN(num)) counter = num + 1;
+  }
+
+  return prefix + counter.toString().padStart(counterLen, '0');
+}
+
 invoices.get('/', async (c) => {
   const user = c.get('user');
   const db = c.env.DB;
@@ -51,11 +90,13 @@ const itemSchema = z.object({
 });
 
 const createSchema = z.object({
-  invoice_number: z.string().min(1), customer_id: z.string().min(1), supplier_id: z.string().optional(),
+  invoice_number: z.string().optional(), customer_id: z.string().min(1), supplier_id: z.string().optional(),
   issue_date: z.string(), due_date: z.string(), status: z.string().optional(),
   currency: z.string().optional(), tax_rate: z.number().optional(), discount_amount: z.number().optional(),
   notes: z.string().optional(), terms: z.string().optional(),
   receipt_number: z.string().optional(), paid_date: z.string().optional(),
+  attn: z.string().optional(), customer_phone: z.string().optional(),
+  customer_email: z.string().optional(), customer_address: z.string().optional(),
   items: z.array(itemSchema).min(1),
 });
 
@@ -65,6 +106,8 @@ invoices.post('/', zValidator('json', createSchema), async (c) => {
   const data = c.req.valid('json');
   const id = `i-${uuidv4().slice(0, 8)}`;
 
+  const invoice_number = data.invoice_number || await generateInvoiceNumber(db, user.id);
+
   const subtotal = data.items.reduce((sum, item) => sum + item.amount, 0);
   const taxRate = data.tax_rate || 0;
   const taxAmount = subtotal * (taxRate / 100);
@@ -72,8 +115,8 @@ invoices.post('/', zValidator('json', createSchema), async (c) => {
   const total = subtotal + taxAmount - discount;
 
   await db.prepare(
-    `INSERT INTO invoices (id, user_id, invoice_number, customer_id, supplier_id, status, issue_date, due_date, subtotal, tax_rate, tax_amount, discount_amount, total, currency, notes, terms, receipt_number, paid_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(id, user.id, data.invoice_number, data.customer_id, data.supplier_id || null, data.status || 'draft', data.issue_date, data.due_date, subtotal, taxRate, taxAmount, discount, total, data.currency || 'HKD', data.notes || null, data.terms || null, data.receipt_number || null, data.paid_date || null).run();
+    `INSERT INTO invoices (id, user_id, invoice_number, customer_id, supplier_id, status, issue_date, due_date, subtotal, tax_rate, tax_amount, discount_amount, total, currency, notes, terms, receipt_number, paid_date, attn, customer_phone, customer_email, customer_address) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(id, user.id, invoice_number, data.customer_id, data.supplier_id || null, data.status || 'draft', data.issue_date, data.due_date, subtotal, taxRate, taxAmount, discount, total, data.currency || 'HKD', data.notes || null, data.terms || null, data.receipt_number || null, data.paid_date || null, data.attn || null, data.customer_phone || null, data.customer_email || null, data.customer_address || null).run();
 
   for (let i = 0; i < data.items.length; i++) {
     const item = data.items[i];

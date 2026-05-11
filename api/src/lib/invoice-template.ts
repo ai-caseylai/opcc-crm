@@ -16,8 +16,9 @@ import {
   PDFFont,
   PDFPage,
   PDFDocument,
-  PNGImage,
 } from 'pdf-lib';
+
+type PNGImage = any;
 
 export const PAGE_W = 595.28;
 export const PAGE_H = 841.89;
@@ -99,7 +100,7 @@ function drawCJKText(page: PDFPage, cjkFontKey: any, text: string, x: number, y:
     hex += text.charCodeAt(i).toString(16).padStart(4, '0');
   }
   const encoded = PDFHexString.of(hex);
-  const contentStream = page.getContentStream();
+  const contentStream = (page as any).getContentStream();
   contentStream.push(
     pushGraphicsState(),
     beginText(),

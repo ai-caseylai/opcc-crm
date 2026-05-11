@@ -1,9 +1,49 @@
 import { Hono } from 'hono';
 import { v4 as uuidv4 } from 'uuid';
+import { verify as jwtVerify } from 'jsonwebtoken';
 import { Bindings, Variables } from '../types';
 import { authMiddleware } from '../middleware/auth';
 
 const docs = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+
+// ── Download file (token-protected) ──
+// Supports: Authorization header OR ?token=jwt_query_param
+docs.get('/:id/file', async (c) => {
+  let userId: string | null = null;
+  const auth = c.req.header('Authorization');
+  if (auth?.startsWith('Bearer ')) {
+    try {
+      const payload = jwtVerify(auth.slice(7), c.env.JWT_SECRET || 'dev-secret-change-me') as { id: string };
+      userId = payload.id;
+    } catch {}
+  }
+  if (!userId) {
+    const token = c.req.query('token');
+    if (token) {
+      try {
+        const payload = jwtVerify(token, c.env.JWT_SECRET || 'dev-secret-change-me') as { id: string };
+        userId = payload.id;
+      } catch {}
+    }
+  }
+  if (!userId) return c.json({ error: 'Authentication required' }, 401);
+
+  const row = await c.env.DB.prepare(
+    'SELECT file_data, file_type, file_name, user_id FROM documents WHERE id = ?'
+  ).bind(c.req.param('id')).first<{ file_data: string; file_type: string; file_name: string; user_id: string }>();
+  if (!row) return c.json({ error: 'Not found' }, 404);
+  if (row.user_id !== userId) return c.json({ error: 'Not found' }, 404);
+
+  const base64 = row.file_data.replace(/^data:image\/\w+;base64,/, '');
+  const binary = Uint8Array.from(atob(base64), ch => ch.charCodeAt(0));
+  return new Response(binary, {
+    headers: {
+      'Content-Type': row.file_type || 'image/png',
+      'Content-Disposition': `inline; filename="${row.file_name || 'document'}"`,
+    },
+  });
+});
+
 docs.use('*', authMiddleware);
 
 // ── List documents ──
@@ -35,7 +75,7 @@ docs.post('/upload', async (c) => {
   const { doc_type, doc_year, file_name, file_type, file_data } = body;
 
   if (!doc_type || !file_data) return c.json({ error: 'doc_type and file_data required' }, 400);
-  if (!['br', 'ci'].includes(doc_type)) return c.json({ error: 'doc_type must be br or ci' }, 400);
+  if (!['br', 'ci', 'ei', 'ec', 'tc', 'rl'].includes(doc_type)) return c.json({ error: 'doc_type must be br, ci, ei, ec, tc, or rl' }, 400);
 
   const id = `doc-${uuidv4().slice(0, 8)}`;
 
@@ -49,7 +89,7 @@ docs.post('/upload', async (c) => {
   let ocrSuccess = false;
 
   // OCR via Cloudflare Workers AI
-  if (c.env.AI && doc_type === 'br') {
+  if (c.env.AI && ['br', 'ci', 'ei', 'ec'].includes(doc_type)) {
     try {
       const cleanBase64 = file_data.replace(/^data:image\/\w+;base64,/, '');
       const aiResponse = await c.env.AI.run('@cf/unum/uform-gen2-qwen-500m', {
@@ -127,21 +167,5 @@ docs.delete('/:id', async (c) => {
   return c.json({ success: true });
 });
 
-// ── Download file data ──
-docs.get('/:id/file', async (c) => {
-  const user = c.get('user');
-  const row = await c.env.DB.prepare('SELECT file_data, file_type, file_name FROM documents WHERE id = ? AND user_id = ?')
-    .bind(c.req.param('id'), user.id).first<{ file_data: string; file_type: string; file_name: string }>();
-  if (!row) return c.json({ error: 'Not found' }, 404);
-
-  const base64 = row.file_data.replace(/^data:image\/\w+;base64,/, '');
-  const binary = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
-  return new Response(binary, {
-    headers: {
-      'Content-Type': row.file_type || 'image/png',
-      'Content-Disposition': `inline; filename="${row.file_name || 'document'}"`,
-    },
-  });
-});
 
 export { docs as documentRoutes };

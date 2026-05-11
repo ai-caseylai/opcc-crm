@@ -29,6 +29,7 @@ import Integrations from './pages/Integrations';
 import PaymentPage from './pages/PaymentPage';
 import CommunicationPage from './pages/CommunicationPage';
 import WebsiteGenerator from './pages/WebsiteGenerator';
+import CardGenerator from './pages/CardGenerator';
 import Settings from './pages/Settings';
 import FileStorage from './pages/FileStorage';
 
@@ -114,6 +115,7 @@ function AppRoutes() {
       <Route path="/communication" element={<ProtectedRoute><CommunicationPage /></ProtectedRoute>} />
       <Route path="/integrations" element={<ProtectedRoute><Integrations /></ProtectedRoute>} />
       <Route path="/website-generator" element={<ProtectedRoute><WebsiteGenerator /></ProtectedRoute>} />
+      <Route path="/card-generator" element={<ProtectedRoute><CardGenerator /></ProtectedRoute>} />
       <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
       <Route path="*" element={<Navigate to="/" />} />
     </Routes>

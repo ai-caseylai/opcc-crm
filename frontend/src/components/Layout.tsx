@@ -7,7 +7,7 @@ import { api } from '../lib/api';
 import Chatbot from './Chatbot';
 import {
   LayoutDashboard, Users, Truck, Package, FileText, FileSpreadsheet, Mail,
-  Calculator, Upload, Settings, LogOut, Menu, X, MessageCircle, Calendar, Briefcase, FolderOpen, Plug, SlidersHorizontal, Landmark, Receipt, CheckSquare, Globe, CreditCard, Smartphone, HardDrive, ShoppingCart, ClipboardList,
+  Calculator, Upload, Settings, LogOut, Menu, X, MessageCircle, Calendar, Briefcase, FolderOpen, Plug, SlidersHorizontal, Landmark, Receipt, CheckSquare, Globe, CreditCard, Smartphone, HardDrive, ShoppingCart, ClipboardList, AlertCircle,
 } from 'lucide-react';
 
 const navGroups = [
@@ -57,13 +57,13 @@ const navGroups = [
       { to: '/file-storage', icon: HardDrive, key: 'fileStorage' },
       { to: '/todos', icon: CheckSquare, key: 'todos' },
       { to: '/documents', icon: FolderOpen, key: 'documents' },
-      { to: '/import', icon: Upload, key: 'import' },
     ],
   },
   {
     label: '',
     items: [
       { to: '/website-generator', icon: Globe, key: 'websiteGenerator' },
+      { to: '/card-generator', icon: CreditCard, key: 'cardGenerator' },
       { to: '/modules', icon: SlidersHorizontal, key: 'modules' },
       { to: '/payment', icon: CreditCard, key: 'payment' },
       { to: '/communication', icon: Smartphone, key: 'communication' },
@@ -111,6 +111,13 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     queryFn: () => api('/company'),
   });
   const activeCompany = liveCompany || company;
+
+  const { data: fileIssues } = useQuery({
+    queryKey: ['file-storage-issues'],
+    queryFn: () => api('/file-storage/issues'),
+    refetchInterval: 60000,
+  });
+  const issueCount = (fileIssues?.issues as number) || 0;
 
   // Parse features from live company data (or fallback to AuthContext)
   const features: Record<string, boolean> = React.useMemo(() => {
@@ -182,7 +189,13 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                       <Link key={item.to} to={item.to} onClick={() => setSidebarOpen(false)}
                         className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${isActive ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-muted'}`}>
                         <Icon className="h-4 w-4" />
-                        <span>{t(`nav.${item.key}`)}</span>
+                        <span className="flex-1">{t(`nav.${item.key}`)}</span>
+                        {item.key === 'fileStorage' && issueCount > 0 && (
+                          <span className="flex items-center gap-0.5 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none">
+                            <AlertCircle className="h-2.5 w-2.5" />
+                            {issueCount}
+                          </span>
+                        )}
                       </Link>
                     );
                   })}

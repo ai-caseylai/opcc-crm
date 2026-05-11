@@ -17,13 +17,14 @@
     "messages": "消息",
     "settings": "设置",
     "logout": "登出",
-    "documents": "文件",
+    "documents": "公司文件",
     "integrations": "集成",
     "modules": "模块",
     "bankStatements": "银行月结单",
     "expenseReceipts": "消费单据",
     "todos": "待办事项",
     "websiteGenerator": "网站生成",
+    "cardGenerator": "名片生成",
     "mail": "收件箱",
     "payment": "收款",
     "communication": "通讯",
@@ -287,8 +288,20 @@
     "upload": "上传文件",
     "brCert": "商业登记证 BR",
     "ciCert": "公司注册证书 CI",
+    "ei": "EI 劳工保险",
+    "eiCert": "劳工保险单 EI",
+    "ec": "雇佣合约",
+    "ecCert": "雇佣合约",
+    "tc": "电信合约",
+    "tcCert": "电信合约",
+    "rl": "租单",
+    "rlCert": "租约",
     "noBr": "尚未上传商业登记证",
-    "noCi": "尚未上传公司注册证书"
+    "noCi": "尚未上传公司注册证书",
+    "noEi": "尚未上传劳工保险单",
+    "noEc": "尚未上传雇佣合约",
+    "noTc": "尚未上传电信合约",
+    "noRl": "尚未上传租约"
   },
   "modules": {
     "title": "模块开关",
@@ -304,7 +317,19 @@
     "year": "年份",
     "month": "月份",
     "list": "月结单列表",
-    "noData": "尚未上传月结单"
+    "noData": "尚未上传月结单",
+    "transactions": "笔交易",
+    "date": "日期",
+    "description": "摘要",
+    "deposit": "存入",
+    "withdrawal": "支出",
+    "balance": "结余",
+    "branch": "分行",
+    "currency": "货币",
+    "accountType": "账户类型",
+    "period": "期间",
+    "opening": "期初",
+    "closing": "期末"
   },
   "expense": {
     "title": "消费单据",
@@ -337,7 +362,28 @@
     "noData": "尚未上传任何文件",
     "dragDrop": "拖拉文件到这里",
     "dropHere": "放开以上传文件",
-    "orClick": "或点击选择文件"
+    "orClick": "或点击选择文件",
+    "issues": "个文件需要处理",
+    "ocrStatus": {
+      "pending": "处理中",
+      "completed": "OCR 完成",
+      "failed": "OCR 失败",
+      "unclear": "不清楚",
+      "skipped": "已跳过"
+    },
+    "category": {
+      "bank_statement": "银行月结单",
+      "br": "商业登记证",
+      "ci": "公司注册证书",
+      "ei": "劳工保险",
+      "invoice": "发票",
+      "receipt": "收据",
+      "contract": "合同",
+      "document": "文件",
+      "image": "图片",
+      "spreadsheet": "试算表",
+      "general": "一般"
+    }
   },
   "purchaseOrders": {
     "title": "采购单",

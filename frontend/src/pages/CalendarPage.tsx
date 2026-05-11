@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { ChevronLeft, ChevronRight, Plus, X, CalendarDays, Columns, Clock } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, X, CalendarDays, Columns, Clock, CalendarRange, Download } from 'lucide-react';
 
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'];
 const COLORS = ['#2563eb','#dc2626','#16a34a','#ca8a04','#9333ea','#0891b2','#db2777','#4f46e5'];
@@ -14,7 +14,7 @@ function fmtTime(d: Date) { return `${String(d.getHours()).padStart(2,'0')}:${St
 export default function CalendarPage() {
   const queryClient = useQueryClient();
   const today = new Date();
-  const [view, setView] = useState<'month'|'week'|'day'>('month');
+  const [view, setView] = useState<'year'|'month'|'week'|'day'>('month');
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth());
   const [weekStart, setWeekStart] = useState(() => {
@@ -22,11 +22,14 @@ export default function CalendarPage() {
   });
   const [dayDate, setDayDate] = useState(() => new Date(today));
   const [showForm, setShowForm] = useState(false);
+  const [pdfPreview, setPdfPreview] = useState<{type: string; id: string; number: string} | null>(null);
   const [form, setForm] = useState({ title: '', description: '', event_type: 'appointment', start_time: '', end_time: '', all_day: 0, customer_id: '', color: '#2563eb', location: '' });
 
   // Compute date range
   const range = useMemo(() => {
-    if (view === 'month') {
+    if (view === 'year') {
+      return { start: `${year}-01-01`, end: `${year}-12-31` };
+    } else if (view === 'month') {
       const lastDay = new Date(year, month + 1, 0).getDate();
       return { start: `${year}-${String(month+1).padStart(2,'0')}-01`, end: `${year}-${String(month+1).padStart(2,'0')}-${lastDay}` };
     } else if (view === 'week') {
@@ -40,6 +43,24 @@ export default function CalendarPage() {
   const { data: events } = useQuery({
     queryKey: ['calendar-events', range.start, range.end],
     queryFn: () => api(`/calendar/events?start=${range.start}&end=${range.end}`),
+  });
+
+  const { data: invoicesData } = useQuery({
+    queryKey: ['calendar-invoices', range.start, range.end],
+    queryFn: () => api(`/invoices?limit=500`),
+    select: (d: any) => (d?.data || []).filter((inv: any) => {
+      const d1 = inv.issue_date || inv.due_date;
+      return d1 >= range.start && d1 <= range.end;
+    }),
+  });
+
+  const { data: poData } = useQuery({
+    queryKey: ['calendar-pos', range.start, range.end],
+    queryFn: () => api(`/purchase-orders?limit=500`),
+    select: (d: any) => (d?.data || []).filter((po: any) => {
+      const d1 = po.issue_date || po.due_date;
+      return d1 >= range.start && d1 <= range.end;
+    }),
   });
 
   const { data: customers } = useQuery({
@@ -66,10 +87,30 @@ export default function CalendarPage() {
   };
 
   const evList = (events?.data || []);
+  const handleEventClick = (e: any, ev: React.MouseEvent) => {
+    ev.stopPropagation();
+    if (e._type === 'invoice') {
+      setPdfPreview({ type: 'invoice', id: e._ref.id, number: e._ref.invoice_number });
+    } else if (e._type === 'po') {
+      setPdfPreview({ type: 'purchase-order', id: e._ref.id, number: e._ref.po_number });
+    } else {
+      const refType = e.reference_type;
+      const refId = e.reference_id;
+      if (refType === 'invoice' && refId) {
+        setPdfPreview({ type: 'invoice', id: refId, number: '' });
+      } else if (refType === 'document' && refId) {
+        // navigate away — skip for now
+      } else {
+        if (confirm(`刪除「${e.title}」?`)) deleteMut.mutate(e.id);
+      }
+    }
+  };
 
   // ── Navigation ──
   const nav = (dir: -1|1) => {
-    if (view === 'month') {
+    if (view === 'year') {
+      setYear(y => y + dir);
+    } else if (view === 'month') {
       const m = month + dir;
       if (m < 0) { setYear(y => y-1); setMonth(11); }
       else if (m > 11) { setYear(y => y+1); setMonth(0); }
@@ -81,7 +122,9 @@ export default function CalendarPage() {
     }
   };
 
-  const title = view === 'month'
+  const title = view === 'year'
+    ? `${year} 年`
+    : view === 'month'
     ? `${year} 年 ${month + 1} 月`
     : view === 'week'
     ? `${fmt(weekStart)} — ${fmt(new Date(new Date(weekStart).setDate(weekStart.getDate()+6)))}`
@@ -92,7 +135,12 @@ export default function CalendarPage() {
   const firstDow = new Date(year, month, 1).getDay();
   const getDayEvents = (day: number) => {
     const ds = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    return evList.filter((e: any) => e.start_time?.startsWith(ds));
+    const calEvents = evList.filter((e: any) => e.start_time?.startsWith(ds));
+    const invEvents = (invoicesData || []).filter((inv: any) => (inv.issue_date === ds || inv.due_date === ds))
+      .map((inv: any) => ({ id: `inv-${inv.id}`, title: `賣 ${inv.invoice_number}`, color: '#16a34a', _type: 'invoice', _ref: inv }));
+    const poEvents = (poData || []).filter((po: any) => (po.issue_date === ds || po.due_date === ds))
+      .map((po: any) => ({ id: `po-${po.id}`, title: `買 ${po.po_number}`, color: '#dc2626', _type: 'po', _ref: po }));
+    return [...calEvents, ...invEvents, ...poEvents];
   };
 
   // ── Week helpers ──
@@ -109,7 +157,12 @@ export default function CalendarPage() {
   };
   const weekAllDay = (date: Date) => {
     const ds = fmt(date);
-    return evList.filter((e: any) => e.all_day && e.start_time?.startsWith(ds));
+    const calAllDay = evList.filter((e: any) => e.all_day && e.start_time?.startsWith(ds));
+    const invEvents = (invoicesData || []).filter((inv: any) => (inv.issue_date === ds || inv.due_date === ds))
+      .map((inv: any) => ({ id: `inv-${inv.id}`, title: `賣 ${inv.invoice_number}`, color: '#16a34a', _type: 'invoice' }));
+    const poEvents = (poData || []).filter((po: any) => (po.issue_date === ds || po.due_date === ds))
+      .map((po: any) => ({ id: `po-${po.id}`, title: `買 ${po.po_number}`, color: '#dc2626', _type: 'po' }));
+    return [...calAllDay, ...invEvents, ...poEvents];
   };
 
   return (
@@ -118,11 +171,19 @@ export default function CalendarPage() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 className="text-2xl font-bold">日曆 Calendar</h2>
-          <p className="text-muted-foreground mt-1">排程與事件管理</p>
+          <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+            <span>排程與買賣狀況</span>
+            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-green-600 inline-block" />賣 Invoice</span>
+            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-red-600 inline-block" />買 Purchase</span>
+          </div>
         </div>
         <div className="flex items-center gap-3">
           {/* View toggle */}
           <div className="flex bg-muted rounded-md p-0.5">
+            <button onClick={() => setView('year')}
+              className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${view === 'year' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+              <CalendarRange className="h-3.5 w-3.5 inline mr-1" />年
+            </button>
             <button onClick={() => setView('month')}
               className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${view === 'month' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
               <CalendarDays className="h-3.5 w-3.5 inline mr-1" />月
@@ -146,6 +207,47 @@ export default function CalendarPage() {
         </div>
       </div>
 
+      {/* ── Year View ── */}
+      {view === 'year' && (
+        <div className="grid grid-cols-3 lg:grid-cols-4 gap-4">
+          {Array.from({ length: 12 }, (_, mi) => {
+            const mLastDay = new Date(year, mi + 1, 0).getDate();
+            const mFirstDow = new Date(year, mi, 1).getDay();
+            return (
+              <div key={mi} className="bg-card border rounded-xl p-3 cursor-pointer hover:shadow-sm transition-shadow"
+                onClick={() => { setMonth(mi); setView('month'); }}>
+                <div className="text-sm font-semibold text-center mb-2">{mi + 1} 月</div>
+                <div className="grid grid-cols-7 gap-px text-center">
+                  {WEEKDAYS.map(w => <div key={w} className="text-[9px] text-muted-foreground">{w}</div>)}
+                  {Array.from({ length: 42 }, (_, di) => {
+                    const dn = di - mFirstDow + 1;
+                    const inM = dn >= 1 && dn <= mLastDay;
+                    if (!inM) return <div key={di} />;
+                    const ds = `${year}-${String(mi+1).padStart(2,'0')}-${String(dn).padStart(2,'0')}`;
+                    const hasCal = evList.some((e: any) => e.start_time?.startsWith(ds));
+                    const hasInv = (invoicesData || []).some((inv: any) => inv.issue_date === ds || inv.due_date === ds);
+                    const hasPo = (poData || []).some((po: any) => po.issue_date === ds || po.due_date === ds);
+                    const isToday = year === today.getFullYear() && mi === today.getMonth() && dn === today.getDate();
+                    return (
+                      <div key={di} className="relative flex items-center justify-center">
+                        <span className={`text-[10px] ${isToday ? 'font-bold text-primary' : ''}`}>{dn}</span>
+                        {(hasCal || hasInv || hasPo) && (
+                          <span className="absolute bottom-0 flex gap-px">
+                            {hasInv && <span className="w-1 h-1 rounded-full bg-green-600" />}
+                            {hasPo && <span className="w-1 h-1 rounded-full bg-red-600" />}
+                            {hasCal && !hasInv && !hasPo && <span className="w-1 h-1 rounded-full bg-blue-600" />}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* ── Month View ── */}
       {view === 'month' && (
         <div className="bg-card border rounded-xl overflow-hidden">
@@ -168,7 +270,7 @@ export default function CalendarPage() {
                     {dayEvents.slice(0, 3).map((e: any) => (
                       <div key={e.id} title={e.title} className="text-xs truncate rounded px-1 py-0.5 cursor-pointer hover:opacity-80"
                         style={{ backgroundColor: e.color + '20', color: e.color, borderLeft: `3px solid ${e.color}` }}
-                        onClick={(ev) => { ev.stopPropagation(); if (confirm(`刪除「${e.title}」?`)) deleteMut.mutate(e.id); }}>
+                        onClick={(ev) => handleEventClick(e, ev)}>
                         {e.all_day ? '' : (e.start_time?.split('T')[1]?.slice(0, 5) || '') + ' '}{e.title}
                       </div>
                     ))}
@@ -197,7 +299,7 @@ export default function CalendarPage() {
                   {ad.length > 0 && (
                     <div className="mt-0.5 space-y-0.5">
                       {ad.slice(0, 2).map((e: any) => (
-                        <div key={e.id} className="text-[10px] truncate rounded px-1 py-0.5" style={{ backgroundColor: e.color + '30', color: e.color }}>{e.title}</div>
+                        <div key={e.id} title={e.title} className="text-[10px] truncate rounded px-1 py-0.5 cursor-pointer hover:opacity-80" style={{ backgroundColor: e.color + '30', color: e.color }} onClick={(ev) => handleEventClick(e, ev)}>{e.title}</div>
                       ))}
                     </div>
                   )}
@@ -222,7 +324,7 @@ export default function CalendarPage() {
                         <div key={e.id} title={`${e.title} — ${e.start_time?.split('T')[1]?.slice(0,5) || ''}`}
                           className="text-[10px] rounded px-1 py-0.5 mb-0.5 truncate cursor-pointer hover:opacity-80"
                           style={{ backgroundColor: e.color + '30', color: e.color, borderLeft: `3px solid ${e.color}` }}
-                          onClick={(ev) => { ev.stopPropagation(); if (confirm(`刪除「${e.title}」?`)) deleteMut.mutate(e.id); }}>
+                          onClick={(ev) => handleEventClick(e, ev)}>
                           {e.title}
                         </div>
                       ))}
@@ -244,7 +346,7 @@ export default function CalendarPage() {
               <div className="text-xs text-muted-foreground">{WEEKDAYS[dayDate.getDay()]}</div>
               <div className={`text-2xl font-bold ${fmt(dayDate) === fmt(today) ? 'text-primary' : ''}`}>{dayDate.getDate()}</div>
               {weekAllDay(dayDate).map((e: any) => (
-                <div key={e.id} className="text-xs mt-1 truncate rounded px-2 py-0.5" style={{ backgroundColor: e.color + '30', color: e.color }}>{e.title}</div>
+                <div key={e.id} title={e.title} className="text-xs mt-1 truncate rounded px-2 py-0.5 cursor-pointer hover:opacity-80" style={{ backgroundColor: e.color + '30', color: e.color }} onClick={(ev) => handleEventClick(e, ev)}>{e.title}</div>
               ))}
             </div>
             <div className="p-3 flex flex-col justify-center text-sm text-muted-foreground">
@@ -267,7 +369,7 @@ export default function CalendarPage() {
                       <div key={e.id} title={`${e.title} — ${e.start_time?.split('T')[1]?.slice(0,5) || ''} → ${e.end_time?.split('T')[1]?.slice(0,5) || ''}`}
                         className="text-xs rounded px-2 py-1 mb-0.5 cursor-pointer hover:opacity-80"
                         style={{ backgroundColor: e.color + '25', color: e.color, borderLeft: `4px solid ${e.color}` }}
-                        onClick={(ev) => { ev.stopPropagation(); if (confirm(`刪除「${e.title}」?`)) deleteMut.mutate(e.id); }}>
+                        onClick={(ev) => handleEventClick(e, ev)}>
                         <span className="font-medium">{e.start_time?.split('T')[1]?.slice(0,5) || ''}</span> {e.title}
                         {e.description && <span className="text-muted-foreground ml-1">— {e.description}</span>}
                       </div>
@@ -328,6 +430,25 @@ export default function CalendarPage() {
                 <button type="submit" className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm">建立</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── PDF Preview Modal ── */}
+      {pdfPreview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setPdfPreview(null)}>
+          <div className="bg-card border rounded-xl w-[85vw] max-w-[85vw] h-[85vh] mx-4 flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-4 py-3 border-b">
+              <h3 className="font-bold text-sm">{pdfPreview.type === 'invoice' ? '發票' : '採購單'} {pdfPreview.number}</h3>
+              <div className="flex items-center gap-2">
+                <a href={`/api/pdf/${pdfPreview.type}/${pdfPreview.id}`} target="_blank"
+                  className="flex items-center gap-1 text-xs text-primary hover:underline"><Download className="h-3.5 w-3.5" /> 下載 PDF</a>
+                <button onClick={() => setPdfPreview(null)} className="text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden">
+              <iframe src={`/api/pdf/${pdfPreview.type}/${pdfPreview.id}?inline`} className="w-full h-full" title="PDF Preview" />
+            </div>
           </div>
         </div>
       )}

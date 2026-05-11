@@ -17,13 +17,14 @@
     "messages": "Messages",
     "settings": "Settings",
     "logout": "Logout",
-    "documents": "Documents",
+    "documents": "Company Docs",
     "integrations": "Integrations",
     "modules": "Modules",
     "bankStatements": "Bank Statements",
     "expenseReceipts": "Expense Receipts",
     "todos": "Todo List",
     "websiteGenerator": "Website Gen",
+    "cardGenerator": "Card Gen",
     "mail": "Inbox",
     "payment": "Payments",
     "communication": "Comm",
@@ -287,8 +288,20 @@
     "upload": "Upload",
     "brCert": "Business Registration (BR)",
     "ciCert": "Certificate of Incorporation (CI)",
+    "ei": "EI Employee Insurance",
+    "eiCert": "Employee Insurance (EI)",
+    "ec": "Employment Contract",
+    "ecCert": "Employment Contract",
+    "tc": "Telecom Contract",
+    "tcCert": "Telecom Contract",
+    "rl": "Rental Lease",
+    "rlCert": "Rental Lease",
     "noBr": "No BR uploaded yet",
-    "noCi": "No CI uploaded yet"
+    "noCi": "No CI uploaded yet",
+    "noEi": "No EI uploaded yet",
+    "noEc": "No employment contract uploaded yet",
+    "noTc": "No telecom contract uploaded yet",
+    "noRl": "No rental lease uploaded yet"
   },
   "modules": {
     "title": "Module Toggles",
@@ -304,7 +317,19 @@
     "year": "Year",
     "month": "Month",
     "list": "Statements",
-    "noData": "No statements uploaded"
+    "noData": "No statements uploaded",
+    "transactions": "transactions",
+    "date": "Date",
+    "description": "Description",
+    "deposit": "Deposit",
+    "withdrawal": "Withdrawal",
+    "balance": "Balance",
+    "branch": "Branch",
+    "currency": "Currency",
+    "accountType": "Account Type",
+    "period": "Period",
+    "opening": "Opening",
+    "closing": "Closing"
   },
   "expense": {
     "title": "Expense Receipts",
@@ -337,7 +362,28 @@
     "noData": "No files uploaded yet",
     "dragDrop": "Drag & drop files here",
     "dropHere": "Drop files here",
-    "orClick": "or click to browse"
+    "orClick": "or click to browse",
+    "issues": "files need review",
+    "ocrStatus": {
+      "pending": "Processing",
+      "completed": "OCR done",
+      "failed": "OCR failed",
+      "unclear": "Unclear",
+      "skipped": "Skipped"
+    },
+    "category": {
+      "bank_statement": "Bank Statement",
+      "br": "Business Registration",
+      "ci": "Incorporation Cert",
+      "ei": "Insurance",
+      "invoice": "Invoice",
+      "receipt": "Receipt",
+      "contract": "Contract",
+      "document": "Document",
+      "image": "Image",
+      "spreadsheet": "Spreadsheet",
+      "general": "General"
+    }
   },
   "purchaseOrders": {
     "title": "Purchase Orders",

@@ -9,7 +9,6 @@ website.post('/', async (c) => {
   const user = c.get('user');
   const db = c.env.DB;
 
-  // Get company data
   const row = await db.prepare('SELECT * FROM company_settings WHERE user_id = ?').bind(user.id).first<Record<string,string>>();
   const company = {
     name: row?.name || 'My Company',
@@ -22,7 +21,8 @@ website.post('/', async (c) => {
     bank_account: row?.bank_account || '',
   };
 
-  if (!c.env.AI) return c.json({ error: 'AI not available' }, 503);
+  const apiKey = c.env.DEEPSEEK_API_KEY;
+  if (!apiKey) return c.json({ error: 'DeepSeek API key not configured' }, 503);
 
   const prompt = `Generate a complete, modern, professional single-page company website in HTML/CSS for "${company.name}".
 
@@ -50,20 +50,27 @@ Requirements:
 Output ONLY the HTML code, nothing else.`;
 
   try {
-    const response = await c.env.AI.run('@cf/meta/llama-3.1-8b-instruct', {
-      messages: [{ role: 'user', content: prompt }],
-      max_tokens: 3000,
-      temperature: 0.7,
+    const resp = await fetch('https://api.deepseek.com/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: 'deepseek-chat',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 8000,
+        temperature: 0.7,
+      }),
     });
 
-    let html = (response as any)?.response
-      || (response as any)?.choices?.[0]?.message?.content
-      || (typeof response === 'string' ? response : '');
+    if (!resp.ok) {
+      const err = await resp.text();
+      throw new Error(`DeepSeek API error: ${resp.status} ${err}`);
+    }
 
-    // Clean up: remove markdown code fences if present
+    const result = await resp.json() as { choices?: { message?: { content?: string } }[] };
+    let html = result.choices?.[0]?.message?.content || '';
+
     html = html.replace(/^```html?\s*\n?/i, '').replace(/\n?```\s*$/i, '');
 
-    // Ensure it starts with DOCTYPE
     if (!html.trim().startsWith('<!DOCTYPE') && !html.trim().startsWith('<html')) {
       html = '<!DOCTYPE html>\n<html lang="zh-HK">\n<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>' + company.name + '</title></head>\n<body>\n' + html + '\n</body>\n</html>';
     }
@@ -74,7 +81,6 @@ Output ONLY the HTML code, nothing else.`;
   }
 });
 
-// ── Preview: serve generated site as HTML ──
 website.post('/preview', async (c) => {
   const body = await c.req.json();
   const html = body.html || '';

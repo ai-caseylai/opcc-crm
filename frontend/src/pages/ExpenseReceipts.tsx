@@ -58,50 +58,6 @@ export default function ExpenseReceipts() {
         <p className="text-muted-foreground mt-1">{t('expense.desc')}</p>
       </div>
 
-      {/* Upload */}
-      <div className="bg-card border rounded-xl p-6 space-y-4">
-        <h3 className="font-semibold">{t('expense.upload')}</h3>
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-          <div>
-            <label className="text-xs text-muted-foreground">{t('expense.vendor')}</label>
-            <input value={vendorName} onChange={e => setVendorName(e.target.value)} placeholder="e.g. 大家樂"
-              className="w-full px-3 py-2 border rounded-md bg-background text-sm mt-0.5" />
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground">{t('expense.amount')}</label>
-            <input value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00" type="number" step="0.01"
-              className="w-full px-3 py-2 border rounded-md bg-background text-sm mt-0.5" />
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground">{t('expense.date')}</label>
-            <input type="date" value={expenseDate} onChange={e => setExpenseDate(e.target.value)}
-              className="w-full px-3 py-2 border rounded-md bg-background text-sm mt-0.5" />
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground">{t('expense.category')}</label>
-            <select value={category} onChange={e => setCategory(e.target.value)}
-              className="w-full px-3 py-2 border rounded-md bg-background text-sm mt-0.5">
-              <option value="">--</option>
-              {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground">{t('expense.payment')}</label>
-            <input value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)} placeholder="現金 / 信用卡"
-              className="w-full px-3 py-2 border rounded-md bg-background text-sm mt-0.5" />
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground">{t('expense.desc')}</label>
-            <input value={description} onChange={e => setDescription(e.target.value)} placeholder="..."
-              className="w-full px-3 py-2 border rounded-md bg-background text-sm mt-0.5" />
-          </div>
-        </div>
-        <label className="inline-flex items-center gap-2 cursor-pointer bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:opacity-90">
-          <Upload className="h-4 w-4" /> {uploading ? '...' : t('expense.uploadBtn')}
-          <input type="file" accept="image/*,.pdf" onChange={handleUpload} className="hidden" />
-        </label>
-      </div>
-
       {/* Receipts list */}
       <div className="bg-card border rounded-xl p-6 space-y-3">
         <h3 className="font-semibold flex items-center gap-2">
@@ -123,7 +79,7 @@ export default function ExpenseReceipts() {
                   </div>
                 </div>
                 <div className="flex gap-2 flex-shrink-0 ml-2">
-                  <a href={`/api/expense-receipts/${r.id}/file`} target="_blank" className="p-1.5 hover:bg-muted rounded"><Eye className="h-4 w-4" /></a>
+                  <a href={`/api/expense-receipts/${r.id}/file?token=${localStorage.getItem('token') || ''}`} target="_blank" className="p-1.5 hover:bg-muted rounded"><Eye className="h-4 w-4" /></a>
                   <button onClick={() => { if (confirm(t('common.confirmDelete'))) deleteMut.mutate(r.id); }} className="p-1.5 hover:bg-muted rounded text-destructive"><Trash2 className="h-4 w-4" /></button>
                 </div>
               </div>

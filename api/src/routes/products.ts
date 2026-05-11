@@ -12,6 +12,7 @@ products.get('/', async (c) => {
   const user = c.get('user');
   const db = c.env.DB;
   const search = c.req.query('q') || '';
+  const category = c.req.query('category') || '';
   const page = parseInt(c.req.query('page') || '1');
   const limit = parseInt(c.req.query('limit') || '100');
   const offset = (page - 1) * limit;
@@ -19,14 +20,17 @@ products.get('/', async (c) => {
   let query = 'SELECT * FROM products WHERE user_id = ? AND is_active = 1';
   const params: any[] = [user.id];
   if (search) { query += ' AND (name LIKE ? OR description LIKE ? OR sku LIKE ?)'; params.push(`%${search}%`, `%${search}%`, `%${search}%`); }
+  if (category) { query += ' AND category = ?'; params.push(category); }
   query += ' ORDER BY name ASC LIMIT ? OFFSET ?';
   params.push(limit, offset);
 
   const rows = await db.prepare(query).bind(...params).all();
-  const countRow = await db.prepare(
-    'SELECT COUNT(*) as count FROM products WHERE user_id = ? AND is_active = 1' +
-    (search ? ' AND (name LIKE ? OR description LIKE ? OR sku LIKE ?)' : '')
-  ).bind(...(search ? [user.id, `%${search}%`, `%${search}%`, `%${search}%`] : [user.id])).first<{ count: number }>();
+
+  let countQuery = 'SELECT COUNT(*) as count FROM products WHERE user_id = ? AND is_active = 1';
+  const countParams: any[] = [user.id];
+  if (search) { countQuery += ' AND (name LIKE ? OR description LIKE ? OR sku LIKE ?)'; countParams.push(`%${search}%`, `%${search}%`, `%${search}%`); }
+  if (category) { countQuery += ' AND category = ?'; countParams.push(category); }
+  const countRow = await db.prepare(countQuery).bind(...countParams).first<{ count: number }>();
   return c.json({ data: rows.results, total: countRow?.count || 0, page, limit });
 });
 

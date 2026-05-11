@@ -9,6 +9,24 @@ import { ensureProducts } from '../lib/auto-product';
 const po = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 po.use('*', authMiddleware);
 
+async function generatePONumber(db: D1Database, userId: string): Promise<string> {
+  const now = new Date();
+  const YY = now.getFullYear().toString().slice(-2);
+  const MM = (now.getMonth() + 1).toString().padStart(2, '0');
+  const prefix = `PO${YY}${MM}-`;
+
+  const result = await db.prepare(
+    'SELECT po_number FROM purchase_orders WHERE user_id = ? AND po_number LIKE ? ORDER BY po_number DESC LIMIT 1'
+  ).bind(userId, `${prefix}%`).first<{ po_number: string }>();
+
+  let counter = 1;
+  if (result) {
+    const num = parseInt(result.po_number.substring(prefix.length), 10);
+    if (!isNaN(num)) counter = num + 1;
+  }
+  return prefix + counter.toString().padStart(3, '0');
+}
+
 po.get('/', async (c) => {
   const user = c.get('user');
   const db = c.env.DB;
@@ -51,7 +69,7 @@ const itemSchema = z.object({
 });
 
 const createSchema = z.object({
-  po_number: z.string().min(1), supplier_id: z.string().optional(),
+  po_number: z.string().optional(), supplier_id: z.string().optional(),
   issue_date: z.string(), due_date: z.string().optional(), status: z.string().optional(),
   currency: z.string().optional(), tax_rate: z.number().optional(), discount_amount: z.number().optional(),
   notes: z.string().optional(), terms: z.string().optional(),
@@ -64,6 +82,7 @@ po.post('/', zValidator('json', createSchema), async (c) => {
   const db = c.env.DB;
   const data = c.req.valid('json');
   const id = `po-${uuidv4().slice(0, 8)}`;
+  const po_number = data.po_number || await generatePONumber(db, user.id);
 
   const subtotal = data.items.reduce((sum, item) => sum + item.amount, 0);
   const taxRate = data.tax_rate || 0;
@@ -73,7 +92,7 @@ po.post('/', zValidator('json', createSchema), async (c) => {
 
   await db.prepare(
     `INSERT INTO purchase_orders (id, user_id, po_number, supplier_id, status, issue_date, due_date, subtotal, tax_rate, tax_amount, discount_amount, total, currency, notes, terms, receipt_number, paid_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(id, user.id, data.po_number, data.supplier_id || null, data.status || 'draft', data.issue_date, data.due_date || null, subtotal, taxRate, taxAmount, discount, total, data.currency || 'HKD', data.notes || null, data.terms || null, data.receipt_number || null, data.paid_date || null).run();
+  ).bind(id, user.id, po_number, data.supplier_id || null, data.status || 'draft', data.issue_date, data.due_date || null, subtotal, taxRate, taxAmount, discount, total, data.currency || 'HKD', data.notes || null, data.terms || null, data.receipt_number || null, data.paid_date || null).run();
 
   for (let i = 0; i < data.items.length; i++) {
     const item = data.items[i];

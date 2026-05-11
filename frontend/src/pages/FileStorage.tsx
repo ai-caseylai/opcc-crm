@@ -1,8 +1,8 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
-import { Upload, Download, Trash2, Search, Pencil, X, Check, File, FileText, FileSpreadsheet, Image } from 'lucide-react';
+import { Upload, Download, Trash2, Search, Pencil, X, Check, File, FileText, FileSpreadsheet, Image, FolderOpen, Folder, ChevronRight, ChevronDown } from 'lucide-react';
 
 function formatSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -12,9 +12,23 @@ function formatSize(bytes: number) {
 
 function fileIcon(type: string) {
   if (type.includes('pdf')) return <FileText className="h-5 w-5 text-red-500" />;
-  if (type.includes('sheet') || type.includes('excel') || type.includes('xls')) return <FileSpreadsheet className="h-5 w-5 text-green-600" />;
+  if (type.includes('sheet') || type.includes('excel') || type.includes('xls') || type.includes('csv')) return <FileSpreadsheet className="h-5 w-5 text-green-600" />;
   if (type.includes('image') || type.includes('png') || type.includes('jpg')) return <Image className="h-5 w-5 text-blue-500" />;
   return <File className="h-5 w-5 text-gray-500" />;
+}
+
+function autoFolder(filename: string, fileType: string): string {
+  const ext = filename.split('.').pop()?.toLowerCase() || '';
+  const t = (fileType || '').toLowerCase();
+  if (t.includes('pdf') || ext === 'pdf') return 'Documents/PDF';
+  if (t.includes('word') || ext === 'doc' || ext === 'docx') return 'Documents/Word';
+  if (t.includes('sheet') || t.includes('excel') || ext === 'xls' || ext === 'xlsx') return 'Spreadsheets';
+  if (t.includes('csv') || ext === 'csv') return 'Spreadsheets/CSV';
+  if (t.includes('image') || ext === 'png' || ext === 'jpg' || ext === 'jpeg' || ext === 'gif' || ext === 'webp') return 'Images';
+  if (ext === 'zip' || ext === 'rar' || ext === '7z') return 'Archives';
+  if (ext === 'txt') return 'Documents/Text';
+  if (ext === 'ppt' || ext === 'pptx') return 'Documents/Slides';
+  return 'Other';
 }
 
 async function downloadFile(id: string, filename: string) {
@@ -32,6 +46,100 @@ async function downloadFile(id: string, filename: string) {
   URL.revokeObjectURL(url);
 }
 
+interface FileItem {
+  id: string;
+  filename: string;
+  original_name?: string;
+  file_type: string;
+  file_size: number;
+  folder: string;
+  description?: string;
+  created_at: string;
+}
+
+interface TreeNode {
+  name: string;
+  path: string;
+  files: FileItem[];
+  children: TreeNode[];
+}
+
+function buildTree(files: FileItem[]): TreeNode {
+  const root: TreeNode = { name: 'All Files', path: '', files: [], children: [] };
+  for (const f of files) {
+    const parts = (f.folder || 'Other').split('/');
+    let node = root;
+    for (const part of parts) {
+      let child = node.children.find(c => c.name === part);
+      if (!child) {
+        child = { name: part, path: [...(node.path ? [node.path] : []), part].join('/'), files: [], children: [] };
+        node.children.push(child);
+      }
+      node = child;
+    }
+    node.files.push(f);
+  }
+  // Sort: folders first, then files; folders alphabetically
+  const sortNode = (n: TreeNode) => {
+    n.children.sort((a, b) => a.name.localeCompare(b.name));
+    n.children.forEach(sortNode);
+  };
+  sortNode(root);
+  return root;
+}
+
+function FolderTree({ node, depth, expanded, toggle, onFileAction }: {
+  node: TreeNode; depth: number; expanded: Set<string>; toggle: (p: string) => void;
+  onFileAction: (action: string, f: FileItem) => void;
+}) {
+  const { t } = useTranslation();
+  const isExpanded = expanded.has(node.path) || depth === 0;
+  const hasContent = node.children.length > 0 || node.files.length > 0;
+
+  return (
+    <div>
+      {depth > 0 && hasContent && (
+        <button onClick={() => toggle(node.path)}
+          className="flex items-center gap-2 w-full text-left hover:bg-muted/50 rounded-md px-2 py-1.5"
+          style={{ paddingLeft: `${depth * 16 + 8}px` }}>
+          {isExpanded ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />}
+          {isExpanded ? <FolderOpen className="h-4 w-4 text-amber-500 shrink-0" /> : <Folder className="h-4 w-4 text-amber-500 shrink-0" />}
+          <span className="text-sm font-medium">{node.name}</span>
+          <span className="text-xs text-muted-foreground">({node.files.length})</span>
+        </button>
+      )}
+      {isExpanded && (
+        <>
+          {node.children.map(child => (
+            <FolderTree key={child.path} node={child} depth={depth + 1} expanded={expanded} toggle={toggle} onFileAction={onFileAction} />
+          ))}
+          {node.files.map(f => (
+            <div key={f.id} className="flex items-center justify-between hover:bg-muted/30 rounded-md px-2 py-1.5"
+              style={{ paddingLeft: `${(depth + 1) * 16 + 8}px` }}>
+              <div className="flex items-center gap-2 min-w-0 flex-1">
+                {fileIcon(f.file_type)}
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm truncate">{f.filename || f.original_name}</div>
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <span>{formatSize(f.file_size || 0)}</span>
+                    <span>{f.created_at?.slice(0, 10)}</span>
+                    {f.description && <span className="truncate max-w-[200px]">— {f.description}</span>}
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-1 ml-2 shrink-0">
+                <button onClick={() => downloadFile(f.id, f.filename || 'file')} className="p-1 hover:bg-muted rounded"><Download className="h-3.5 w-3.5" /></button>
+                <button onClick={() => onFileAction('edit', f)} className="p-1 hover:bg-muted rounded"><Pencil className="h-3.5 w-3.5" /></button>
+                <button onClick={() => { if (confirm(t('common.confirmDelete'))) onFileAction('delete', f); }} className="p-1 hover:bg-muted rounded text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
+              </div>
+            </div>
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function FileStorage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -40,11 +148,12 @@ export default function FileStorage() {
   const [description, setDescription] = useState('');
   const [searchQ, setSearchQ] = useState('');
   const [filterFolder, setFilterFolder] = useState('');
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [dragOver, setDragOver] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editFolder, setEditFolder] = useState('');
   const [editDesc, setEditDesc] = useState('');
-  const [dragOver, setDragOver] = useState(false);
 
   const { data: files, isLoading } = useQuery({
     queryKey: ['file-storage', filterFolder, searchQ],
@@ -97,13 +206,14 @@ export default function FileStorage() {
       const reader = new FileReader();
       reader.onload = (ev) => {
         const base64 = ev.target?.result as string;
+        const autoFolderName = folder || autoFolder(file.name, file.type);
         uploadMut.mutate({
           filename: file.name,
           original_name: file.name,
           file_type: file.type || 'application/octet-stream',
           file_size: file.size,
           file_data: base64,
-          folder: folder || 'General',
+          folder: autoFolderName,
           description,
         });
         pending--;
@@ -118,38 +228,32 @@ export default function FileStorage() {
     e.target.value = '';
   };
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragOver(true);
+  const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); setDragOver(true); };
+  const handleDragLeave = (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); setDragOver(false); };
+  const handleDrop = (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); setDragOver(false); if (e.dataTransfer.files.length > 0) uploadFiles(e.dataTransfer.files); };
+
+  const toggleFolder = (path: string) => {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path); else next.add(path);
+      return next;
+    });
   };
 
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragOver(false);
+  const handleFileAction = (action: string, f: FileItem) => {
+    if (action === 'edit') {
+      setEditingId(f.id);
+      setEditName(f.filename || '');
+      setEditFolder(f.folder || '');
+      setEditDesc(f.description || '');
+    } else if (action === 'delete') {
+      deleteMut.mutate(f.id);
+    }
   };
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragOver(false);
-    if (e.dataTransfer.files.length > 0) uploadFiles(e.dataTransfer.files);
-  };
-
-  const startEdit = (f: Record<string, unknown>) => {
-    setEditingId(f.id as string);
-    setEditName(f.filename as string || '');
-    setEditFolder(f.folder as string || '');
-    setEditDesc(f.description as string || '');
-  };
-
-  const saveEdit = (id: string) => {
-    updateMut.mutate({ id, body: { filename: editName, folder: editFolder, description: editDesc } });
-  };
-
-  const fileList = (files?.data || []) as Record<string, unknown>[];
+  const fileList = (files?.data || []) as FileItem[];
   const folderList = (folders?.data || []) as string[];
+  const tree = useMemo(() => buildTree(fileList), [fileList]);
 
   return (
     <div className="space-y-6">
@@ -158,20 +262,16 @@ export default function FileStorage() {
         <p className="text-muted-foreground mt-1">{t('fileStorage.desc')}</p>
       </div>
 
-      {/* Upload area — click or drag */}
-      <div
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-        className={`bg-card border-2 border-dashed rounded-xl p-8 transition-colors ${dragOver ? 'border-primary bg-primary/5' : 'border-border'}`}
-      >
+      {/* Upload area */}
+      <div onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}
+        className={`bg-card border-2 border-dashed rounded-xl p-8 transition-colors ${dragOver ? 'border-primary bg-primary/5' : 'border-border'}`}>
         <div className="flex flex-col items-center gap-4">
           <div className={`rounded-full p-4 transition-colors ${dragOver ? 'bg-primary/10' : 'bg-muted'}`}>
             <Upload className={`h-8 w-8 ${dragOver ? 'text-primary' : 'text-muted-foreground'}`} />
           </div>
           <div className="text-center">
-            <p className="font-medium">{dragOver ? t('fileStorage.dropHere') || 'Drop files here' : t('fileStorage.dragDrop') || 'Drag & drop files here'}</p>
-            <p className="text-sm text-muted-foreground mt-1">{t('fileStorage.orClick') || 'or click to browse'}</p>
+            <p className="font-medium">{dragOver ? t('fileStorage.dropHere') : t('fileStorage.dragDrop')}</p>
+            <p className="text-sm text-muted-foreground mt-1">{t('fileStorage.orClick')}（自動分類到對應資料夾）</p>
           </div>
           <label className="cursor-pointer bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:opacity-90">
             {uploading ? 'Uploading...' : t('fileStorage.upload')}
@@ -180,9 +280,9 @@ export default function FileStorage() {
         </div>
         <div className="flex flex-wrap items-center gap-3 mt-4 pt-4 border-t">
           <div>
-            <label className="text-xs text-muted-foreground">{t('fileStorage.folder')}</label>
+            <label className="text-xs text-muted-foreground">{t('fileStorage.folder')}（留空自動分類）</label>
             <input value={folder} onChange={e => setFolder(e.target.value)} placeholder={t('fileStorage.folderPlaceholder')}
-              className="px-3 py-2 border rounded-md bg-background text-sm w-44" />
+              className="px-3 py-2 border rounded-md bg-background text-sm w-52" />
           </div>
           <div className="flex-1 min-w-[200px]">
             <label className="text-xs text-muted-foreground">{t('fileStorage.description')}</label>
@@ -192,7 +292,7 @@ export default function FileStorage() {
         </div>
       </div>
 
-      {/* Search & Filter */}
+      {/* Search */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -204,63 +304,34 @@ export default function FileStorage() {
           <option value="">{t('fileStorage.allFolders')}</option>
           {folderList.map(f => <option key={f} value={f}>{f}</option>)}
         </select>
+        <span className="text-xs text-muted-foreground">{fileList.length} 個檔案</span>
       </div>
 
-      {/* File List */}
-      <div className="bg-card border rounded-xl p-6">
+      {/* Folder Tree View */}
+      {editingId ? (
+        <div className="bg-card border rounded-xl p-6">
+          <div className="space-y-3">
+            <input value={editName} onChange={e => setEditName(e.target.value)} className="px-3 py-2 border rounded-md text-sm w-full" placeholder="檔案名稱" />
+            <div className="flex gap-3">
+              <input value={editFolder} onChange={e => setEditFolder(e.target.value)} className="px-3 py-2 border rounded-md text-sm flex-1" placeholder="資料夾（可用 / 分隔層級）" />
+              <input value={editDesc} onChange={e => setEditDesc(e.target.value)} className="px-3 py-2 border rounded-md text-sm flex-1" placeholder="描述" />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setEditingId(null)} className="px-3 py-1.5 border rounded-md text-sm">取消</button>
+              <button onClick={() => updateMut.mutate({ id: editingId, body: { filename: editName, folder: editFolder, description: editDesc } })}
+                className="px-3 py-1.5 bg-primary text-primary-foreground rounded-md text-sm">儲存</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="bg-card border rounded-xl p-4">
         {isLoading ? (
           <div className="flex justify-center py-8"><div className="animate-spin h-6 w-6 border-2 border-primary border-t-transparent rounded-full" /></div>
         ) : fileList.length === 0 ? (
           <p className="text-sm text-muted-foreground text-center py-8">{t('fileStorage.noData')}</p>
         ) : (
-          <div className="space-y-2">
-            {fileList.map((f) => {
-              const id = f.id as string;
-              const isEditing = editingId === id;
-              return (
-                <div key={id} className="flex items-center justify-between border rounded-md px-4 py-3">
-                  <div className="flex items-center gap-3 min-w-0 flex-1">
-                    {fileIcon(f.file_type as string || '')}
-                    <div className="min-w-0 flex-1">
-                      {isEditing ? (
-                        <div className="space-y-2">
-                          <input value={editName} onChange={e => setEditName(e.target.value)} className="px-2 py-1 border rounded text-sm w-full" />
-                          <div className="flex gap-2">
-                            <input value={editFolder} onChange={e => setEditFolder(e.target.value)} placeholder={t('fileStorage.folder')} className="px-2 py-1 border rounded text-sm w-32" />
-                            <input value={editDesc} onChange={e => setEditDesc(e.target.value)} placeholder={t('fileStorage.description')} className="px-2 py-1 border rounded text-sm flex-1" />
-                          </div>
-                        </div>
-                      ) : (
-                        <>
-                          <div className="text-sm font-medium truncate">{f.filename as string || f.original_name}</div>
-                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                            <span className="bg-secondary px-1.5 py-0.5 rounded">{f.folder as string}</span>
-                            <span>{formatSize(f.file_size as number || 0)}</span>
-                            <span>{(f.created_at as string)?.slice(0, 10)}</span>
-                            {f.description && <span className="truncate max-w-[200px]">— {f.description as string}</span>}
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex gap-1 ml-2 shrink-0">
-                    {isEditing ? (
-                      <>
-                        <button onClick={() => saveEdit(id)} className="p-1.5 hover:bg-muted rounded text-green-600"><Check className="h-4 w-4" /></button>
-                        <button onClick={() => setEditingId(null)} className="p-1.5 hover:bg-muted rounded"><X className="h-4 w-4" /></button>
-                      </>
-                    ) : (
-                      <>
-                        <button onClick={() => downloadFile(id, (f.filename as string) || 'file')} className="p-1.5 hover:bg-muted rounded"><Download className="h-4 w-4" /></button>
-                        <button onClick={() => startEdit(f)} className="p-1.5 hover:bg-muted rounded"><Pencil className="h-4 w-4" /></button>
-                        <button onClick={() => { if (confirm(t('common.confirmDelete'))) deleteMut.mutate(id); }} className="p-1.5 hover:bg-muted rounded text-destructive"><Trash2 className="h-4 w-4" /></button>
-                      </>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          <FolderTree node={tree} depth={0} expanded={expanded} toggle={toggleFolder} onFileAction={handleFileAction} />
         )}
       </div>
     </div>

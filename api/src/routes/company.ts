@@ -78,6 +78,7 @@ const updateSchema = z.object({
   signatory_name: z.string().optional(), tax_id: z.string().optional(),
   legal_name: z.string().optional(), short_name: z.string().optional(), tagline: z.string().optional(),
   features: z.string().optional(), // JSON string: {"products":true,...}
+  invoice_number_pattern: z.string().optional(),
 });
 
 company.put('/', authMiddleware, zValidator('json', updateSchema), async (c) => {
@@ -94,13 +95,13 @@ company.put('/', authMiddleware, zValidator('json', updateSchema), async (c) => 
     await db.prepare(`UPDATE company_settings SET ${sets.join(', ')} WHERE user_id = ?`).bind(...params).run();
   } else {
     await db.prepare(
-      `INSERT INTO company_settings (user_id, name, legal_name, short_name, tagline, address, address2, phone, email, website, bank_name, bank_account, bank_swift, bank_address, signatory_name, tax_id)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      `INSERT INTO company_settings (user_id, name, legal_name, short_name, tagline, address, address2, phone, email, website, bank_name, bank_account, bank_swift, bank_address, signatory_name, tax_id, invoice_number_pattern)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     ).bind(user.id, data.name || 'OPCC', data.legal_name || null, data.short_name || null,
       data.tagline || null, data.address || 'Hong Kong', data.address2 || null,
       data.phone || null, data.email || null, data.website || null, data.bank_name || null,
       data.bank_account || null, data.bank_swift || null, data.bank_address || null,
-      data.signatory_name || null, data.tax_id || null).run();
+      data.signatory_name || null, data.tax_id || null, data.invoice_number_pattern || null).run();
   }
   const row = await db.prepare('SELECT * FROM company_settings WHERE user_id = ?').bind(user.id).first();
   return c.json(row);
@@ -160,7 +161,7 @@ company.get('/by-domain', async (c) => {
     try { def.features = JSON.parse(DEFAULT_COMPANY.features); } catch { /* keep string */ }
     return c.json(def);
   }
-  try { row.features = JSON.parse(row.features || DEFAULT_COMPANY.features); } catch { row.features = DEFAULT_COMPANY.features; }
+  try { row.features = JSON.parse((row.features as string) || DEFAULT_COMPANY.features); } catch { row.features = DEFAULT_COMPANY.features; }
   return c.json(row);
 });
 

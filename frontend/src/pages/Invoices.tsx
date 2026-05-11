@@ -10,7 +10,10 @@ export default function Invoices() {
   const [page, setPage] = useState(1);
   const [showForm, setShowForm] = useState(false);
   const [viewId, setViewId] = useState<string | null>(null);
-  const [form, setForm] = useState({ invoice_number: '', customer_id: '', issue_date: new Date().toISOString().split('T')[0], due_date: '', receipt_number: '', paid_date: '', currency: 'HKD', tax_rate: 0, discount_amount: 0, notes: '', terms: '', items: [{ description: '', quantity: 1, unit_price: 0, amount: 0 }] });
+  const [form, setForm] = useState({ invoice_number: '', customer_id: '', issue_date: new Date().toISOString().split('T')[0], due_date: '', receipt_number: '', paid_date: '', currency: 'HKD', tax_rate: 0, discount_amount: 0, notes: '', terms: '', attn: '', customer_phone: '', customer_email: '', customer_address: '', items: [{ description: '', quantity: 1, unit_price: 0, amount: 0 }] });
+  const [productSearch, setProductSearch] = useState<Record<number, string>>({});
+  const [productDropdown, setProductDropdown] = useState<number | null>(null);
+  const [addProductForm, setAddProductForm] = useState({ name: '', unit_price: 0 });
 
   const { data, isLoading } = useQuery({
     queryKey: ['invoices', search, status, page],
@@ -20,6 +23,16 @@ export default function Invoices() {
   const { data: customers } = useQuery({
     queryKey: ['customers-list'],
     queryFn: () => api('/customers?limit=200'),
+  });
+
+  const { data: products } = useQuery({
+    queryKey: ['products-list'],
+    queryFn: () => api('/products?limit=500'),
+  });
+
+  const createProductMut = useMutation({
+    mutationFn: (body: any) => api('/products', { method: 'POST', body }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['products-list'] }),
   });
 
   const { data: invoiceDetail } = useQuery({
@@ -143,9 +156,20 @@ export default function Invoices() {
             <h3 className="font-bold text-lg">建立發票</h3>
             <form onSubmit={handleSubmit} className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
-                <input required value={form.invoice_number} onChange={(e) => setForm({ ...form, invoice_number: e.target.value })}
-                  placeholder="發票號碼 *" className="px-3 py-2 border rounded-md bg-background text-sm" />
-                <select required value={form.customer_id} onChange={(e) => setForm({ ...form, customer_id: e.target.value })}
+                <div>
+                  <input value={form.invoice_number} onChange={(e) => setForm({ ...form, invoice_number: e.target.value })}
+                    placeholder="發票號碼（留空自動產生）" className="w-full px-3 py-2 border rounded-md bg-background text-sm" />
+                  {!form.invoice_number && <p className="text-[10px] text-muted-foreground mt-0.5">留空則根據設定格式自動產生號碼</p>}
+                </div>
+                <select required value={form.customer_id} onChange={(e) => {
+                  const cid = e.target.value;
+                  const cust = (customers?.data || []).find((c: any) => c.id === cid);
+                  setForm({
+                    ...form, customer_id: cid,
+                    attn: cust?.name || '', customer_phone: cust?.phone || '',
+                    customer_email: cust?.email || '', customer_address: cust?.address || '',
+                  });
+                }}
                   className="px-3 py-2 border rounded-md bg-background text-sm">
                   <option value="">選擇客戶 *</option>
                   {(customers?.data || []).map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -167,16 +191,72 @@ export default function Invoices() {
                 <input type="date" value={form.paid_date} onChange={(e) => setForm({ ...form, paid_date: e.target.value })}
                   className="px-3 py-2 border rounded-md bg-background text-sm" placeholder="付款日期" />
               </div>
+              <div className="grid grid-cols-2 gap-3">
+                <input value={form.attn} onChange={(e) => setForm({ ...form, attn: e.target.value })}
+                  placeholder="Attn 聯絡人" className="px-3 py-2 border rounded-md bg-background text-sm" />
+                <input value={form.customer_phone} onChange={(e) => setForm({ ...form, customer_phone: e.target.value })}
+                  placeholder="Tel 電話" className="px-3 py-2 border rounded-md bg-background text-sm" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <input value={form.customer_email} onChange={(e) => setForm({ ...form, customer_email: e.target.value })}
+                  placeholder="E-mail 電郵" className="px-3 py-2 border rounded-md bg-background text-sm" />
+                <input value={form.customer_address} onChange={(e) => setForm({ ...form, customer_address: e.target.value })}
+                  placeholder="Address 地址" className="px-3 py-2 border rounded-md bg-background text-sm" />
+              </div>
 
               <div className="border rounded-md p-3 space-y-2">
                 <div className="flex justify-between items-center">
                   <span className="text-sm font-medium">項目 Items</span>
                   <button type="button" onClick={addItem} className="text-xs text-primary hover:underline">+ 新增項目</button>
                 </div>
-                {form.items.map((item, idx) => (
-                  <div key={idx} className="grid grid-cols-12 gap-2 items-center">
-                    <input required value={item.description} onChange={(e) => updateItem(idx, 'description', e.target.value)}
-                      placeholder="描述" className="col-span-5 px-2 py-1 border rounded text-sm" />
+                {form.items.map((item, idx) => {
+                  const searchText = productSearch[idx] || '';
+                  const filteredProducts = (products?.data || []).filter((p: any) =>
+                    !searchText || p.name.toLowerCase().includes(searchText.toLowerCase())
+                  ).slice(0, 8);
+                  const showDropdown = productDropdown === idx;
+                  return (
+                  <div key={idx} className="grid grid-cols-12 gap-2 items-center relative">
+                    <div className="col-span-5 relative">
+                      <input required value={item.description} onChange={(e) => {
+                        updateItem(idx, 'description', e.target.value);
+                        setProductSearch({ ...productSearch, [idx]: e.target.value });
+                        setProductDropdown(idx);
+                      }}
+                        onFocus={() => { setProductSearch({ ...productSearch, [idx]: item.description }); setProductDropdown(idx); }}
+                        onBlur={() => setTimeout(() => setProductDropdown(null), 200)}
+                        placeholder="搜尋產品或輸入描述" className="w-full px-2 py-1 border rounded text-sm" />
+                      {showDropdown && (
+                        <div className="absolute z-10 left-0 right-0 top-full mt-1 bg-card border rounded-md shadow-lg max-h-48 overflow-y-auto">
+                          {filteredProducts.map((p: any) => (
+                            <button key={p.id} type="button"
+                              onMouseDown={() => {
+                                updateItem(idx, 'description', p.name);
+                                updateItem(idx, 'unit_price', p.unit_price || 0);
+                                updateItem(idx, 'product_id', p.id);
+                                setProductDropdown(null);
+                              }}
+                              className="w-full text-left px-2 py-1.5 text-sm hover:bg-muted flex justify-between">
+                              <span>{p.name}</span>
+                              <span className="text-muted-foreground text-xs">{p.currency} {p.unit_price}</span>
+                            </button>
+                          ))}
+                          {filteredProducts.length === 0 && searchText && (
+                            <button type="button"
+                              onMouseDown={() => {
+                                const name = searchText.trim();
+                                if (!name) return;
+                                createProductMut.mutate({ name, unit_price: 0, currency: form.currency, category: 'Service' });
+                                updateItem(idx, 'description', name);
+                                setProductDropdown(null);
+                              }}
+                              className="w-full text-left px-2 py-1.5 text-sm hover:bg-muted text-primary">
+                              + 新增產品「{searchText}」
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
                     <input type="number" value={item.quantity} onChange={(e) => updateItem(idx, 'quantity', parseFloat(e.target.value))}
                       className="col-span-2 px-2 py-1 border rounded text-sm" placeholder="數量" />
                     <input type="number" step="0.01" value={item.unit_price} onChange={(e) => updateItem(idx, 'unit_price', parseFloat(e.target.value))}
@@ -184,7 +264,7 @@ export default function Invoices() {
                     <span className="col-span-2 text-sm text-right">{form.currency} {(item.amount || 0).toFixed(2)}</span>
                     <button type="button" onClick={() => { const items = form.items.filter((_, i) => i !== idx); setForm({ ...form, items: items.length ? items : [{ description: '', quantity: 1, unit_price: 0, amount: 0 }] }); }} className="col-span-1 text-destructive text-xs">✕</button>
                   </div>
-                ))}
+                );})}
                 <div className="text-right font-bold text-sm pt-2 border-t">
                   總計: {form.currency} {form.items.reduce((s, i) => s + i.amount, 0).toFixed(2)}
                 </div>
@@ -205,35 +285,42 @@ export default function Invoices() {
       {/* View Invoice Modal */}
       {viewId && invoiceDetail && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setViewId(null)}>
-          <div className="bg-card border rounded-xl p-6 w-full max-w-2xl mx-4 max-h-[80vh] overflow-y-auto space-y-4" onClick={(e) => e.stopPropagation()}>
-            <div className="flex justify-between items-center">
-              <h3 className="font-bold text-lg">發票 #{invoiceDetail.invoice_number}</h3>
-              <button onClick={() => setViewId(null)} className="text-muted-foreground">✕</button>
+          <div className="bg-card border rounded-xl p-6 w-[90vw] max-w-[90vw] h-[85vh] mx-4 flex gap-6" onClick={(e) => e.stopPropagation()}>
+            {/* Left: details */}
+            <div className="w-[45%] flex flex-col min-h-0 overflow-y-auto pr-2 space-y-4">
+              <div className="flex justify-between items-center">
+                <h3 className="font-bold text-lg">發票 #{invoiceDetail.invoice_number}</h3>
+                <button onClick={() => setViewId(null)} className="text-muted-foreground">✕</button>
+              </div>
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div><span className="text-muted-foreground">客戶:</span> {invoiceDetail.customer_name}</div>
+                <div><span className="text-muted-foreground">狀態:</span> <span className={statusBadge(invoiceDetail.status)}>{invoiceDetail.status}</span></div>
+                <div><span className="text-muted-foreground">日期:</span> {invoiceDetail.issue_date}</div>
+                <div><span className="text-muted-foreground">到期:</span> {invoiceDetail.due_date}</div>
+                {invoiceDetail.receipt_number && <div><span className="text-muted-foreground">收據號碼:</span> {invoiceDetail.receipt_number}</div>}
+                {invoiceDetail.paid_date && <div><span className="text-muted-foreground">付款日期:</span> {invoiceDetail.paid_date}</div>}
+              </div>
+              <table className="w-full text-sm">
+                <thead><tr className="border-b"><th className="text-left p-2">項目</th><th className="text-right p-2">數量</th><th className="text-right p-2">單價</th><th className="text-right p-2">金額</th></tr></thead>
+                <tbody>
+                  {(invoiceDetail.items || []).map((item: any) => (
+                    <tr key={item.id} className="border-b">
+                      <td className="p-2">{item.description}</td>
+                      <td className="p-2 text-right">{item.quantity}</td>
+                      <td className="p-2 text-right">{invoiceDetail.currency} {item.unit_price?.toFixed(2)}</td>
+                      <td className="p-2 text-right">{invoiceDetail.currency} {item.amount?.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot><tr><td colSpan={3} className="text-right font-bold p-2">總計</td><td className="text-right font-bold p-2">{invoiceDetail.currency} {invoiceDetail.total?.toFixed(2)}</td></tr></tfoot>
+              </table>
+              <a href={`/api/pdf/invoice/${invoiceDetail.id}`} target="_blank"
+                className="inline-flex items-center gap-2 text-sm text-primary hover:underline"><Download className="h-4 w-4" /> 下載 PDF</a>
             </div>
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <div><span className="text-muted-foreground">客戶:</span> {invoiceDetail.customer_name}</div>
-              <div><span className="text-muted-foreground">狀態:</span> <span className={statusBadge(invoiceDetail.status)}>{invoiceDetail.status}</span></div>
-              <div><span className="text-muted-foreground">日期:</span> {invoiceDetail.issue_date}</div>
-              <div><span className="text-muted-foreground">到期:</span> {invoiceDetail.due_date}</div>
-              {invoiceDetail.receipt_number && <div><span className="text-muted-foreground">收據號碼:</span> {invoiceDetail.receipt_number}</div>}
-              {invoiceDetail.paid_date && <div><span className="text-muted-foreground">付款日期:</span> {invoiceDetail.paid_date}</div>}
+            {/* Right: PDF preview */}
+            <div className="flex-1 border rounded-lg overflow-hidden bg-gray-100">
+              <iframe src={`/api/pdf/invoice/${invoiceDetail.id}?inline`} className="w-full h-full" title="PDF Preview" />
             </div>
-            <table className="w-full text-sm">
-              <thead><tr className="border-b"><th className="text-left p-2">項目</th><th className="text-right p-2">數量</th><th className="text-right p-2">單價</th><th className="text-right p-2">金額</th></tr></thead>
-              <tbody>
-                {(invoiceDetail.items || []).map((item: any) => (
-                  <tr key={item.id} className="border-b">
-                    <td className="p-2">{item.description}</td>
-                    <td className="p-2 text-right">{item.quantity}</td>
-                    <td className="p-2 text-right">{invoiceDetail.currency} {item.unit_price?.toFixed(2)}</td>
-                    <td className="p-2 text-right">{invoiceDetail.currency} {item.amount?.toFixed(2)}</td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot><tr><td colSpan={3} className="text-right font-bold p-2">總計</td><td className="text-right font-bold p-2">{invoiceDetail.currency} {invoiceDetail.total?.toFixed(2)}</td></tr></tfoot>
-            </table>
-            <a href={`/api/pdf/invoice/${invoiceDetail.id}`} target="_blank"
-              className="inline-flex items-center gap-2 text-sm text-primary hover:underline"><Download className="h-4 w-4" /> 下載 PDF</a>
           </div>
         </div>
       )}

@@ -26,7 +26,7 @@ export default function WebsiteGenerator() {
             <Globe className="h-6 w-6 text-emerald-600" />
           </div>
           <div>
-            <h3 className="font-semibold">Llama 3.1 AI 生成</h3>
+            <h3 className="font-semibold">DeepSeek AI 生成</h3>
             <p className="text-sm text-muted-foreground">讀取你在「設定」中填寫的公司資料，自動生成包含 Hero、服務、聯絡表單的完整網站</p>
           </div>
         </div>
