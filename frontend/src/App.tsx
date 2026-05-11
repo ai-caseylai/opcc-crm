@@ -12,6 +12,8 @@ import Suppliers from './pages/Suppliers';
 import Products from './pages/Products';
 import Invoices from './pages/Invoices';
 import Quotations from './pages/Quotations';
+import PurchaseOrders from './pages/PurchaseOrders';
+import ServiceOrders from './pages/ServiceOrders';
 import Bookkeeping from './pages/Bookkeeping';
 import ImportData from './pages/ImportData';
 import CalendarPage from './pages/CalendarPage';
@@ -61,6 +63,8 @@ const FEATURE_ROUTES: Record<string, string> = {
   '/messages': 'messages',
   '/documents': 'documents',
   '/file-storage': 'fileStorage',
+  '/purchase-orders': 'purchaseOrders',
+  '/service-orders': 'serviceOrders',
 };
 
 function FeatureGuard({ children }: { children: React.ReactNode }) {
@@ -92,6 +96,8 @@ function AppRoutes() {
       <Route path="/products" element={<ProtectedRoute><FeatureGuard><Products /></FeatureGuard></ProtectedRoute>} />
       <Route path="/invoices" element={<ProtectedRoute><FeatureGuard><Invoices /></FeatureGuard></ProtectedRoute>} />
       <Route path="/quotations" element={<ProtectedRoute><FeatureGuard><Quotations /></FeatureGuard></ProtectedRoute>} />
+      <Route path="/purchase-orders" element={<ProtectedRoute><FeatureGuard><PurchaseOrders /></FeatureGuard></ProtectedRoute>} />
+      <Route path="/service-orders" element={<ProtectedRoute><FeatureGuard><ServiceOrders /></FeatureGuard></ProtectedRoute>} />
       <Route path="/bookkeeping" element={<ProtectedRoute><FeatureGuard><Bookkeeping /></FeatureGuard></ProtectedRoute>} />
       <Route path="/bank-statements" element={<ProtectedRoute><FeatureGuard><BankStatements /></FeatureGuard></ProtectedRoute>} />
       <Route path="/todos" element={<ProtectedRoute><Todos /></ProtectedRoute>} />

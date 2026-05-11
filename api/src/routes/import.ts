@@ -78,7 +78,7 @@ imports.post('/products', zValidator('json', z.object({
   return c.json({ imported, total: data.length });
 });
 
-imports.post('/parse-csv', zValidator('json', z.object({ csv: z.string(), type: z.enum(['customers', 'suppliers', 'products', 'invoices', 'quotations']) })), async (c) => {
+imports.post('/parse-csv', zValidator('json', z.object({ csv: z.string(), type: z.enum(['customers', 'suppliers', 'products', 'invoices', 'quotations', 'purchase-orders', 'service-orders']) })), async (c) => {
   const { csv } = c.req.valid('json');
   const lines = csv.trim().split('\n');
   if (lines.length < 2) return c.json({ error: 'CSV must have header and at least one data row' }, 400);
@@ -111,6 +111,8 @@ imports.post('/invoices', zValidator('json', z.object({
     unit_price: z.string().optional(),
     amount: z.string().optional(),
     notes: z.string().optional(),
+    receipt_number: z.string().optional(),
+    paid_date: z.string().optional(),
   })),
 })), async (c) => {
   const user = c.get('user');
@@ -169,10 +171,10 @@ imports.post('/invoices', zValidator('json', z.object({
       const dueDate = first.due_date || new Date(Date.now() + 30*86400000).toISOString().split('T')[0];
 
       await db.prepare(
-        `INSERT INTO invoices (id, user_id, invoice_number, customer_id, status, issue_date, due_date, subtotal, tax_rate, tax_amount, total, currency, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO invoices (id, user_id, invoice_number, customer_id, status, issue_date, due_date, subtotal, tax_rate, tax_amount, total, currency, notes, receipt_number, paid_date)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).bind(invId, user.id, invNum, customerId, first.status || 'draft', issueDate, dueDate,
-        subtotal, taxRate, taxAmount, total, first.currency || 'HKD', first.notes || null).run();
+        subtotal, taxRate, taxAmount, total, first.currency || 'HKD', first.notes || null, first.receipt_number || null, first.paid_date || null).run();
 
       for (const item of items) {
         await db.prepare(
@@ -271,6 +273,166 @@ imports.post('/quotations', zValidator('json', z.object({
     } catch { skipped += rows.length; }
   }
 
+  return c.json({ imported: created, skipped, total_groups: groups.size });
+});
+
+// ── Purchase Order Import ──
+imports.post('/purchase-orders', zValidator('json', z.object({
+  data: z.array(z.object({
+    po_number: z.string().min(1),
+    supplier_name: z.string().optional(),
+    issue_date: z.string().optional(),
+    due_date: z.string().optional(),
+    status: z.string().optional(),
+    currency: z.string().optional(),
+    tax_rate: z.string().optional(),
+    description: z.string().min(1),
+    quantity: z.string().optional(),
+    unit_price: z.string().optional(),
+    amount: z.string().optional(),
+    notes: z.string().optional(),
+    receipt_number: z.string().optional(),
+    paid_date: z.string().optional(),
+  })),
+})), async (c) => {
+  const user = c.get('user');
+  const db = c.env.DB;
+  const { data } = c.req.valid('json');
+  let created = 0, skipped = 0;
+
+  const groups = new Map<string, any[]>();
+  for (const row of data) {
+    const key = row.po_number.trim();
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(row);
+  }
+
+  for (const [poNum, rows] of groups) {
+    try {
+      const first = rows[0];
+
+      let supplierId: string | null = null;
+      if (first.supplier_name) {
+        const s = await db.prepare('SELECT id FROM suppliers WHERE user_id = ? AND name LIKE ?')
+          .bind(user.id, `%${first.supplier_name.trim()}%`).first<{ id: string }>();
+        if (s) supplierId = s.id;
+      }
+      if (!supplierId && first.supplier_name) {
+        supplierId = `s-${uuidv4().slice(0, 8)}`;
+        await db.prepare('INSERT INTO suppliers (id, user_id, name) VALUES (?, ?, ?)')
+          .bind(supplierId, user.id, first.supplier_name.trim()).run();
+      }
+
+      const items = rows.map((r, i) => ({
+        description: r.description, quantity: parseFloat(r.quantity || '1') || 1,
+        unit_price: parseFloat(r.unit_price || '0') || 0,
+        amount: parseFloat(r.amount || '0') || parseFloat(r.quantity || '1') * parseFloat(r.unit_price || '0'),
+        sort_order: i,
+      }));
+      const subtotal = items.reduce((s, it) => s + it.amount, 0);
+      const taxRate = parseFloat(first.tax_rate || '0') || 0;
+      const taxAmount = subtotal * (taxRate / 100);
+      const total = subtotal + taxAmount;
+
+      const poId = `po-${uuidv4().slice(0, 8)}`;
+      const issueDate = first.issue_date || new Date().toISOString().split('T')[0];
+
+      await db.prepare(
+        `INSERT INTO purchase_orders (id, user_id, po_number, supplier_id, status, issue_date, due_date, subtotal, tax_rate, tax_amount, total, currency, notes, receipt_number, paid_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(poId, user.id, poNum, supplierId, first.status || 'draft', issueDate, first.due_date || null,
+        subtotal, taxRate, taxAmount, total, first.currency || 'HKD', first.notes || null, first.receipt_number || null, first.paid_date || null).run();
+
+      for (const item of items) {
+        await db.prepare(
+          'INSERT INTO purchase_order_items (id, po_id, description, quantity, unit_price, amount, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)'
+        ).bind(`poi-${uuidv4().slice(0, 8)}`, poId, item.description, item.quantity, item.unit_price, item.amount, item.sort_order).run();
+      }
+      created++;
+    } catch { skipped += rows.length; }
+  }
+  return c.json({ imported: created, skipped, total_groups: groups.size });
+});
+
+// ── Service Order Import ──
+imports.post('/service-orders', zValidator('json', z.object({
+  data: z.array(z.object({
+    so_number: z.string().min(1),
+    customer_name: z.string().optional(),
+    customer_email: z.string().optional(),
+    issue_date: z.string().optional(),
+    valid_from: z.string().optional(),
+    valid_until: z.string().optional(),
+    status: z.string().optional(),
+    currency: z.string().optional(),
+    tax_rate: z.string().optional(),
+    description: z.string().min(1),
+    quantity: z.string().optional(),
+    unit_price: z.string().optional(),
+    amount: z.string().optional(),
+    notes: z.string().optional(),
+  })),
+})), async (c) => {
+  const user = c.get('user');
+  const db = c.env.DB;
+  const { data } = c.req.valid('json');
+  let created = 0, skipped = 0;
+
+  const groups = new Map<string, any[]>();
+  for (const row of data) {
+    const key = row.so_number.trim();
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(row);
+  }
+
+  for (const [soNum, rows] of groups) {
+    try {
+      const first = rows[0];
+
+      let customerId: string | null = null;
+      if (first.customer_email) {
+        const c = await db.prepare('SELECT id FROM customers WHERE user_id = ? AND email = ?')
+          .bind(user.id, first.customer_email.trim()).first<{ id: string }>();
+        if (c) customerId = c.id;
+      }
+      if (!customerId && first.customer_name) {
+        const c = await db.prepare('SELECT id FROM customers WHERE user_id = ? AND name LIKE ?')
+          .bind(user.id, `%${first.customer_name.trim()}%`).first<{ id: string }>();
+        if (c) customerId = c.id;
+      }
+      if (!customerId && first.customer_name) {
+        customerId = `c-${uuidv4().slice(0, 8)}`;
+        await db.prepare('INSERT INTO customers (id, user_id, name, email) VALUES (?, ?, ?, ?)')
+          .bind(customerId, user.id, first.customer_name.trim(), (first.customer_email || '').trim() || null).run();
+      }
+      if (!customerId) { skipped += rows.length; continue; }
+
+      const items = rows.map((r, i) => ({
+        description: r.description, quantity: parseFloat(r.quantity || '1') || 1,
+        unit_price: parseFloat(r.unit_price || '0') || 0,
+        amount: parseFloat(r.amount || '0') || parseFloat(r.quantity || '1') * parseFloat(r.unit_price || '0'),
+        sort_order: i,
+      }));
+      const subtotal = items.reduce((s, it) => s + it.amount, 0);
+      const taxRate = parseFloat(first.tax_rate || '0') || 0;
+      const taxAmount = subtotal * (taxRate / 100);
+      const total = subtotal + taxAmount;
+
+      const soId = `so-${uuidv4().slice(0, 8)}`;
+      const issueDate = first.issue_date || new Date().toISOString().split('T')[0];
+
+      await db.prepare(
+        `INSERT INTO service_orders (id, user_id, so_number, customer_id, status, issue_date, valid_from, valid_until, subtotal, tax_rate, tax_amount, total, currency, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(soId, user.id, soNum, customerId, first.status || 'draft', issueDate, first.valid_from || null, first.valid_until || null,
+        subtotal, taxRate, taxAmount, total, first.currency || 'HKD', first.notes || null).run();
+
+      for (const item of items) {
+        await db.prepare(
+          'INSERT INTO service_order_items (id, so_id, description, quantity, unit_price, amount, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)'
+        ).bind(`soi-${uuidv4().slice(0, 8)}`, soId, item.description, item.quantity, item.unit_price, item.amount, item.sort_order).run();
+      }
+      created++;
+    } catch { skipped += rows.length; }
+  }
   return c.json({ imported: created, skipped, total_groups: groups.size });
 });
 

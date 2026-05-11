@@ -89,6 +89,8 @@ CREATE TABLE IF NOT EXISTS invoices (
   notes TEXT,
   terms TEXT,
   pdf_url TEXT,
+  receipt_number TEXT,
+  paid_date TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(user_id, invoice_number)
@@ -423,3 +425,75 @@ CREATE TABLE IF NOT EXISTS file_records (
 CREATE INDEX IF NOT EXISTS idx_file_records_user ON file_records(user_id);
 CREATE INDEX IF NOT EXISTS idx_file_records_folder ON file_records(user_id, folder);
 CREATE INDEX IF NOT EXISTS idx_file_records_name ON file_records(user_id, filename);
+
+-- Purchase Orders
+CREATE TABLE IF NOT EXISTS purchase_orders (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  po_number TEXT NOT NULL,
+  supplier_id TEXT REFERENCES suppliers(id),
+  status TEXT NOT NULL DEFAULT 'draft',
+  issue_date TEXT NOT NULL DEFAULT (datetime('now')),
+  due_date TEXT,
+  receipt_number TEXT,
+  paid_date TEXT,
+  subtotal REAL NOT NULL DEFAULT 0,
+  tax_rate REAL NOT NULL DEFAULT 0,
+  tax_amount REAL NOT NULL DEFAULT 0,
+  discount_amount REAL NOT NULL DEFAULT 0,
+  total REAL NOT NULL DEFAULT 0,
+  currency TEXT NOT NULL DEFAULT 'HKD',
+  notes TEXT,
+  terms TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(user_id, po_number)
+);
+
+CREATE TABLE IF NOT EXISTS purchase_order_items (
+  id TEXT PRIMARY KEY,
+  po_id TEXT NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
+  product_id TEXT REFERENCES products(id),
+  description TEXT NOT NULL,
+  quantity REAL NOT NULL DEFAULT 1,
+  unit_price REAL NOT NULL DEFAULT 0,
+  amount REAL NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0
+);
+
+-- Service Orders
+CREATE TABLE IF NOT EXISTS service_orders (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  so_number TEXT NOT NULL,
+  customer_id TEXT NOT NULL REFERENCES customers(id),
+  status TEXT NOT NULL DEFAULT 'draft',
+  issue_date TEXT NOT NULL DEFAULT (datetime('now')),
+  valid_from TEXT,
+  valid_until TEXT,
+  subtotal REAL NOT NULL DEFAULT 0,
+  tax_rate REAL NOT NULL DEFAULT 0,
+  tax_amount REAL NOT NULL DEFAULT 0,
+  discount_amount REAL NOT NULL DEFAULT 0,
+  total REAL NOT NULL DEFAULT 0,
+  currency TEXT NOT NULL DEFAULT 'HKD',
+  notes TEXT,
+  terms TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(user_id, so_number)
+);
+
+CREATE TABLE IF NOT EXISTS service_order_items (
+  id TEXT PRIMARY KEY,
+  so_id TEXT NOT NULL REFERENCES service_orders(id) ON DELETE CASCADE,
+  product_id TEXT REFERENCES products(id),
+  description TEXT NOT NULL,
+  quantity REAL NOT NULL DEFAULT 1,
+  unit_price REAL NOT NULL DEFAULT 0,
+  amount REAL NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_purchase_orders_user ON purchase_orders(user_id);
+CREATE INDEX IF NOT EXISTS idx_service_orders_user ON service_orders(user_id);

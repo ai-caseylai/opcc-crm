@@ -205,13 +205,13 @@ function drawHeader(page: PDFPage, data: InvoiceData, fonts: PdfFonts, assets: P
   drawText(page, data.company_address2 || '', PAGE_W / 2, Y.addr2, fonts.arial, 10, 'center', cjkFontKey);
   drawText(page, data.company_contact || '', PAGE_W / 2, Y.contact, fonts.arial, 10, 'center', cjkFontKey);
   hLine(page, 50, 527, Y.separator);
-  drawText(page, data.type === 'quotation' ? 'QUOTATION' : 'INVOICE', PAGE_W / 2, Y.invoice, fonts.arial, 18, 'center', cjkFontKey);
+  drawText(page, data.type === 'quotation' ? 'QUOTATION' : data.type === 'purchase-order' ? 'PURCHASE ORDER' : data.type === 'service-order' ? 'SERVICE ORDER' : 'INVOICE', PAGE_W / 2, Y.invoice, fonts.arial, 18, 'center', cjkFontKey);
 }
 
 function drawContHeader(page: PDFPage, data: InvoiceData, fonts: PdfFonts, cjkFontKey: any, pageNum: number, totalPages: number) {
   const y0 = PAGE_H - 40;
   drawText(page, data.company_name || 'OPCC', PAGE_W / 2, y0, fonts.arial, 12, 'center', cjkFontKey);
-  drawText(page, data.type === 'quotation' ? `Quotation No.: ${data.invoice_no}` : `Invoice No.: ${data.invoice_no}`, 53, y0 - 22, fonts.arial, 10, 'left', cjkFontKey);
+  drawText(page, data.type === 'quotation' ? `Quotation No.: ${data.invoice_no}` : data.type === 'purchase-order' ? `PO No.: ${data.invoice_no}` : data.type === 'service-order' ? `SO No.: ${data.invoice_no}` : `Invoice No.: ${data.invoice_no}`, 53, y0 - 22, fonts.arial, 10, 'left', cjkFontKey);
   drawText(page, `Page ${pageNum} of ${totalPages}`, TBL.R, y0 - 22, fonts.arial, 10, 'right', cjkFontKey);
   hLine(page, 50, 527, y0 - 36);
 }

@@ -6,17 +6,30 @@ import type { InvoiceData } from '../lib/invoice-template';
 
 const pdf = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
+const TYPE_CONFIG: Record<string, { table: string; itemsTable: string; fkCol: string; numCol: string; joinTable: string; joinCol: string }> = {
+  invoice: { table: 'invoices', itemsTable: 'invoice_items', fkCol: 'invoice_id', numCol: 'invoice_number', joinTable: 'customers', joinCol: 'customer_id' },
+  quotation: { table: 'quotations', itemsTable: 'quotation_items', fkCol: 'quotation_id', numCol: 'quotation_number', joinTable: 'customers', joinCol: 'customer_id' },
+  'purchase-order': { table: 'purchase_orders', itemsTable: 'purchase_order_items', fkCol: 'po_id', numCol: 'po_number', joinTable: 'suppliers', joinCol: 'supplier_id' },
+  'service-order': { table: 'service_orders', itemsTable: 'service_order_items', fkCol: 'so_id', numCol: 'so_number', joinTable: 'customers', joinCol: 'customer_id' },
+};
+
+const TYPE_LABELS: Record<string, string> = {
+  invoice: 'invoice', quotation: 'quotation',
+  'purchase-order': 'purchase-order', 'service-order': 'service-order',
+};
+
 function buildPayload(doc: Record<string, any>, items: any[], type: string): InvoiceData {
-  const isInvoice = type === 'invoice';
+  const cfg = TYPE_CONFIG[type];
+  const isSupplier = type === 'purchase-order';
   return {
-    type: isInvoice ? 'invoice' : 'quotation',
-    invoice_no: isInvoice ? (doc.invoice_number || '') : (doc.quotation_number || ''),
+    type: TYPE_LABELS[type] || type,
+    invoice_no: doc[cfg.numCol] || '',
     invoice_date: (doc.issue_date || '').replace(/-/g, '/'),
-    customer_en: doc.customer_name || '',
-    customer_zh: doc.customer_company || '',
-    attn: doc.customer_name || '',
-    tel: doc.customer_phone || '',
-    address: doc.customer_address || '',
+    customer_en: isSupplier ? (doc.supplier_name || '') : (doc.customer_name || ''),
+    customer_zh: isSupplier ? (doc.supplier_company || '') : (doc.customer_company || ''),
+    attn: isSupplier ? (doc.supplier_name || '') : (doc.customer_name || ''),
+    tel: isSupplier ? (doc.supplier_phone || '') : (doc.customer_phone || ''),
+    address: isSupplier ? (doc.supplier_address || '') : (doc.customer_address || ''),
     items: items.map((it: any, idx: number) => ({
       no: idx + 1,
       desc: it.description || '',
@@ -28,26 +41,26 @@ function buildPayload(doc: Record<string, any>, items: any[], type: string): Inv
 }
 
 pdf.get('/:type/:id', async (c) => {
-  const { type, id } = c.req.param('type') ? { type: c.req.param('type'), id: c.req.param('id') } : { type: '', id: '' };
-  if (type !== 'invoice' && type !== 'quotation') {
-    return c.json({ error: 'Type must be invoice or quotation' }, 400);
+  const type = c.req.param('type');
+  const id = c.req.param('id');
+  const cfg = TYPE_CONFIG[type];
+  if (!cfg) {
+    return c.json({ error: 'Type must be invoice, quotation, purchase-order, or service-order' }, 400);
   }
 
   const db = c.env.DB;
-  const table = type === 'invoice' ? 'invoices' : 'quotations';
-  const itemsTable = type === 'invoice' ? 'invoice_items' : 'quotation_items';
+  const joinAlias = type === 'purchase-order' ? 's' : 'c';
 
   const doc = await db.prepare(
-    `SELECT d.*, c.name as customer_name, c.email as customer_email, c.company_name as customer_company, c.address as customer_address, c.phone as customer_phone FROM ${table} d JOIN customers c ON d.customer_id = c.id WHERE d.id = ?`
+    `SELECT d.*, ${joinAlias}.name as ${joinAlias}_name, ${joinAlias}.email as ${joinAlias}_email, ${joinAlias}.company_name as ${joinAlias}_company, ${joinAlias}.address as ${joinAlias}_address, ${joinAlias}.phone as ${joinAlias}_phone FROM ${cfg.table} d JOIN ${cfg.joinTable} ${joinAlias} ON d.${cfg.joinCol} = ${joinAlias}.id WHERE d.id = ?`
   ).bind(id).first();
 
   if (!doc) return c.json({ error: 'Not found' }, 404);
 
   const items = await db.prepare(
-    `SELECT * FROM ${itemsTable} WHERE ${type}_id = ? ORDER BY sort_order`
+    `SELECT * FROM ${cfg.itemsTable} WHERE ${cfg.fkCol} = ? ORDER BY sort_order`
   ).bind(id).all();
 
-  // Load company settings for header/footer (filter by tenant)
   const company = await db.prepare("SELECT * FROM company_settings WHERE user_id = ? LIMIT 1").bind((doc as any).user_id).first<Record<string, string>>();
 
   const payload = buildPayload(doc as Record<string, any>, items.results as any[], type);
@@ -61,7 +74,7 @@ pdf.get('/:type/:id', async (c) => {
   payload.bank_name = (company as any)?.bank_name || '';
   payload.bank_address = (company as any)?.bank_address || '';
 
-  const num = doc[type === 'invoice' ? 'invoice_number' : 'quotation_number'] as string;
+  const num = doc[cfg.numCol] as string;
 
   try {
     const pdfBytes = await generateInvoicePDF(c.env.FILE_BUCKET, payload, (doc as any).user_id);
