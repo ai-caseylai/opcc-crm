@@ -109,6 +109,7 @@ const TOOLS: any[] = [
   // ── Bookkeeping / Reports ──
   { type: 'function', function: { name: 'get_bookkeeping', description: 'Get P&L (income statement) for a date range', parameters: { type: 'object', properties: { start_date: { type: 'string', description: 'YYYY-MM-DD' }, end_date: { type: 'string', description: 'YYYY-MM-DD' } }, required: [] } } },
   { type: 'function', function: { name: 'get_bookkeeping_transactions', description: 'Get detailed transactions for a specific account code (e.g. 2102 for Director Loan, 1101 for Cash). Returns each entry with date, description, debit, credit, and running balance.', parameters: { type: 'object', properties: { account_code: { type: 'string', description: 'Account code (e.g. 2102, 1101, 4100)' }, start_date: { type: 'string', description: 'YYYY-MM-DD' }, end_date: { type: 'string', description: 'YYYY-MM-DD' } }, required: ['account_code'] } } },
+  { type: 'function', function: { name: 'create_bookkeeping_transaction', description: 'Create a double-entry journal entry. Debits must equal credits. Use this to record transactions like Director Loans, repayments, revenue, expenses, etc.', parameters: { type: 'object', properties: { date: { type: 'string', description: 'Entry date YYYY-MM-DD' }, description: { type: 'string', description: 'Description of the journal entry' }, entries: { type: 'array', description: 'Array of line items. Each line has account_code, debit (number, default 0), credit (number, default 0), description (optional)', items: { type: 'object', properties: { account_code: { type: 'string', description: 'Account code (e.g. 1101, 2102, 4100)' }, debit: { type: 'number' }, credit: { type: 'number' }, description: { type: 'string' } }, required: ['account_code'] } } }, required: ['date', 'description', 'entries'] } } },
   { type: 'function', function: { name: 'get_recent_activity', description: 'Get recent audit log entries (recent changes)', parameters: { type: 'object', properties: { limit: { type: 'number' } }, required: [] } } },
 ];
 
@@ -276,6 +277,38 @@ async function executeTool(name: string, db: D1Database, userId: string, args: a
         return { date: r.entry_date, entry: r.entry_number, description: r.entry_description, line_desc: r.line_description, debit: dr, credit: cr, balance };
       });
       return JSON.stringify({ account: { code: acct.account_code, name: acct.account_name, type: acct.account_type }, total_debit: txns.reduce((s, t) => s + t.debit, 0), total_credit: txns.reduce((s, t) => s + t.credit, 0), closing_balance: balance, transactions: txns });
+    }
+    case 'create_bookkeeping_transaction': {
+      const date = args?.date;
+      const desc = args?.description;
+      const entries = args?.entries;
+      if (!date || !desc || !Array.isArray(entries) || entries.length < 2) {
+        return JSON.stringify({ error: 'date, description, and at least 2 entries are required' });
+      }
+      // Validate debits = credits
+      const totalDr = entries.reduce((s: number, e: any) => s + (Number(e.debit) || 0), 0);
+      const totalCr = entries.reduce((s: number, e: any) => s + (Number(e.credit) || 0), 0);
+      if (Math.abs(totalDr - totalCr) > 0.01) {
+        return JSON.stringify({ error: `Debits (${totalDr}) must equal credits (${totalCr})` });
+      }
+      // Validate account codes exist
+      for (const e of entries) {
+        const acct = await db.prepare('SELECT account_code, account_name FROM accounts WHERE user_id = ? AND account_code = ?').bind(userId, e.account_code).first();
+        if (!acct) return JSON.stringify({ error: `Account code ${e.account_code} not found` });
+        e.account_name = acct.account_name as string;
+      }
+      const entryId = `je-${uuidv4().slice(0, 8)}`;
+      const entryNumber = `JE-${Date.now().toString(36).toUpperCase()}`;
+      await db.prepare(
+        'INSERT INTO journal_entries (id, user_id, entry_number, entry_date, description, status) VALUES (?, ?, ?, ?, ?, ?)'
+      ).bind(entryId, userId, entryNumber, date, desc, 'posted').run();
+      for (let i = 0; i < entries.length; i++) {
+        const e = entries[i];
+        await db.prepare(
+          'INSERT INTO journal_lines (entry_id, account_code, account_name, description, debit, credit, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)'
+        ).bind(entryId, e.account_code, e.account_name, e.description || null, Number(e.debit) || 0, Number(e.credit) || 0, i).run();
+      }
+      return JSON.stringify({ success: true, entry_id: entryId, entry_number: entryNumber, date, description: desc, total_debit: totalDr, total_credit: totalCr });
     }
     case 'get_recent_activity': {
       const rows = await db.prepare(
