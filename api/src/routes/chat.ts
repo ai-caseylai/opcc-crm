@@ -29,9 +29,10 @@ CRITICAL BOOKKEEPING RULES:
 - NEVER call create_bookkeeping_transaction, update_journal_entry, or delete_journal_entry immediately
 - When the user asks to create, modify, or delete a journal entry, FIRST show the full details of what will be done (date, description, all debit/credit lines with account codes and amounts)
 - Then ask the user to confirm by replying "確認" or "yes" before proceeding
-- Only after explicit user confirmation should you execute the function
+- Only after explicit user confirmation should you call the function
 - If the user does not confirm, do NOT make any changes
-- When modifying an existing entry, use update_journal_entry to change it directly rather than creating offsetting entries`;
+- When modifying an existing entry, use update_journal_entry to change it directly rather than creating offsetting entries
+- IMPORTANT: Use EXACTLY these function names: get_bookkeeping_transactions, create_bookkeeping_transaction, update_journal_entry, delete_journal_entry. Do NOT invent other names like get_account_transactions or get_journal_entries.`;
 
 const TOOLS: any[] = [
   // ── Dashboard / Summary ──
@@ -1010,11 +1011,26 @@ chat.post('/', async (c) => {
         // Try to extract function name and parameters from various formats
         const toolResults: string[] = [];
 
+        // Map common DeepSeek-invented function names to actual function names
+        const fnNameMap: Record<string, string> = {
+          get_account_transactions: 'get_bookkeeping_transactions',
+          get_journal_entries: 'get_bookkeeping_transactions',
+          get_journal_entry: 'get_bookkeeping_transactions',
+          get_transactions: 'get_bookkeeping_transactions',
+          list_journal_entries: 'get_bookkeeping_transactions',
+          modify_journal_entry: 'update_journal_entry',
+          edit_journal_entry: 'update_journal_entry',
+          create_transaction: 'create_bookkeeping_transaction',
+          create_journal_entry: 'create_bookkeeping_transaction',
+          remove_journal_entry: 'delete_journal_entry',
+        };
+
         // Pattern 1: <...invoke name="fnName">...<...parameter name="key">value</...>...</...invoke>
         const invokePattern = /<[^>]*invoke\s+name="(\w+)"[^>]*>([\s\S]*?)<\/[^>]*invoke>/gi;
         let im;
         while ((im = invokePattern.exec(reply)) !== null) {
-          const fnName = im[1];
+          const rawFnName = im[1];
+          const fnName = fnNameMap[rawFnName] || rawFnName;
           const paramPattern = /<[^>]*parameter\s+name="(\w+)"[^>]*>([\s\S]*?)<\/[^>]*parameter>/gi;
           const fnArgs: Record<string, string> = {};
           let pm;
