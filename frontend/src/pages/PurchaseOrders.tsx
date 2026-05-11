@@ -62,8 +62,12 @@ export default function PurchaseOrders() {
   }
 
   const orders = data?.data || [];
+  const statusLabel = (s: string) => {
+    const labels: Record<string, string> = { draft: '草稿', approved: '應付', received: '已收貨', paid: '已付', cancelled: '已取消' };
+    return labels[s] || s;
+  };
   const statusBadge = (s: string) => {
-    const colors: Record<string, string> = { draft: 'bg-gray-100 text-gray-700', approved: 'bg-blue-100 text-blue-700', received: 'bg-purple-100 text-purple-700', paid: 'bg-green-100 text-green-700', cancelled: 'bg-gray-100 text-gray-500' };
+    const colors: Record<string, string> = { draft: 'bg-gray-100 text-gray-700', approved: 'bg-orange-100 text-orange-700', received: 'bg-purple-100 text-purple-700', paid: 'bg-green-100 text-green-700', cancelled: 'bg-gray-100 text-gray-500' };
     return `px-2 py-0.5 rounded-full text-xs font-medium ${colors[s] || 'bg-gray-100'}`;
   };
 
@@ -89,11 +93,11 @@ export default function PurchaseOrders() {
         <select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}
           className="px-3 py-2 border rounded-md bg-background text-sm">
           <option value="">全部狀態</option>
-          <option value="draft">Draft</option>
-          <option value="approved">Approved</option>
-          <option value="received">Received</option>
-          <option value="paid">Paid</option>
-          <option value="cancelled">Cancelled</option>
+          <option value="draft">草稿</option>
+          <option value="approved">應付</option>
+          <option value="received">已收貨</option>
+          <option value="paid">已付</option>
+          <option value="cancelled">已取消</option>
         </select>
       </div>
 
@@ -116,19 +120,19 @@ export default function PurchaseOrders() {
                 <tr key={po.id} className="border-b hover:bg-muted/30">
                   <td className="p-3 font-medium">{po.po_number}</td>
                   <td className="p-3 hidden md:table-cell">{po.supplier_name || '-'}</td>
-                  <td className="p-3"><span className={statusBadge(po.status)}>{po.status}</span></td>
+                  <td className="p-3"><span className={statusBadge(po.status)}>{statusLabel(po.status)}</span></td>
                   <td className="p-3 text-right hidden lg:table-cell">{po.currency} {po.total?.toLocaleString()}</td>
                   <td className="p-3 hidden lg:table-cell">{po.issue_date}</td>
                   <td className="p-3 text-right">
                     <button onClick={() => setViewId(po.id)} className="p-1 hover:bg-muted rounded mr-1"><Eye className="h-4 w-4" /></button>
                     {po.status === 'draft' && (
-                      <button onClick={() => updateStatus.mutate({ id: po.id, status: 'approved' })} className="text-xs text-blue-600 hover:underline mr-2">Approve</button>
+                      <button onClick={() => updateStatus.mutate({ id: po.id, status: 'approved' })} className="text-xs text-orange-600 hover:underline mr-2">批准（應付）</button>
                     )}
                     {po.status === 'approved' && (
-                      <button onClick={() => updateStatus.mutate({ id: po.id, status: 'received' })} className="text-xs text-purple-600 hover:underline mr-2">Receive</button>
+                      <button onClick={() => updateStatus.mutate({ id: po.id, status: 'received' })} className="text-xs text-purple-600 hover:underline mr-2">收貨</button>
                     )}
                     {po.status === 'received' && (
-                      <button onClick={() => updateStatus.mutate({ id: po.id, status: 'paid' })} className="text-xs text-green-600 hover:underline mr-2">Paid</button>
+                      <button onClick={() => updateStatus.mutate({ id: po.id, status: 'paid' })} className="text-xs text-green-600 hover:underline mr-2">已付</button>
                     )}
                     <button onClick={() => { if (confirm('確定刪除?')) deleteMut.mutate(po.id); }} className="p-1 hover:bg-muted rounded text-destructive"><Trash2 className="h-4 w-4" /></button>
                   </td>
@@ -215,7 +219,7 @@ export default function PurchaseOrders() {
             </div>
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div><span className="text-muted-foreground">供應商:</span> {poDetail.supplier_name}</div>
-              <div><span className="text-muted-foreground">狀態:</span> <span className={statusBadge(poDetail.status)}>{poDetail.status}</span></div>
+              <div><span className="text-muted-foreground">狀態:</span> <span className={statusBadge(poDetail.status)}>{statusLabel(poDetail.status)}</span></div>
               <div><span className="text-muted-foreground">日期:</span> {poDetail.issue_date}</div>
               <div><span className="text-muted-foreground">到期:</span> {poDetail.due_date}</div>
               {poDetail.receipt_number && <div><span className="text-muted-foreground">收據號碼:</span> {poDetail.receipt_number}</div>}

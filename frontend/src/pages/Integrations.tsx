@@ -37,7 +37,7 @@ function Section({ icon: Icon, title, desc, children }: { icon: any; title: stri
 
 export default function Integrations() {
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-bold">整合 Integrations</h2>
         <p className="text-muted-foreground mt-1">LLM · 郵箱 · WorkBuddy 連線設定</p>

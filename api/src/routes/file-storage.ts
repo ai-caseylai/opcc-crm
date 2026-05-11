@@ -120,7 +120,7 @@ files.get('/', async (c) => {
   const folder = c.req.query('folder') || '';
   const q = c.req.query('q') || '';
 
-  let sql = 'SELECT id, folder, filename, original_name, file_type, file_size, description, ocr_status, category, created_at, updated_at FROM file_records WHERE user_id = ?';
+  let sql = 'SELECT id, folder, filename, original_name, file_type, file_size, description, ocr_status, category, direction, payment_status, amount, created_at, updated_at FROM file_records WHERE user_id = ?';
   const params: unknown[] = [user.id];
 
   if (folder) {
@@ -258,7 +258,7 @@ files.post('/upload-batch', async (c) => {
 files.get('/:id', async (c) => {
   const user = c.get('user');
   const row = await c.env.DB.prepare(
-    'SELECT id, folder, filename, original_name, file_type, file_size, description, ocr_text, ocr_status, category, created_at, updated_at FROM file_records WHERE id = ? AND user_id = ?'
+    'SELECT id, folder, filename, original_name, file_type, file_size, description, ocr_text, ocr_status, category, direction, payment_status, amount, created_at, updated_at FROM file_records WHERE id = ? AND user_id = ?'
   ).bind(c.req.param('id'), user.id).first();
   if (!row) return c.json({ error: 'Not found' }, 404);
   return c.json(row);

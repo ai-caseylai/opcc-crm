@@ -21,6 +21,7 @@
     "integrations": "整合",
     "modules": "模組",
     "bankStatements": "銀行月結單",
+    "ledger": "總帳",
     "expenseReceipts": "消費單據",
     "todos": "待辦事項",
     "websiteGenerator": "網站生成",

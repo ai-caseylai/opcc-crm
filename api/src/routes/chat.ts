@@ -39,6 +39,7 @@ const TOOLS: any[] = [
   { type: 'function', function: { name: 'delete_customer', description: 'Soft-delete a customer', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Customer ID' } }, required: ['id'] } } },
 
   // ── Suppliers ──
+  { type: 'function', function: { name: 'search_suppliers', description: 'Search suppliers by name or company', parameters: { type: 'object', properties: { query: { type: 'string', description: 'Search keyword' }, limit: { type: 'number' } }, required: ['query'] } } },
   { type: 'function', function: { name: 'list_suppliers', description: 'List recent active suppliers', parameters: { type: 'object', properties: { limit: { type: 'number' } }, required: [] } } },
   { type: 'function', function: { name: 'get_supplier', description: 'Get supplier details by ID', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Supplier ID' } }, required: ['id'] } } },
   { type: 'function', function: { name: 'create_supplier', description: 'Create a new supplier', parameters: { type: 'object', properties: { name: { type: 'string' }, company_name: { type: 'string' }, email: { type: 'string' }, phone: { type: 'string' }, address: { type: 'string' } }, required: ['name'] } } },
@@ -53,6 +54,7 @@ const TOOLS: any[] = [
   { type: 'function', function: { name: 'delete_product', description: 'Soft-delete a product', parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } } },
 
   // ── Invoices ──
+  { type: 'function', function: { name: 'search_invoices', description: 'Search invoices by number or customer name', parameters: { type: 'object', properties: { query: { type: 'string', description: 'Search keyword' }, limit: { type: 'number' } }, required: ['query'] } } },
   { type: 'function', function: { name: 'list_invoices', description: 'List recent invoices with optional status filter', parameters: { type: 'object', properties: { status: { type: 'string', description: 'draft, sent, paid, overdue' }, limit: { type: 'number' } }, required: [] } } },
   { type: 'function', function: { name: 'get_invoice', description: 'Get full invoice details by ID including line items', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Invoice ID' } }, required: ['id'] } } },
   { type: 'function', function: { name: 'create_invoice', description: 'Create a new invoice', parameters: { type: 'object', properties: { customer_id: { type: 'string' }, invoice_number: { type: 'string' }, items: { type: 'array', description: 'Array of {description, quantity, unit_price, amount}', items: { type: 'object' } }, due_date: { type: 'string', description: 'YYYY-MM-DD' }, currency: { type: 'string' }, notes: { type: 'string' } }, required: ['customer_id'] } } },
@@ -67,12 +69,14 @@ const TOOLS: any[] = [
   { type: 'function', function: { name: 'delete_quotation', description: 'Delete a quotation by ID', parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } } },
 
   // ── Purchase Orders ──
+  { type: 'function', function: { name: 'get_purchase_order', description: 'Get purchase order details by ID', parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } } },
   { type: 'function', function: { name: 'list_purchase_orders', description: 'List recent purchase orders with optional status filter', parameters: { type: 'object', properties: { status: { type: 'string', description: 'draft, approved, received, paid, cancelled' }, limit: { type: 'number' } }, required: [] } } },
   { type: 'function', function: { name: 'create_purchase_order', description: 'Create a new purchase order', parameters: { type: 'object', properties: { supplier_id: { type: 'string' }, items: { type: 'array', description: 'Array of {description, quantity, unit_price, amount}', items: { type: 'object' } }, due_date: { type: 'string', description: 'YYYY-MM-DD' }, currency: { type: 'string' }, notes: { type: 'string' } }, required: [] } } },
   { type: 'function', function: { name: 'update_purchase_order_status', description: 'Update PO status', parameters: { type: 'object', properties: { id: { type: 'string' }, status: { type: 'string', description: 'draft, approved, received, paid, cancelled' } }, required: ['id', 'status'] } } },
   { type: 'function', function: { name: 'delete_purchase_order', description: 'Delete a purchase order by ID', parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } } },
 
   // ── Service Orders ──
+  { type: 'function', function: { name: 'get_service_order', description: 'Get service order details by ID', parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } } },
   { type: 'function', function: { name: 'list_service_orders', description: 'List recent service orders', parameters: { type: 'object', properties: { status: { type: 'string', description: 'draft, active, completed, cancelled' }, limit: { type: 'number' } }, required: [] } } },
   { type: 'function', function: { name: 'create_service_order', description: 'Create a new service order', parameters: { type: 'object', properties: { customer_id: { type: 'string' }, items: { type: 'array', description: 'Array of {description, quantity, unit_price, amount}', items: { type: 'object' } }, valid_from: { type: 'string', description: 'YYYY-MM-DD' }, valid_until: { type: 'string' }, currency: { type: 'string' } }, required: ['customer_id'] } } },
   { type: 'function', function: { name: 'update_service_order_status', description: 'Update SO status', parameters: { type: 'object', properties: { id: { type: 'string' }, status: { type: 'string', description: 'draft, active, completed, cancelled' } }, required: ['id', 'status'] } } },
@@ -81,7 +85,10 @@ const TOOLS: any[] = [
   // ── Services & Bookings ──
   { type: 'function', function: { name: 'list_services', description: 'List all active services', parameters: { type: 'object', properties: {}, required: [] } } },
   { type: 'function', function: { name: 'create_service', description: 'Create a new service', parameters: { type: 'object', properties: { name: { type: 'string' }, price: { type: 'number' }, duration_minutes: { type: 'number' }, category: { type: 'string' } }, required: ['name', 'price'] } } },
+  { type: 'function', function: { name: 'update_service', description: 'Update a service', parameters: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' }, price: { type: 'number' }, duration_minutes: { type: 'number' }, category: { type: 'string' } }, required: ['id'] } } },
+  { type: 'function', function: { name: 'delete_service', description: 'Delete a service', parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } } },
   { type: 'function', function: { name: 'list_bookings', description: 'List service bookings', parameters: { type: 'object', properties: { date: { type: 'string', description: 'YYYY-MM-DD' } }, required: [] } } },
+  { type: 'function', function: { name: 'create_booking', description: 'Create a service booking', parameters: { type: 'object', properties: { service_id: { type: 'string' }, customer_id: { type: 'string' }, booking_date: { type: 'string', description: 'YYYY-MM-DD' }, start_time: { type: 'string' }, end_time: { type: 'string' }, notes: { type: 'string' } }, required: ['service_id', 'customer_id', 'booking_date', 'start_time'] } } },
 
   // ── Todos ──
   { type: 'function', function: { name: 'list_todos', description: 'List pending todos, sorted by priority', parameters: { type: 'object', properties: {}, required: [] } } },
@@ -92,6 +99,7 @@ const TOOLS: any[] = [
   // ── Calendar ──
   { type: 'function', function: { name: 'list_calendar_events', description: 'List calendar events for a date range', parameters: { type: 'object', properties: { start: { type: 'string', description: 'YYYY-MM-DD' }, end: { type: 'string', description: 'YYYY-MM-DD' } }, required: [] } } },
   { type: 'function', function: { name: 'create_calendar_event', description: 'Create a calendar event', parameters: { type: 'object', properties: { title: { type: 'string' }, start_time: { type: 'string', description: 'ISO datetime' }, end_time: { type: 'string' }, description: { type: 'string' }, location: { type: 'string' }, customer_id: { type: 'string' } }, required: ['title', 'start_time'] } } },
+  { type: 'function', function: { name: 'update_calendar_event', description: 'Update a calendar event', parameters: { type: 'object', properties: { id: { type: 'string' }, title: { type: 'string' }, start_time: { type: 'string' }, end_time: { type: 'string' }, description: { type: 'string' }, location: { type: 'string' } }, required: ['id'] } } },
   { type: 'function', function: { name: 'delete_calendar_event', description: 'Delete a calendar event', parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } } },
 
   // ── Company / Profile ──
@@ -133,6 +141,13 @@ async function executeTool(name: string, db: D1Database, userId: string, args: a
         counts.net = (invTotal?.total || 0) - (poTotal?.total || 0);
       } catch {}
       return JSON.stringify(counts);
+    }
+    case 'search_invoices': {
+      const q = args?.query || '';
+      const rows = await db.prepare(
+        `SELECT i.id, i.invoice_number, i.status, i.total, i.currency, i.issue_date, c.name as customer_name FROM invoices i LEFT JOIN customers c ON i.customer_id = c.id WHERE i.user_id = ? AND (i.invoice_number LIKE ? OR c.name LIKE ?) ORDER BY i.created_at DESC LIMIT ?`
+      ).bind(userId, `%${q}%`, `%${q}%`, limit).all();
+      return JSON.stringify(rows.results);
     }
     case 'list_invoices': {
       let q = `SELECT i.id, i.invoice_number, i.status, i.total, i.currency, i.issue_date, i.due_date, i.paid_date, c.name as customer_name FROM invoices i LEFT JOIN customers c ON i.customer_id = c.id WHERE i.user_id = ?`;
@@ -185,6 +200,13 @@ async function executeTool(name: string, db: D1Database, userId: string, args: a
       const rows = await db.prepare(
         'SELECT id, name, category, unit_price, currency, unit FROM products WHERE user_id = ? AND is_active = 1 AND (name LIKE ? OR category LIKE ?) ORDER BY name LIMIT ?'
       ).bind(userId, `%${q}%`, `%${q}%`, limit).all();
+      return JSON.stringify(rows.results);
+    }
+    case 'search_suppliers': {
+      const q = args?.query || '';
+      const rows = await db.prepare(
+        'SELECT id, name, company_name, email, phone FROM suppliers WHERE user_id = ? AND is_active = 1 AND (name LIKE ? OR company_name LIKE ? OR email LIKE ?) ORDER BY name LIMIT ?'
+      ).bind(userId, `%${q}%`, `%${q}%`, `%${q}%`, limit).all();
       return JSON.stringify(rows.results);
     }
     case 'list_suppliers': {
@@ -402,6 +424,12 @@ async function executeTool(name: string, db: D1Database, userId: string, args: a
       const row = await db.prepare('SELECT * FROM purchase_orders WHERE id = ?').bind(id).first();
       return JSON.stringify({ success: true, purchase_order: row });
     }
+    case 'get_purchase_order': {
+      const row = await db.prepare('SELECT po.*, s.name as supplier_name FROM purchase_orders po LEFT JOIN suppliers s ON po.supplier_id = s.id WHERE po.id = ? AND po.user_id = ?').bind(args.id, userId).first();
+      if (!row) return JSON.stringify({ error: 'Purchase order not found' });
+      const items = await db.prepare('SELECT description, quantity, unit_price, amount FROM purchase_order_items WHERE po_id = ? ORDER BY sort_order').bind(args.id).all();
+      return JSON.stringify({ ...row, items: items.results });
+    }
     case 'update_purchase_order_status': {
       await db.prepare("UPDATE purchase_orders SET status = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?").bind(args.status, args.id, userId).run();
       if (args.status === 'paid') await db.prepare("UPDATE purchase_orders SET paid_date = datetime('now') WHERE id = ?").bind(args.id).run();
@@ -433,6 +461,12 @@ async function executeTool(name: string, db: D1Database, userId: string, args: a
       const row = await db.prepare('SELECT * FROM service_orders WHERE id = ?').bind(id).first();
       return JSON.stringify({ success: true, service_order: row });
     }
+    case 'get_service_order': {
+      const row = await db.prepare('SELECT so.*, c.name as customer_name FROM service_orders so LEFT JOIN customers c ON so.customer_id = c.id WHERE so.id = ? AND so.user_id = ?').bind(args.id, userId).first();
+      if (!row) return JSON.stringify({ error: 'Service order not found' });
+      const items = await db.prepare('SELECT description, quantity, unit_price, amount FROM service_order_items WHERE so_id = ? ORDER BY sort_order').bind(args.id).all();
+      return JSON.stringify({ ...row, items: items.results });
+    }
     case 'update_service_order_status': {
       await db.prepare("UPDATE service_orders SET status = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?").bind(args.status, args.id, userId).run();
       return JSON.stringify({ success: true, id: args.id, status: args.status });
@@ -449,6 +483,23 @@ async function executeTool(name: string, db: D1Database, userId: string, args: a
         .bind(id, userId, args.name, args.price || 0, args.duration_minutes || 60, args.category || 'general').run();
       return JSON.stringify({ success: true, id });
     }
+    case 'update_service': {
+      const fields = ['name', 'price', 'duration_minutes', 'category'];
+      const sets: string[] = [];
+      const params: any[] = [];
+      for (const f of fields) {
+        if (args[f] !== undefined) { sets.push(`${f} = ?`); params.push(args[f]); }
+      }
+      if (sets.length === 0) return JSON.stringify({ error: 'No fields to update' });
+      sets.push("updated_at = datetime('now')");
+      params.push(args.id, userId);
+      await db.prepare(`UPDATE services SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).bind(...params).run();
+      return JSON.stringify({ success: true, id: args.id });
+    }
+    case 'delete_service': {
+      await db.prepare('UPDATE services SET is_active = 0, updated_at = datetime(\'now\') WHERE id = ? AND user_id = ?').bind(args.id, userId).run();
+      return JSON.stringify({ success: true, deleted: args.id });
+    }
     case 'list_bookings': {
       let q = 'SELECT sb.*, s.name as service_name, c.name as customer_name FROM service_bookings sb JOIN services s ON sb.service_id = s.id LEFT JOIN customers c ON sb.customer_id = c.id WHERE sb.user_id = ?';
       const params: any[] = [userId];
@@ -456,6 +507,12 @@ async function executeTool(name: string, db: D1Database, userId: string, args: a
       q += ' ORDER BY sb.booking_date DESC, sb.start_time LIMIT ?'; params.push(limit);
       const rows = await db.prepare(q).bind(...params).all();
       return JSON.stringify(rows.results);
+    }
+    case 'create_booking': {
+      const id = `bk-${uuidv4().slice(0, 8)}`;
+      await db.prepare('INSERT INTO service_bookings (id, user_id, service_id, customer_id, booking_date, start_time, end_time, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .bind(id, userId, args.service_id, args.customer_id, args.booking_date, args.start_time, args.end_time || null, args.notes || null).run();
+      return JSON.stringify({ success: true, id });
     }
 
     // ── Todos CRUD ──
@@ -495,6 +552,19 @@ async function executeTool(name: string, db: D1Database, userId: string, args: a
       await db.prepare('INSERT INTO calendar_events (id, user_id, title, start_time, end_time, description, location, customer_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
         .bind(id, userId, args.title, args.start_time, args.end_time || null, args.description || null, args.location || null, args.customer_id || null).run();
       return JSON.stringify({ success: true, id, title: args.title });
+    }
+    case 'update_calendar_event': {
+      const fields = ['title', 'start_time', 'end_time', 'description', 'location', 'status'];
+      const sets: string[] = [];
+      const params: any[] = [];
+      for (const f of fields) {
+        if (args[f] !== undefined) { sets.push(`${f} = ?`); params.push(args[f]); }
+      }
+      if (sets.length === 0) return JSON.stringify({ error: 'No fields to update' });
+      sets.push("updated_at = datetime('now')");
+      params.push(args.id, userId);
+      await db.prepare(`UPDATE calendar_events SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).bind(...params).run();
+      return JSON.stringify({ success: true, id: args.id });
     }
     case 'delete_calendar_event': {
       await db.prepare('DELETE FROM calendar_events WHERE id = ? AND user_id = ?').bind(args.id, userId).run();

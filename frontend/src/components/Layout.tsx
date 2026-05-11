@@ -7,7 +7,7 @@ import { api } from '../lib/api';
 import Chatbot from './Chatbot';
 import {
   LayoutDashboard, Users, Truck, Package, FileText, FileSpreadsheet, Mail,
-  Calculator, Upload, Settings, LogOut, Menu, X, MessageCircle, Calendar, Briefcase, FolderOpen, Plug, SlidersHorizontal, Landmark, Receipt, CheckSquare, Globe, CreditCard, Smartphone, HardDrive, ShoppingCart, ClipboardList, AlertCircle,
+  Calculator, Upload, Settings, LogOut, Menu, X, MessageCircle, Calendar, Briefcase, FolderOpen, Plug, SlidersHorizontal, Landmark, Receipt, CheckSquare, Globe, CreditCard, Smartphone, HardDrive, ShoppingCart, ClipboardList, AlertCircle, BookOpen, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 
 const navGroups = [
@@ -103,7 +103,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const { user, logout, company } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+
+  // Mobile states
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
+  const [chatMobileOpen, setChatMobileOpen] = React.useState(false);
+
+  // Desktop states
+  const [sidebarDesktopOpen, setSidebarDesktopOpen] = React.useState(true);
+  const [chatDesktopOpen, setChatDesktopOpen] = React.useState(true);
 
   // React Query subscription: refetches when Modules page invalidates ['company']
   const { data: liveCompany } = useQuery({
@@ -130,98 +137,191 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   const handleLogout = () => { logout(); navigate('/login'); };
 
+  const sidebarCollapsed = !sidebarDesktopOpen;
+
+  const renderSidebarContent = (collapsed: boolean) => (
+    <div className="flex flex-col h-full">
+      {/* Company header */}
+      {collapsed ? (
+        <div className="border-b flex justify-center w-16 py-3">
+          <div className="w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-sm font-bold">
+            {(activeCompany?.name || 'O').charAt(0)}
+          </div>
+        </div>
+      ) : (
+        <div className="p-6 border-b">
+          <h1 className="text-xl font-bold text-primary">{activeCompany?.name || t('app.title')}</h1>
+          <p className="text-sm text-muted-foreground mt-1">{activeCompany?.domain || user?.company_name || user?.name}</p>
+        </div>
+      )}
+
+      {/* Language toggle — hidden when collapsed */}
+      {!collapsed && (
+        <div className="px-3 py-2 flex gap-1">
+          {languages.map((l) => {
+            const active = i18n.language === l.code;
+            return (
+              <button key={l.code} onClick={() => i18n.changeLanguage(l.code)}
+                className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                  active ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                }`}>
+                {l.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Navigation */}
+      <nav className={`flex-1 space-y-0.5 overflow-y-auto ${collapsed ? 'p-0' : 'p-2'}`}>
+        {navGroups.map((group, gi) => {
+          const visibleItems = group.items.filter(item => {
+            const featKey = NAV_FEATURE_MAP[item.key];
+            if (!featKey) return true;
+            return features[featKey] !== false;
+          });
+          if (group.label && visibleItems.length === 0) return null;
+          return (
+            <div key={gi}>
+              {group.label && !collapsed && (
+                <div className="text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-wider px-3 pt-3 pb-1">
+                  {group.label}
+                </div>
+              )}
+              {visibleItems.map((item) => {
+                const Icon = item.icon;
+                const isActive = location.pathname === item.to;
+                return (
+                  <Link key={item.to} to={item.to} onClick={() => setSidebarOpen(false)}
+                    title={collapsed ? t(`nav.${item.key}`) : undefined}
+                    className={`relative flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
+                      collapsed ? 'justify-center px-0 w-16 h-10' : ''
+                    } ${isActive ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-muted'}`}>
+                    <Icon className={`flex-shrink-0 ${collapsed ? 'h-5 w-5' : 'h-4 w-4'}`} />
+                    {!collapsed && <span className="flex-1">{t(`nav.${item.key}`)}</span>}
+                    {!collapsed && item.key === 'fileStorage' && issueCount > 0 && (
+                      <span className="flex items-center gap-0.5 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none">
+                        <AlertCircle className="h-2.5 w-2.5" />
+                        {issueCount}
+                      </span>
+                    )}
+                    {collapsed && item.key === 'fileStorage' && issueCount > 0 && (
+                      <span className="absolute -top-0.5 -right-0.5 bg-red-500 text-white text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center leading-none">
+                        {issueCount > 9 ? '9+' : issueCount}
+                      </span>
+                    )}
+                  </Link>
+                );
+              })}
+              {!collapsed && gi < navGroups.length - 1 && group.label && visibleItems.length > 0 && (
+                <div className="mx-3 mt-2 border-b border-border/50" />
+              )}
+            </div>
+          );
+        })}
+      </nav>
+
+      {/* Footer */}
+      {collapsed ? (
+        <div className="border-t flex justify-center w-16 py-2">
+          <button onClick={handleLogout}
+            className="p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted" title={t('nav.logout')}>
+            <LogOut className="h-4 w-4" />
+          </button>
+        </div>
+      ) : (
+        <div className="p-4 border-t space-y-3">
+          <div className="text-sm text-muted-foreground">{user?.email}</div>
+          <button onClick={handleLogout}
+            className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground w-full px-3 py-2 rounded-md hover:bg-muted">
+            <LogOut className="h-4 w-4" /> {t('nav.logout')}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div className="min-h-screen bg-background">
-      {/* Mobile header */}
+      {/* ====== MOBILE HEADER ====== */}
       <div className="lg:hidden fixed top-0 left-0 right-0 z-50 flex items-center justify-between p-4 bg-background border-b">
         <button onClick={() => setSidebarOpen(!sidebarOpen)} className="p-2 rounded-md hover:bg-muted">
           {sidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
         </button>
         <span className="font-bold text-primary">{activeCompany?.name || t('app.title')}</span>
-        <div className="w-10" />
+        <button onClick={() => setChatMobileOpen(!chatMobileOpen)} className="p-2 rounded-md hover:bg-muted">
+          <MessageCircle className="h-5 w-5" />
+        </button>
       </div>
 
+      {/* ====== MOBILE: Sidebar overlay ====== */}
       {sidebarOpen && (
         <div className="lg:hidden fixed inset-0 z-40 bg-black/50" onClick={() => setSidebarOpen(false)} />
       )}
-
-      {/* Sidebar */}
-      <aside className={`fixed top-0 left-0 z-50 h-full w-64 bg-card border-r transform transition-transform duration-200 lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} pt-16 lg:pt-0`}>
-        <div className="flex flex-col h-full">
-          <div className="p-6 border-b">
-            <h1 className="text-xl font-bold text-primary">{activeCompany?.name || t('app.title')}</h1>
-            <p className="text-sm text-muted-foreground mt-1">{activeCompany?.domain || user?.company_name || user?.name}</p>
-          </div>
-          {/* Language toggle — 繁 | 简 | EN */}
-          <div className="px-3 py-2 flex gap-1">
-            {languages.map((l) => {
-              const active = i18n.language === l.code;
-              return (
-                <button key={l.code} onClick={() => i18n.changeLanguage(l.code)}
-                  className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                    active ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                  }`}>
-                  {l.label}
-                </button>
-              );
-            })}
-          </div>
-          <nav className="flex-1 p-4 space-y-0.5 overflow-y-auto">
-            {navGroups.map((group, gi) => {
-              const visibleItems = group.items.filter(item => {
-                const featKey = NAV_FEATURE_MAP[item.key];
-                if (!featKey) return true;
-                return features[featKey] !== false;
-              });
-              // Skip labelled groups with no visible items
-              if (group.label && visibleItems.length === 0) return null;
-              return (
-                <div key={gi}>
-                  {group.label && (
-                    <div className="text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-wider px-3 pt-3 pb-1">
-                      {group.label}
-                    </div>
-                  )}
-                  {visibleItems.map((item) => {
-                    const Icon = item.icon;
-                    const isActive = location.pathname === item.to;
-                    return (
-                      <Link key={item.to} to={item.to} onClick={() => setSidebarOpen(false)}
-                        className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${isActive ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-muted'}`}>
-                        <Icon className="h-4 w-4" />
-                        <span className="flex-1">{t(`nav.${item.key}`)}</span>
-                        {item.key === 'fileStorage' && issueCount > 0 && (
-                          <span className="flex items-center gap-0.5 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none">
-                            <AlertCircle className="h-2.5 w-2.5" />
-                            {issueCount}
-                          </span>
-                        )}
-                      </Link>
-                    );
-                  })}
-                  {gi < navGroups.length - 1 && group.label && visibleItems.length > 0 && (
-                    <div className="mx-3 mt-2 border-b border-border/50" />
-                  )}
-                </div>
-              );
-            })}
-          </nav>
-          <div className="p-4 border-t space-y-3">
-            <div className="text-sm text-muted-foreground">{user?.email}</div>
-            <button onClick={handleLogout}
-              className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground w-full px-3 py-2 rounded-md hover:bg-muted">
-              <LogOut className="h-4 w-4" /> {t('nav.logout')}
-            </button>
-          </div>
-        </div>
+      <aside className={`lg:hidden fixed top-0 left-0 z-50 h-full w-64 bg-card border-r transform transition-transform duration-200 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} pt-16`}>
+        {renderSidebarContent(false)}
       </aside>
 
-      <main className="lg:pl-64 pt-16 lg:pt-0 min-h-screen">
-        <div className="p-6 max-w-7xl mx-auto">
+      {/* ====== MOBILE: Chat overlay ====== */}
+      {chatMobileOpen && (
+        <>
+          <div className="lg:hidden fixed inset-0 z-40 bg-black/50" onClick={() => setChatMobileOpen(false)} />
+          <div className="lg:hidden fixed inset-0 z-50 pt-16 bg-background slide-in-right">
+            <Chatbot onClose={() => setChatMobileOpen(false)} className="h-full" />
+          </div>
+        </>
+      )}
+
+      {/* ====== DESKTOP 3-PANEL LAYOUT ====== */}
+      <div className="hidden lg:grid lg:h-screen" style={{ gridTemplateColumns: `${sidebarDesktopOpen ? 256 : 64}px 1fr ${chatDesktopOpen ? 420 : 0}px` }}>
+
+        {/* LEFT: Sidebar */}
+        <aside className="bg-card border-r flex flex-col relative panel-transition overflow-y-auto overflow-x-hidden">
+          <div className={sidebarDesktopOpen ? 'w-[256px]' : 'w-[64px]'} style={{ minWidth: sidebarDesktopOpen ? 256 : 64 }}>
+            {renderSidebarContent(sidebarCollapsed)}
+          </div>
+          {/* Collapse toggle */}
+          <button
+            onClick={() => setSidebarDesktopOpen(!sidebarDesktopOpen)}
+            className="absolute -right-3 top-1/2 -translate-y-1/2 z-10 w-6 h-6 bg-card border rounded-full flex items-center justify-center hover:bg-muted shadow-sm cursor-pointer"
+            title={sidebarDesktopOpen ? '收合側欄' : '展開側欄'}>
+            {sidebarDesktopOpen
+              ? <ChevronLeft className="h-3.5 w-3.5" />
+              : <ChevronRight className="h-3.5 w-3.5" />}
+          </button>
+        </aside>
+
+        {/* CENTER: Main content */}
+        <main className="min-w-0 overflow-y-auto overflow-x-hidden">
+          <div className="p-6">
+            {children}
+          </div>
+        </main>
+
+        {/* RIGHT: Chat panel */}
+        <aside className={`bg-card overflow-hidden flex flex-col relative panel-transition ${chatDesktopOpen ? 'border-l' : ''}`}>
+          <div className="w-[420px] h-full">
+            <Chatbot onClose={() => setChatDesktopOpen(false)} className="h-full" />
+          </div>
+        </aside>
+      </div>
+
+      {/* Desktop chat reopen button (when closed) */}
+      {!chatDesktopOpen && (
+        <button
+          onClick={() => setChatDesktopOpen(true)}
+          className="hidden lg:flex fixed right-0 top-1/2 -translate-y-1/2 z-30 w-6 h-12 items-center justify-center bg-card border rounded-l-md hover:bg-muted cursor-pointer shadow-sm"
+          title="展開 AI 對話">
+          <MessageCircle className="h-4 w-4" />
+        </button>
+      )}
+
+      {/* ====== MOBILE: Main content ====== */}
+      <div className="lg:hidden pt-16 min-h-screen">
+        <div className="p-6 w-full">
           {children}
         </div>
-      </main>
-      <Chatbot />
+      </div>
     </div>
   );
 }

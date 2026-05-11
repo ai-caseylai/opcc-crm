@@ -17,14 +17,14 @@ export default function Settings() {
 
   React.useEffect(() => {
     if (company) setCoForm({
-      name: company.name || '', address: company.address || '', address2: company.address2 || '',
-      phone: company.phone || '', email: company.email || '', website: company.website || '',
+      name: company.name || user?.company_name || '', address: company.address || '', address2: company.address2 || '',
+      phone: company.phone || '', email: company.email || user?.email || '', website: company.website || '',
       bank_name: company.bank_name || '', bank_account: company.bank_account || '',
       bank_swift: company.bank_swift || '', bank_address: company.bank_address || '',
-      signatory_name: company.signatory_name || '', tax_id: company.tax_id || '',
+      signatory_name: company.signatory_name || user?.name || '', tax_id: company.tax_id || '',
       invoice_number_pattern: company.invoice_number_pattern || 'INV{YY}{MM}-{NNN}',
     });
-  }, [company]);
+  }, [company, user]);
 
   const saveCompany = useMutation({
     mutationFn: (body: any) => api('/company', { method: 'PUT', body }),
@@ -65,7 +65,7 @@ export default function Settings() {
   };
 
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-bold">設定 Settings</h2>
         <p className="text-muted-foreground mt-1">帳戶與 API 設定</p>

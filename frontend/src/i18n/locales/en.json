@@ -21,6 +21,7 @@
     "integrations": "Integrations",
     "modules": "Modules",
     "bankStatements": "Bank Statements",
+    "ledger": "General Ledger",
     "expenseReceipts": "Expense Receipts",
     "todos": "Todo List",
     "websiteGenerator": "Website Gen",

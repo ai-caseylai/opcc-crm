@@ -46,7 +46,7 @@ export default function Todos() {
   const completed = todos.filter((t: any) => t.status === 'completed');
 
   return (
-    <div className="space-y-6 max-w-2xl">
+    <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-bold">{t('todos.title')}</h2>
         <p className="text-muted-foreground mt-1">{t('todos.desc')}</p>

@@ -557,6 +557,147 @@ workbuddy.put('/company', tokenAuth, async (c) => {
   return c.json(row);
 });
 
+// ── Aggregate / Summary ──
+workbuddy.get('/counts', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const tables = ['customers', 'suppliers', 'products', 'invoices', 'quotations', 'purchase_orders', 'service_orders', 'todos'];
+  const result: Record<string, number> = {};
+  for (const t of tables) {
+    try {
+      const r = await c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM ${t} WHERE user_id = ?`).bind(user.id).first<{ cnt: number }>();
+      result[t] = r?.cnt || 0;
+    } catch { result[t] = 0; }
+  }
+  return c.json(result);
+});
+
+workbuddy.get('/summary', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const counts: Record<string, number> = {};
+  for (const t of ['customers', 'suppliers', 'products', 'invoices', 'quotations', 'purchase_orders', 'service_orders', 'todos']) {
+    try {
+      const r = await c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM ${t} WHERE user_id = ?`).bind(user.id).first<{ cnt: number }>();
+      counts[t] = r?.cnt || 0;
+    } catch { counts[t] = 0; }
+  }
+  try {
+    const invTotal = await c.env.DB.prepare("SELECT COALESCE(SUM(total),0) as total FROM invoices WHERE user_id = ? AND status = 'paid'").bind(user.id).first<{ total: number }>();
+    const poTotal = await c.env.DB.prepare("SELECT COALESCE(SUM(total),0) as total FROM purchase_orders WHERE user_id = ? AND status = 'paid'").bind(user.id).first<{ total: number }>();
+    counts.income_paid = invTotal?.total || 0;
+    counts.expense_paid = poTotal?.total || 0;
+    counts.net = (invTotal?.total || 0) - (poTotal?.total || 0);
+  } catch {}
+  return c.json(counts);
+});
+
+workbuddy.get('/bookkeeping', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const start = c.req.query('start_date') || '2020-01-01';
+  const end = c.req.query('end_date') || '2099-12-31';
+  try {
+    const rows = await c.env.DB.prepare(
+      'SELECT a.account_code as code, a.account_name as name, a.account_type as type, SUM(COALESCE(jl.debit,0)) as total_debit, SUM(COALESCE(jl.credit,0)) as total_credit FROM journal_lines jl JOIN accounts a ON jl.account_code = a.account_code JOIN journal_entries je ON jl.entry_id = je.id WHERE je.user_id = ? AND je.entry_date BETWEEN ? AND ? GROUP BY a.account_code, a.account_name, a.account_type ORDER BY a.account_code'
+    ).bind(user.id, start, end).all();
+    if (rows.results.length > 0) return c.json({ data: rows.results });
+  } catch {}
+  // Fallback: bank transactions
+  try {
+    const deposits = await c.env.DB.prepare('SELECT COALESCE(SUM(deposit_amount),0) as total FROM bank_transactions WHERE user_id = ? AND transaction_date >= ? AND transaction_date <= ?').bind(user.id, start, end).first<{ total: number }>();
+    const withdrawals = await c.env.DB.prepare('SELECT COALESCE(SUM(withdrawal_amount),0) as total FROM bank_transactions WHERE user_id = ? AND transaction_date >= ? AND transaction_date <= ?').bind(user.id, start, end).first<{ total: number }>();
+    return c.json({ data: [
+      { code: 'REV', name: 'Revenue (Bank Deposits)', type: 'revenue', total_credit: deposits?.total || 0 },
+      { code: 'EXP', name: 'Expenses (Bank Withdrawals)', type: 'expense', total_debit: withdrawals?.total || 0 },
+      { code: 'NET', name: 'Net Income', type: 'equity', total_credit: (deposits?.total || 0) - (withdrawals?.total || 0) },
+    ] });
+  } catch { return c.json({ data: [] }); }
+});
+
+workbuddy.get('/activity', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const limit = parseInt(c.req.query('limit') || '20');
+  const rows = await c.env.DB.prepare('SELECT action, entity_type, entity_id, created_at FROM audit_log WHERE user_id = ? ORDER BY created_at DESC LIMIT ?').bind(user.id, limit).all();
+  return c.json({ data: rows.results });
+});
+
+// ── Search endpoints ──
+workbuddy.get('/customers/search', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const q = c.req.query('q') || '';
+  const rows = await c.env.DB.prepare(
+    'SELECT id, name, company_name, email, phone, address FROM customers WHERE user_id = ? AND is_active = 1 AND (name LIKE ? OR email LIKE ? OR company_name LIKE ?) ORDER BY name LIMIT ?'
+  ).bind(user.id, `%${q}%`, `%${q}%`, `%${q}%`, 20).all();
+  return c.json({ data: rows.results });
+});
+
+workbuddy.get('/suppliers/search', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const q = c.req.query('q') || '';
+  const rows = await c.env.DB.prepare(
+    'SELECT id, name, company_name, email, phone FROM suppliers WHERE user_id = ? AND is_active = 1 AND (name LIKE ? OR company_name LIKE ?) ORDER BY name LIMIT ?'
+  ).bind(user.id, `%${q}%`, `%${q}%`, 20).all();
+  return c.json({ data: rows.results });
+});
+
+workbuddy.get('/products/search', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const q = c.req.query('q') || '';
+  const rows = await c.env.DB.prepare(
+    'SELECT id, name, category, unit_price, currency FROM products WHERE user_id = ? AND is_active = 1 AND (name LIKE ? OR category LIKE ?) ORDER BY name LIMIT ?'
+  ).bind(user.id, `%${q}%`, `%${q}%`, 20).all();
+  return c.json({ data: rows.results });
+});
+
+workbuddy.get('/invoices/search', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const q = c.req.query('q') || '';
+  const rows = await c.env.DB.prepare(
+    `SELECT i.id, i.invoice_number, i.status, i.total, i.currency, i.issue_date, c.name as customer_name FROM invoices i LEFT JOIN customers c ON i.customer_id = c.id WHERE i.user_id = ? AND (i.invoice_number LIKE ? OR c.name LIKE ?) ORDER BY i.created_at DESC LIMIT ?`
+  ).bind(user.id, `%${q}%`, `%${q}%`, 20).all();
+  return c.json({ data: rows.results });
+});
+
+// ── Services Update / Delete ──
+workbuddy.put('/services/:id', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json();
+  const fields = ['name', 'price', 'duration_minutes', 'category', 'description'];
+  const sets: string[] = [];
+  const params: any[] = [];
+  for (const f of fields) {
+    if (body[f] !== undefined) { sets.push(`${f} = ?`); params.push(body[f]); }
+  }
+  if (sets.length === 0) return c.json({ error: 'No fields to update' }, 400);
+  sets.push("updated_at = datetime('now')");
+  params.push(c.req.param('id'), user.id);
+  await c.env.DB.prepare(`UPDATE services SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).bind(...params).run();
+  const row = await c.env.DB.prepare('SELECT * FROM services WHERE id = ?').bind(c.req.param('id')).first();
+  return c.json(row);
+});
+
+workbuddy.delete('/services/:id', tokenAuth, async (c) => {
+  const user = c.get('user');
+  await c.env.DB.prepare("UPDATE services SET is_active = 0, updated_at = datetime('now') WHERE id = ? AND user_id = ?").bind(c.req.param('id'), user.id).run();
+  return c.json({ success: true });
+});
+
+// ── Calendar Event Update ──
+workbuddy.put('/calendar/events/:id', tokenAuth, async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json();
+  const fields = ['title', 'start_time', 'end_time', 'description', 'location', 'status'];
+  const sets: string[] = [];
+  const params: any[] = [];
+  for (const f of fields) {
+    if (body[f] !== undefined) { sets.push(`${f} = ?`); params.push(body[f]); }
+  }
+  if (sets.length === 0) return c.json({ error: 'No fields to update' }, 400);
+  sets.push("updated_at = datetime('now')");
+  params.push(c.req.param('id'), user.id);
+  await c.env.DB.prepare(`UPDATE calendar_events SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).bind(...params).run();
+  const row = await c.env.DB.prepare('SELECT * FROM calendar_events WHERE id = ?').bind(c.req.param('id')).first();
+  return c.json(row);
+});
+
 // ── One-click onboard — dual auth: JWT or API token ──
 workbuddy.post('/admin/onboard', async (c) => {
   const authHeader = c.req.header('Authorization');

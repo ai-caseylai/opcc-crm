@@ -5,10 +5,11 @@ import { Plus, Calculator, Download } from 'lucide-react';
 
 export default function Bookkeeping() {
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<'entries' | 'accounts' | 'trial' | 'pl' | 'export'>('entries');
+  const [tab, setTab] = useState<'entries' | 'accounts' | 'trial' | 'pl' | 'ledger' | 'export'>('entries');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [showEntryForm, setShowEntryForm] = useState(false);
+  const [ledgerAccount, setLedgerAccount] = useState('');
   const [entryForm, setEntryForm] = useState({
     entry_number: '', entry_date: new Date().toISOString().split('T')[0], description: '',
     lines: [{ account_code: '', account_name: '', description: '', debit: 0, credit: 0 }],
@@ -36,6 +37,30 @@ export default function Bookkeeping() {
     queryKey: ['income-statement', startDate, endDate],
     queryFn: () => api(`/bookkeeping/income-statement?start_date=${startDate}&end_date=${endDate}`),
     enabled: tab === 'pl',
+  });
+
+  const { data: ledgerData, isLoading: ledgerLoading } = useQuery({
+    queryKey: ['ledger', ledgerAccount, startDate, endDate],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (startDate) params.set('start_date', startDate);
+      if (endDate) params.set('end_date', endDate);
+      if (ledgerAccount) params.set('account_code', ledgerAccount);
+      const qs = params.toString();
+      return api(`/bookkeeping/ledger${qs ? `?${qs}` : ''}`);
+    },
+    enabled: tab === 'ledger',
+  });
+
+  const autoGenMut = useMutation({
+    mutationFn: () => api('/bookkeeping/auto-generate-entries', { method: 'POST' }),
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ['ledger'] });
+      queryClient.invalidateQueries({ queryKey: ['entries'] });
+      queryClient.invalidateQueries({ queryKey: ['trial-balance'] });
+      queryClient.invalidateQueries({ queryKey: ['income-statement'] });
+      alert(`已建立 ${data.created} 筆分錄（共 ${data.total_transactions} 筆銀行交易，跳過 ${data.skipped} 筆已存在）`);
+    },
   });
 
   const createEntry = useMutation({
@@ -68,6 +93,7 @@ export default function Bookkeeping() {
   const tabs = [
     { id: 'entries', label: '分錄 Entries' },
     { id: 'accounts', label: '科目 Accounts' },
+    { id: 'ledger', label: '分類帳 Ledger' },
     { id: 'trial', label: '試算 Trial Balance' },
     { id: 'pl', label: '損益 P&L' },
     { id: 'export', label: '導出 Export' },
@@ -97,7 +123,7 @@ export default function Bookkeeping() {
       </div>
 
       {/* Date filters for relevant tabs */}
-      {(tab === 'entries' || tab === 'pl' || tab === 'export') && (
+      {(tab === 'entries' || tab === 'pl' || tab === 'ledger' || tab === 'export') && (
         <div className="flex gap-3">
           <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)}
             className="px-3 py-2 border rounded-md bg-background text-sm" />
@@ -180,6 +206,73 @@ export default function Bookkeeping() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Ledger Tab */}
+      {tab === 'ledger' && (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <select value={ledgerAccount} onChange={e => setLedgerAccount(e.target.value)}
+              className="px-3 py-2 border rounded-md bg-background text-sm min-w-[180px]">
+              <option value="">所有科目</option>
+              {(accounts?.data || []).map((a: any) => (
+                <option key={a.account_code} value={a.account_code}>{a.account_code} – {a.account_name}</option>
+              ))}
+            </select>
+            <span className="text-xs text-muted-foreground">資料來源：{ledgerData?.source === 'journal' ? '分錄' : '銀行交易'}</span>
+            <button onClick={() => autoGenMut.mutate()} disabled={autoGenMut.isPending}
+              className="ml-auto flex items-center gap-1 px-3 py-2 bg-primary text-primary-foreground rounded-md text-xs hover:opacity-90 disabled:opacity-40">
+              <Calculator className="h-3 w-3" /> 從銀行資料自動產生分錄
+            </button>
+          </div>
+
+          {ledgerLoading ? (
+            <div className="flex justify-center py-8"><div className="animate-spin h-6 w-6 border-2 border-primary border-t-transparent rounded-full" /></div>
+          ) : (ledgerData?.accounts || []).length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">未有分類帳資料</p>
+          ) : (
+            (ledgerData?.accounts || []).map((acct: any) => (
+              <div key={acct.account_code} className="bg-card border rounded-xl overflow-hidden">
+                <div className="px-4 py-2.5 bg-muted/50 border-b flex items-center justify-between">
+                  <span className="font-medium text-sm">{acct.account_code} – {acct.account_name}</span>
+                  <span className="text-xs text-muted-foreground capitalize">{acct.account_type}</span>
+                </div>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b text-xs text-muted-foreground">
+                      <th className="text-left py-2 px-4 font-medium">日期</th>
+                      <th className="text-left py-2 px-3 font-medium">描述</th>
+                      <th className="text-right py-2 px-3 font-medium">借方 Debit</th>
+                      <th className="text-right py-2 px-3 font-medium">貸方 Credit</th>
+                      <th className="text-right py-2 px-3 font-medium">餘額 Balance</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {acct.entries.map((e: any, i: number) => (
+                      <tr key={i} className="border-b border-muted/30 hover:bg-muted/20">
+                        <td className="py-1.5 px-4 whitespace-nowrap text-muted-foreground">{e.date}</td>
+                        <td className="py-1.5 px-3 max-w-[300px] truncate">{e.description}</td>
+                        <td className="py-1.5 px-3 text-right font-mono">{e.debit > 0 ? e.debit.toLocaleString(undefined, { minimumFractionDigits: 2 }) : ''}</td>
+                        <td className="py-1.5 px-3 text-right font-mono">{e.credit > 0 ? e.credit.toLocaleString(undefined, { minimumFractionDigits: 2 }) : ''}</td>
+                        <td className={`py-1.5 px-3 text-right font-mono font-medium ${e.balance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          {e.balance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="bg-muted/30 text-xs font-medium">
+                      <td className="py-2 px-4" colSpan={2}>合計</td>
+                      <td className="py-2 px-3 text-right font-mono">{acct.total_debit.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                      <td className="py-2 px-3 text-right font-mono">{acct.total_credit.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                      <td></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            ))
+          )}
         </div>
       )}
 

@@ -22,6 +22,7 @@ INSERT OR IGNORE INTO accounts (id, user_id, account_code, account_name, account
 ('acc-007', 'u-admin-001', '2000', 'Liabilities', 'liability', NULL),
 ('acc-008', 'u-admin-001', '2100', 'Current Liabilities', 'liability', '2000'),
 ('acc-009', 'u-admin-001', '2101', 'Accounts Payable', 'liability', '2100'),
+('acc-009b', 'u-admin-001', '2102', 'Director Loan', 'liability', '2100'),
 ('acc-010', 'u-admin-001', '3000', 'Equity', 'equity', NULL),
 ('acc-011', 'u-admin-001', '3100', 'Retained Earnings', 'equity', '3000'),
 ('acc-012', 'u-admin-001', '4000', 'Revenue', 'revenue', NULL),

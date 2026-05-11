@@ -21,6 +21,7 @@
     "integrations": "集成",
     "modules": "模块",
     "bankStatements": "银行月结单",
+    "ledger": "总账",
     "expenseReceipts": "消费单据",
     "todos": "待办事项",
     "websiteGenerator": "网站生成",

@@ -76,7 +76,7 @@ export default function WebsiteGenerator() {
   const versions = versionsData?.data || [];
 
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-bold">公司網站生成器</h2>
         <p className="text-muted-foreground mt-1">用 AI 根據公司資料自動生成一頁式公司網站，每次生成自動存檔</p>

@@ -75,6 +75,10 @@ export default function Invoices() {
   }
 
   const invoices = data?.data || [];
+  const statusLabel = (s: string) => {
+    const labels: Record<string, string> = { draft: '草稿', sent: '應收', paid: '已收', overdue: '逾期未收', cancelled: '已取消' };
+    return labels[s] || s;
+  };
   const statusBadge = (s: string) => {
     const colors: Record<string, string> = { draft: 'bg-gray-100 text-gray-700', sent: 'bg-blue-100 text-blue-700', paid: 'bg-green-100 text-green-700', overdue: 'bg-red-100 text-red-700', cancelled: 'bg-gray-100 text-gray-500' };
     return `px-2 py-0.5 rounded-full text-xs font-medium ${colors[s] || 'bg-gray-100'}`;
@@ -102,10 +106,10 @@ export default function Invoices() {
         <select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}
           className="px-3 py-2 border rounded-md bg-background text-sm">
           <option value="">全部狀態</option>
-          <option value="draft">Draft</option>
-          <option value="sent">Sent</option>
-          <option value="paid">Paid</option>
-          <option value="overdue">Overdue</option>
+          <option value="draft">草稿</option>
+          <option value="sent">應收</option>
+          <option value="paid">已收</option>
+          <option value="overdue">逾期未收</option>
         </select>
       </div>
 
@@ -128,17 +132,17 @@ export default function Invoices() {
                 <tr key={inv.id} className="border-b hover:bg-muted/30">
                   <td className="p-3 font-medium">{inv.invoice_number}</td>
                   <td className="p-3 hidden md:table-cell">{inv.customer_name || '-'}</td>
-                  <td className="p-3"><span className={statusBadge(inv.status)}>{inv.status}</span></td>
+                  <td className="p-3"><span className={statusBadge(inv.status)}>{statusLabel(inv.status)}</span></td>
                   <td className="p-3 text-right hidden lg:table-cell">{inv.currency} {inv.total?.toLocaleString()}</td>
                   <td className="p-3 hidden lg:table-cell">{inv.issue_date}</td>
                   <td className="p-3 text-right">
                     <button onClick={() => setViewId(inv.id)} className="p-1 hover:bg-muted rounded mr-1"><Eye className="h-4 w-4" /></button>
                     <a href={`/api/pdf/invoice/${inv.id}`} target="_blank" className="p-1 hover:bg-muted rounded mr-1 inline-block"><Download className="h-4 w-4" /></a>
                     {inv.status === 'draft' && (
-                      <button onClick={() => updateStatus.mutate({ id: inv.id, status: 'sent' })} className="text-xs text-blue-600 hover:underline mr-2">Send</button>
+                      <button onClick={() => updateStatus.mutate({ id: inv.id, status: 'sent' })} className="text-xs text-blue-600 hover:underline mr-2">發送（應收）</button>
                     )}
                     {inv.status === 'sent' && (
-                      <button onClick={() => updateStatus.mutate({ id: inv.id, status: 'paid' })} className="text-xs text-green-600 hover:underline mr-2">Paid</button>
+                      <button onClick={() => updateStatus.mutate({ id: inv.id, status: 'paid' })} className="text-xs text-green-600 hover:underline mr-2">已收</button>
                     )}
                     <button onClick={() => { if (confirm('確定刪除?')) deleteMut.mutate(inv.id); }} className="p-1 hover:bg-muted rounded text-destructive"><Trash2 className="h-4 w-4" /></button>
                   </td>
@@ -294,7 +298,7 @@ export default function Invoices() {
               </div>
               <div className="grid grid-cols-2 gap-3 text-sm">
                 <div><span className="text-muted-foreground">客戶:</span> {invoiceDetail.customer_name}</div>
-                <div><span className="text-muted-foreground">狀態:</span> <span className={statusBadge(invoiceDetail.status)}>{invoiceDetail.status}</span></div>
+                <div><span className="text-muted-foreground">狀態:</span> <span className={statusBadge(invoiceDetail.status)}>{statusLabel(invoiceDetail.status)}</span></div>
                 <div><span className="text-muted-foreground">日期:</span> {invoiceDetail.issue_date}</div>
                 <div><span className="text-muted-foreground">到期:</span> {invoiceDetail.due_date}</div>
                 {invoiceDetail.receipt_number && <div><span className="text-muted-foreground">收據號碼:</span> {invoiceDetail.receipt_number}</div>}

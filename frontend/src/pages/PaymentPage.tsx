@@ -4,7 +4,7 @@ import PaymentSettings from '../components/PaymentSettings';
 
 export default function PaymentPage() {
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-bold">收款系統整合</h2>
         <p className="text-muted-foreground mt-1">Stripe · FPS · WeChat Pay HK · AlipayHK · 八達通</p>
