@@ -23,36 +23,39 @@ ws.get('/', upgradeWebSocket((c) => {
   let wuConfig: { base_url?: string; token?: string } = {};
 
   return {
-    async onOpen(evt, ws) {
-      // Authenticate via query param JWT
+    async onOpen(evt: any, ws: any) {
+      // Authenticate via query param JWT (fallback: first message auth)
       const url = new URL(c.req.url);
       const token = url.searchParams.get('token') || '';
+      if (!token) return; // Will authenticate via first message
       try {
         const payload = jwtVerify(token, c.env.JWT_SECRET || 'dev-secret-change-me') as { id: string };
         userId = payload.id;
-
-        // Track connection
         if (!clients.has(userId)) clients.set(userId, new Set());
         clients.get(userId)!.add(ws.raw!);
-
-        // Get WUZAPI config for this user
-        const row = await c.env.DB.prepare(
-          'SELECT wuzapi_url, wuzapi_key FROM channels WHERE user_id = ? AND channel_type = ? AND is_active = 1 LIMIT 1'
-        ).bind(userId, 'whatsapp').first<{ wuzapi_url: string; wuzapi_key: string }>();
-        if (row) {
-          wuConfig = { base_url: row.wuzapi_url, token: row.wuzapi_key };
-        }
-
-        ws.send(JSON.stringify({ type: 'connected', userId, hasWuzapi: !!wuConfig.base_url }));
-      } catch {
-        ws.close(4001, 'Invalid token');
-      }
+        ws.send(JSON.stringify({ type: 'connected', userId }));
+      } catch { /* will try again via first message */ }
     },
 
-    async onMessage(evt, ws) {
-      if (!userId) return;
+    async onMessage(evt: any, ws: any) {
       try {
         const msg = JSON.parse(evt.data.toString());
+
+        // Auth via first message (for clients that can't use query params)
+        if (!userId && msg.type === 'auth' && msg.token) {
+          try {
+            const payload = jwtVerify(msg.token, c.env.JWT_SECRET || 'dev-secret-change-me') as { id: string };
+            userId = payload.id;
+            if (!clients.has(userId)) clients.set(userId, new Set());
+            clients.get(userId)!.add(ws.raw!);
+            ws.send(JSON.stringify({ type: 'connected', userId }));
+          } catch {
+            ws.close(4001, 'Invalid token');
+          }
+          return;
+        }
+
+        if (!userId) return;
 
         switch (msg.type) {
           case 'ping':
@@ -92,14 +95,14 @@ ws.get('/', upgradeWebSocket((c) => {
       }
     },
 
-    onClose(evt, ws) {
+    onClose(evt: any, ws: any) {
       if (userId && clients.has(userId)) {
         clients.get(userId)!.delete(ws.raw!);
         if (clients.get(userId)!.size === 0) clients.delete(userId);
       }
     },
 
-    onError(evt, ws) {
+    onError(evt: any, ws: any) {
       if (userId && clients.has(userId)) {
         clients.get(userId)!.delete(ws.raw!);
       }

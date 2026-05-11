@@ -8,32 +8,81 @@ import { authMiddleware } from '../middleware/auth';
 const calendar = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 calendar.use('*', authMiddleware);
 
-// ── List events (with date range filter) ──
+// ── List events (with date range filter) — includes virtual events from documents & invoices ──
 calendar.get('/events', async (c) => {
   const user = c.get('user');
   const db = c.env.DB;
   const start = c.req.query('start') || new Date().toISOString().split('T')[0];
   const end = c.req.query('end');
 
+  // Real calendar events
   let query = `SELECT ce.*, c.name as customer_name FROM calendar_events ce LEFT JOIN customers c ON ce.customer_id = c.id WHERE ce.user_id = ? AND ce.start_time >= ?`;
   const params: any[] = [user.id, start];
   if (end) { query += ' AND ce.start_time <= ?'; params.push(end); }
   query += ' ORDER BY ce.start_time ASC';
-
   const rows = await db.prepare(query).bind(...params).all();
-  return c.json({ data: rows.results });
-});
+  const events = (rows.results || []) as any[];
 
-// ── Auto-include invoice due dates as calendar events ──
-calendar.get('/overdue-invoices', async (c) => {
-  const user = c.get('user');
-  const rows = await c.env.DB.prepare(
-    `SELECT i.id as reference_id, i.invoice_number, i.due_date as start_time, i.total, i.status as invoice_status, c.name as customer_name
+  // Virtual events: unpaid/overdue invoices (應收未收)
+  const invoices = await db.prepare(
+    `SELECT i.id, i.invoice_number, i.due_date, i.total, i.status, i.customer_id, c.name as customer_name
      FROM invoices i JOIN customers c ON i.customer_id = c.id
-     WHERE i.user_id = ? AND i.status NOT IN ('paid','cancelled') AND i.due_date >= date('now')
-     ORDER BY i.due_date ASC LIMIT 50`
+     WHERE i.user_id = ? AND i.status NOT IN ('paid','cancelled') AND i.due_date IS NOT NULL`
   ).bind(user.id).all();
-  return c.json({ data: rows.results });
+
+  for (const inv of (invoices.results || []) as any[]) {
+    if (!inv.due_date) continue;
+    const isOverdue = inv.due_date < new Date().toISOString().split('T')[0];
+    events.push({
+      id: `inv-${inv.id}`,
+      user_id: user.id,
+      title: `${isOverdue ? '⚠ ' : ''}${inv.invoice_number} - ${inv.customer_name || ''}`,
+      description: `Invoice ${inv.status}: HKD ${(inv.total || 0).toLocaleString()}`,
+      event_type: 'invoice_due',
+      start_time: inv.due_date,
+      end_time: inv.due_date,
+      all_day: 1,
+      customer_id: inv.customer_id,
+      customer_name: inv.customer_name,
+      color: isOverdue ? '#dc2626' : '#ca8a04',
+      reference_type: 'invoice',
+      reference_id: inv.id,
+      location: '',
+    });
+  }
+
+  // Virtual events: document expiry dates (BR, CI, EI, EC, TC, RL)
+  const docs = await db.prepare(
+    `SELECT id, doc_type, doc_year, file_name, expiry_date, issue_date, br_number, company_name_ocr
+     FROM documents WHERE user_id = ? AND expiry_date IS NOT NULL AND expiry_date != ''`
+  ).bind(user.id).all();
+
+  const docColors: Record<string, string> = { br: '#2563eb', ci: '#16a34a', ei: '#9333ea', ec: '#0891b2', tc: '#db2777', rl: '#4f46e5' };
+  const docLabels: Record<string, string> = { br: 'BR', ci: 'CI', ei: 'EI', ec: 'Employment', tc: 'Telecom', rl: 'Rental' };
+
+  for (const doc of (docs.results || []) as any[]) {
+    if (!doc.expiry_date) continue;
+    events.push({
+      id: `doc-${doc.id}`,
+      user_id: user.id,
+      title: `${docLabels[doc.doc_type] || doc.doc_type} Expiry - ${doc.company_name_ocr || doc.br_number || doc.file_name || ''}`,
+      description: `${docLabels[doc.doc_type] || doc.doc_type} ${doc.doc_year || ''} expires`,
+      event_type: 'deadline',
+      start_time: doc.expiry_date,
+      end_time: doc.expiry_date,
+      all_day: 1,
+      customer_id: null,
+      customer_name: null,
+      color: docColors[doc.doc_type] || '#6b7280',
+      reference_type: 'document',
+      reference_id: doc.id,
+      location: '',
+    });
+  }
+
+  // Sort merged events by start_time
+  events.sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''));
+  return c.json({ data: events });
 });
 
 // ── Create event ──

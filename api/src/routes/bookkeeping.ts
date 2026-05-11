@@ -122,6 +122,7 @@ bookkeeping.get('/income-statement', async (c) => {
   const startDate = c.req.query('start_date') || '2000-01-01';
   const endDate = c.req.query('end_date') || new Date().toISOString().split('T')[0];
 
+  // Try journal entries first
   const revenue = await db.prepare(
     `SELECT COALESCE(SUM(jl.credit) - SUM(jl.debit), 0) as amount FROM journal_lines jl JOIN journal_entries je ON jl.entry_id = je.id
      WHERE je.user_id = ? AND je.entry_date >= ? AND je.entry_date <= ? AND jl.account_code LIKE '4%'`
@@ -132,8 +133,23 @@ bookkeeping.get('/income-statement', async (c) => {
      WHERE je.user_id = ? AND je.entry_date >= ? AND je.entry_date <= ? AND jl.account_code LIKE '5%'`
   ).bind(user.id, startDate, endDate).first<{ amount: number }>();
 
-  const netIncome = (revenue?.amount || 0) - (expenses?.amount || 0);
-  return c.json({ revenue: revenue?.amount || 0, expenses: expenses?.amount || 0, net_income: netIncome, period: { start: startDate, end: endDate } });
+  // If journal entries exist, use them
+  if ((revenue?.amount || 0) > 0 || (expenses?.amount || 0) > 0) {
+    const netIncome = (revenue?.amount || 0) - (expenses?.amount || 0);
+    return c.json({ revenue: revenue?.amount || 0, expenses: expenses?.amount || 0, net_income: netIncome, source: 'journal', period: { start: startDate, end: endDate } });
+  }
+
+  // Fallback: use bank transactions (deposits ≈ income, withdrawals ≈ expenses)
+  const bankRevenue = await db.prepare(
+    `SELECT COALESCE(SUM(deposit_amount), 0) as amount FROM bank_transactions WHERE user_id = ? AND transaction_date >= ? AND transaction_date <= ?`
+  ).bind(user.id, startDate, endDate).first<{ amount: number }>();
+
+  const bankExpenses = await db.prepare(
+    `SELECT COALESCE(SUM(withdrawal_amount), 0) as amount FROM bank_transactions WHERE user_id = ? AND transaction_date >= ? AND transaction_date <= ?`
+  ).bind(user.id, startDate, endDate).first<{ amount: number }>();
+
+  const netIncome = (bankRevenue?.amount || 0) - (bankExpenses?.amount || 0);
+  return c.json({ revenue: bankRevenue?.amount || 0, expenses: bankExpenses?.amount || 0, net_income: netIncome, source: 'bank', period: { start: startDate, end: endDate } });
 });
 
 export { bookkeeping as bookkeepingRoutes };
