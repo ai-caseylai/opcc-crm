@@ -111,6 +111,37 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   // Desktop states
   const [sidebarDesktopOpen, setSidebarDesktopOpen] = React.useState(true);
   const [chatDesktopOpen, setChatDesktopOpen] = React.useState(true);
+  const [chatWidth, setChatWidth] = React.useState(420);
+
+  // Resize handler for chat panel
+  const resizingRef = React.useRef(false);
+  const startXRef = React.useRef(0);
+  const startWidthRef = React.useRef(0);
+
+  const handleResizeStart = React.useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    resizingRef.current = true;
+    startXRef.current = e.clientX;
+    startWidthRef.current = chatWidth;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const handleMove = (ev: MouseEvent) => {
+      if (!resizingRef.current) return;
+      const delta = startXRef.current - ev.clientX;
+      const newWidth = Math.max(280, Math.min(800, startWidthRef.current + delta));
+      setChatWidth(newWidth);
+    };
+    const handleUp = () => {
+      resizingRef.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleUp);
+    };
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp);
+  }, [chatWidth]);
 
   // React Query subscription: refetches when Modules page invalidates ['company']
   const { data: liveCompany } = useQuery({
@@ -273,7 +304,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       )}
 
       {/* ====== DESKTOP 3-PANEL LAYOUT ====== */}
-      <div className="hidden lg:grid lg:h-screen" style={{ gridTemplateColumns: `${sidebarDesktopOpen ? 256 : 64}px 1fr ${chatDesktopOpen ? 420 : 0}px` }}>
+      <div className="hidden lg:grid lg:h-screen" style={{ gridTemplateColumns: `${sidebarDesktopOpen ? 256 : 64}px 1fr ${chatDesktopOpen ? chatWidth : 0}px` }}>
 
         {/* LEFT: Sidebar */}
         <aside className="bg-card border-r flex flex-col relative panel-transition overflow-y-auto overflow-x-hidden">
@@ -299,8 +330,18 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </main>
 
         {/* RIGHT: Chat panel */}
-        <aside className={`bg-card overflow-hidden flex flex-col relative panel-transition ${chatDesktopOpen ? 'border-l' : ''}`}>
-          <div className="w-[420px] h-full">
+        <aside className={`bg-card overflow-hidden flex flex-col relative ${chatDesktopOpen ? 'border-l' : ''}`}>
+          {/* Resize handle */}
+          {chatDesktopOpen && (
+            <div
+              onMouseDown={handleResizeStart}
+              className="absolute top-0 left-[-3px] w-[7px] h-full cursor-col-resize hover:bg-primary/30 z-10 group"
+              title="拖曳調整寬度"
+            >
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-muted-foreground/40 group-hover:text-primary text-xs select-none">⇔</div>
+            </div>
+          )}
+          <div className="h-full" style={{ width: chatWidth }}>
             <Chatbot onClose={() => setChatDesktopOpen(false)} className="h-full" />
           </div>
         </aside>

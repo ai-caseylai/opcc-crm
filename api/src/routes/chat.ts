@@ -108,6 +108,7 @@ const TOOLS: any[] = [
 
   // ── Bookkeeping / Reports ──
   { type: 'function', function: { name: 'get_bookkeeping', description: 'Get P&L (income statement) for a date range', parameters: { type: 'object', properties: { start_date: { type: 'string', description: 'YYYY-MM-DD' }, end_date: { type: 'string', description: 'YYYY-MM-DD' } }, required: [] } } },
+  { type: 'function', function: { name: 'get_bookkeeping_transactions', description: 'Get detailed transactions for a specific account code (e.g. 2102 for Director Loan, 1101 for Cash). Returns each entry with date, description, debit, credit, and running balance.', parameters: { type: 'object', properties: { account_code: { type: 'string', description: 'Account code (e.g. 2102, 1101, 4100)' }, start_date: { type: 'string', description: 'YYYY-MM-DD' }, end_date: { type: 'string', description: 'YYYY-MM-DD' } }, required: ['account_code'] } } },
   { type: 'function', function: { name: 'get_recent_activity', description: 'Get recent audit log entries (recent changes)', parameters: { type: 'object', properties: { limit: { type: 'number' } }, required: [] } } },
 ];
 
@@ -251,6 +252,30 @@ async function executeTool(name: string, db: D1Database, userId: string, args: a
       } catch {
         return JSON.stringify([]);
       }
+    }
+    case 'get_bookkeeping_transactions': {
+      const accountCode = args?.account_code || '';
+      if (!accountCode) return JSON.stringify({ error: 'account_code is required' });
+      const startDate = args?.start_date || '2000-01-01';
+      const endDate = args?.end_date || '2099-12-31';
+      // Get account info
+      const acct = await db.prepare('SELECT account_code, account_name, account_type FROM accounts WHERE user_id = ? AND account_code = ?').bind(userId, accountCode).first();
+      if (!acct) return JSON.stringify({ error: `Account ${accountCode} not found` });
+      // Get all lines for this account within date range, ordered by date
+      const rows = await db.prepare(
+        `SELECT je.entry_date, je.entry_number, je.description as entry_description, jl.account_code, jl.account_name, jl.description as line_description, jl.debit, jl.credit
+         FROM journal_lines jl JOIN journal_entries je ON jl.entry_id = je.id
+         WHERE je.user_id = ? AND jl.account_code = ? AND je.entry_date BETWEEN ? AND ? AND je.status = 'posted'
+         ORDER BY je.entry_date ASC, je.created_at ASC`
+      ).bind(userId, accountCode, startDate, endDate).all();
+      let balance = 0;
+      const txns = (rows.results as any[]).map(r => {
+        const dr = Number(r.debit) || 0;
+        const cr = Number(r.credit) || 0;
+        balance += dr - cr;
+        return { date: r.entry_date, entry: r.entry_number, description: r.entry_description, line_desc: r.line_description, debit: dr, credit: cr, balance };
+      });
+      return JSON.stringify({ account: { code: acct.account_code, name: acct.account_name, type: acct.account_type }, total_debit: txns.reduce((s, t) => s + t.debit, 0), total_credit: txns.reduce((s, t) => s + t.credit, 0), closing_balance: balance, transactions: txns });
     }
     case 'get_recent_activity': {
       const rows = await db.prepare(
