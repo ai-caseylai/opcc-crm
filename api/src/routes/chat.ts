@@ -32,7 +32,8 @@ CRITICAL BOOKKEEPING RULES:
 - Only after explicit user confirmation should you call the function
 - If the user does not confirm, do NOT make any changes
 - When modifying an existing entry, use update_journal_entry to change it directly rather than creating offsetting entries
-- IMPORTANT: Use EXACTLY these function names: get_bookkeeping_transactions, create_bookkeeping_transaction, update_journal_entry, delete_journal_entry. Do NOT invent other names like get_account_transactions or get_journal_entries.`;
+- IMPORTANT: Use EXACTLY these function names: get_bookkeeping_transactions, create_bookkeeping_transaction, update_journal_entry, delete_journal_entry. Do NOT invent other names like get_account_transactions or get_journal_entries.
+- If an account code does not exist, use add_account to create it first, then retry the transaction. For example, if "Account code 5105 not found", call add_account with account_code=5105, then retry the original operation.`;
 
 const TOOLS: any[] = [
   // ── Dashboard / Summary ──
@@ -147,6 +148,18 @@ const TOOLS: any[] = [
   { type: 'function', function: { name: 'update_document', description: 'Update document metadata (br_number, company_name, issue_date, expiry_date)', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Document ID' }, br_number: { type: 'string' }, company_name: { type: 'string' }, issue_date: { type: 'string' }, expiry_date: { type: 'string' } }, required: ['id'] } } },
   { type: 'function', function: { name: 'delete_document', description: 'Delete a document', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Document ID' } }, required: ['id'] } } },
 ];
+
+async function ensureAccount(db: D1Database, userId: string, code: string): Promise<{ code: string; name: string } | null> {
+  const acct = await db.prepare('SELECT account_code, account_name FROM accounts WHERE user_id = ? AND account_code = ?').bind(userId, code).first();
+  if (acct) return { code: acct.account_code as string, name: acct.account_name as string };
+  // Auto-create expense accounts (5xxx)
+  if (/^5\d{3}$/.test(code)) {
+    await db.prepare('INSERT INTO accounts (id, user_id, account_code, account_name, account_type, parent_code) VALUES (?, ?, ?, ?, ?, ?)')
+      .bind(`acc-${uuidv4().slice(0, 8)}`, userId, code, `Expense ${code}`, 'expense', '5000').run();
+    return { code, name: `Expense ${code}` };
+  }
+  return null;
+}
 
 async function executeTool(name: string, db: D1Database, userId: string, args: any = {}): Promise<string> {
   const limit = args?.limit || 10;
@@ -357,9 +370,9 @@ async function executeTool(name: string, db: D1Database, userId: string, args: a
       }
       // Validate account codes exist
       for (const e of entries) {
-        const acct = await db.prepare('SELECT account_code, account_name FROM accounts WHERE user_id = ? AND account_code = ?').bind(userId, e.account_code).first();
-        if (!acct) return JSON.stringify({ error: `Account code ${e.account_code} not found` });
-        e.account_name = acct.account_name as string;
+        const acct = await ensureAccount(db, userId, e.account_code);
+        if (!acct) return JSON.stringify({ error: `Account code ${e.account_code} not found. Use add_account to create it first.` });
+        e.account_name = acct.name;
       }
       const entryId = `je-${uuidv4().slice(0, 8)}`;
       const entryNumber = `JE-${Date.now().toString(36).toUpperCase()}`;
@@ -399,9 +412,9 @@ async function executeTool(name: string, db: D1Database, userId: string, args: a
         const totalCr = args.entries.reduce((s: number, e: any) => s + (Number(e.credit) || 0), 0);
         if (Math.abs(totalDr - totalCr) > 0.01) return JSON.stringify({ error: `Debits (${totalDr}) must equal credits (${totalCr})` });
         for (const e of args.entries) {
-          const acct = await db.prepare('SELECT account_code, account_name FROM accounts WHERE user_id = ? AND account_code = ?').bind(userId, e.account_code).first();
-          if (!acct) return JSON.stringify({ error: `Account code ${e.account_code} not found` });
-          e.account_name = acct.account_name as string;
+          const acct = await ensureAccount(db, userId, e.account_code);
+          if (!acct) return JSON.stringify({ error: `Account code ${e.account_code} not found. Use add_account to create it first.` });
+          e.account_name = acct.name;
         }
         await db.prepare('DELETE FROM journal_lines WHERE entry_id = ?').bind(entryId).run();
         for (let i = 0; i < args.entries.length; i++) {
