@@ -117,7 +117,7 @@ const TOOLS: any[] = [
 
   // ── Bookkeeping / Reports ──
   { type: 'function', function: { name: 'get_bookkeeping', description: 'Get P&L (income statement) for a date range', parameters: { type: 'object', properties: { start_date: { type: 'string', description: 'YYYY-MM-DD' }, end_date: { type: 'string', description: 'YYYY-MM-DD' } }, required: [] } } },
-  { type: 'function', function: { name: 'get_bookkeeping_transactions', description: 'Get detailed transactions for a specific account code (e.g. 2102 for Director Loan, 1101 for Cash). Returns each entry with date, description, debit, credit, and running balance.', parameters: { type: 'object', properties: { account_code: { type: 'string', description: 'Account code (e.g. 2102, 1101, 4100)' }, start_date: { type: 'string', description: 'YYYY-MM-DD' }, end_date: { type: 'string', description: 'YYYY-MM-DD' } }, required: ['account_code'] } } },
+  { type: 'function', function: { name: 'get_bookkeeping_transactions', description: 'Get detailed transactions. If account_code is provided, returns transactions for that account with running balance. If account_code is omitted, returns ALL journal entries for the date range with their line items.', parameters: { type: 'object', properties: { account_code: { type: 'string', description: 'Optional account code (e.g. 2102, 1101). Omit to get all entries.' }, start_date: { type: 'string', description: 'YYYY-MM-DD' }, end_date: { type: 'string', description: 'YYYY-MM-DD' } }, required: [] } } },
   { type: 'function', function: { name: 'create_bookkeeping_transaction', description: 'Create a double-entry journal entry. Debits must equal credits. Use this to record transactions like Director Loans, repayments, revenue, expenses, etc.', parameters: { type: 'object', properties: { date: { type: 'string', description: 'Entry date YYYY-MM-DD' }, description: { type: 'string', description: 'Description of the journal entry' }, entries: { type: 'array', description: 'Array of line items. Each line has account_code, debit (number, default 0), credit (number, default 0), description (optional)', items: { type: 'object', properties: { account_code: { type: 'string', description: 'Account code (e.g. 1101, 2102, 4100)' }, debit: { type: 'number' }, credit: { type: 'number' }, description: { type: 'string' } }, required: ['account_code'] } } }, required: ['date', 'description', 'entries'] } } },
   { type: 'function', function: { name: 'update_journal_entry', description: 'Update an existing journal entry. Can change date, description, and line items. Debits must equal credits. Pass ALL lines (existing lines not included will be deleted).', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Journal entry ID (e.g. je-xxxxxxxx)' }, date: { type: 'string', description: 'New entry date YYYY-MM-DD' }, description: { type: 'string', description: 'New description' }, entries: { type: 'array', description: 'New array of line items (replaces all existing lines)', items: { type: 'object', properties: { account_code: { type: 'string' }, debit: { type: 'number' }, credit: { type: 'number' }, description: { type: 'string' } }, required: ['account_code'] } } }, required: ['id'] } } },
   { type: 'function', function: { name: 'delete_journal_entry', description: 'Delete a journal entry and all its line items', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Journal entry ID (e.g. je-xxxxxxxx)' } }, required: ['id'] } } },
@@ -289,15 +289,26 @@ async function executeTool(name: string, db: D1Database, userId: string, args: a
     }
     case 'get_bookkeeping_transactions': {
       const accountCode = args?.account_code || '';
-      if (!accountCode) return JSON.stringify({ error: 'account_code is required' });
       const startDate = args?.start_date || '2000-01-01';
       const endDate = args?.end_date || '2099-12-31';
+      if (!accountCode) {
+        // Return all journal entries with their lines for the date range
+        const entries = await db.prepare(
+          `SELECT je.id, je.entry_number, je.entry_date, je.description, je.status FROM journal_entries je WHERE je.user_id = ? AND je.entry_date BETWEEN ? AND ? ORDER BY je.entry_date ASC, je.created_at ASC LIMIT 50`
+        ).bind(userId, startDate, endDate).all();
+        const result: any[] = [];
+        for (const e of entries.results as any[]) {
+          const lines = await db.prepare('SELECT account_code, account_name, description, debit, credit FROM journal_lines WHERE entry_id = ? ORDER BY sort_order').bind(e.id).all();
+          result.push({ id: e.id, entry_number: e.entry_number, date: e.entry_date, description: e.description, status: e.status, lines: lines.results });
+        }
+        return JSON.stringify({ entries: result });
+      }
       // Get account info
       const acct = await db.prepare('SELECT account_code, account_name, account_type FROM accounts WHERE user_id = ? AND account_code = ?').bind(userId, accountCode).first();
       if (!acct) return JSON.stringify({ error: `Account ${accountCode} not found` });
       // Get all lines for this account within date range, ordered by date
       const rows = await db.prepare(
-        `SELECT je.entry_date, je.entry_number, je.description as entry_description, jl.account_code, jl.account_name, jl.description as line_description, jl.debit, jl.credit
+        `SELECT je.entry_date, je.entry_number, je.id as entry_id, je.description as entry_description, jl.account_code, jl.account_name, jl.description as line_description, jl.debit, jl.credit
          FROM journal_lines jl JOIN journal_entries je ON jl.entry_id = je.id
          WHERE je.user_id = ? AND jl.account_code = ? AND je.entry_date BETWEEN ? AND ? AND je.status = 'posted'
          ORDER BY je.entry_date ASC, je.created_at ASC`
@@ -307,7 +318,7 @@ async function executeTool(name: string, db: D1Database, userId: string, args: a
         const dr = Number(r.debit) || 0;
         const cr = Number(r.credit) || 0;
         balance += dr - cr;
-        return { date: r.entry_date, entry: r.entry_number, description: r.entry_description, line_desc: r.line_description, debit: dr, credit: cr, balance };
+        return { id: r.entry_id, date: r.entry_date, entry: r.entry_number, description: r.entry_description, line_desc: r.line_description, debit: dr, credit: cr, balance };
       });
       return JSON.stringify({ account: { code: acct.account_code, name: acct.account_name, type: acct.account_type }, total_debit: txns.reduce((s, t) => s + t.debit, 0), total_credit: txns.reduce((s, t) => s + t.credit, 0), closing_balance: balance, transactions: txns });
     }
