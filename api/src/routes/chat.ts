@@ -1074,6 +1074,12 @@ chat.post('/', async (c) => {
           remove_journal_entry: 'delete_journal_entry',
         };
 
+        // Map common DeepSeek-invented parameter names to actual parameter names
+        const paramMap: Record<string, Record<string, string>> = {
+          get_bank_statement: { statement_id: 'id' },
+          get_bookkeeping_transactions: { year: '__skip__', month: '__skip__', start_date: 'start_date', end_date: 'end_date' },
+        };
+
         // Pattern 1: <...invoke name="fnName">...<...parameter name="key">value</...>...</...invoke>
         const invokePattern = /<[^>]*invoke\s+name="(\w+)"[^>]*>([\s\S]*?)<\/[^>]*invoke>/gi;
         let im;
@@ -1084,7 +1090,22 @@ chat.post('/', async (c) => {
           const fnArgs: Record<string, string> = {};
           let pm;
           while ((pm = paramPattern.exec(im[2])) !== null) {
-            fnArgs[pm[1]] = pm[2].trim();
+            const rawKey = pm[1];
+            const val = pm[2].trim();
+            const pMap = paramMap[fnName] || {};
+            const mappedKey = pMap[rawKey];
+            if (mappedKey === '__skip__') continue;
+            fnArgs[mappedKey || rawKey] = val;
+          }
+          // Convert year+month to start_date/end_date if present for bookkeeping functions
+          if (fnArgs.year && fnArgs.month) {
+            const y = fnArgs.year;
+            const m = fnArgs.month.padStart(2, '0');
+            fnArgs.start_date = `${y}-${m}-01`;
+            const lastDay = new Date(parseInt(y), parseInt(m), 0).getDate();
+            fnArgs.end_date = `${y}-${m}-${lastDay}`;
+            delete fnArgs.year;
+            delete fnArgs.month;
           }
           const result = await executeTool(fnName, db, user.id, fnArgs);
           toolResults.push(`${fnName}: ${result}`);
