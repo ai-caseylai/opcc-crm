@@ -1057,9 +1057,14 @@ chat.post('/', async (c) => {
       const hasToolTags = tagPattern.test(reply);
 
       if (hasToolTags) {
-        // Try to extract function name and parameters from various formats
-        const toolResults: string[] = [];
-        const toolErrors: string[] = [];
+        const stripXml = (text: string) => text
+          .replace(/<[^>]*DSML[^>]*>[\s\S]*?(<\/[^>]*DSML[^>]*>)?/gi, '')
+          .replace(/<[^>]*tool_call[^>]*>[\s\S]*?(<\/[^>]*tool_call[^>]*>)?/gi, '')
+          .replace(/<[^>]*invoke[^>]*>[\s\S]*?<\/[^>]*invoke>/gi, '')
+          .replace(/<[^>]*parameter[^>]*>[\s\S]*?<\/[^>]*parameter>/gi, '')
+          .trim();
+
+        const cleanReply = stripXml(reply);
 
         // Map common DeepSeek-invented function names to actual function names
         const fnNameMap: Record<string, string> = {
@@ -1086,7 +1091,6 @@ chat.post('/', async (c) => {
           search_documents: 'list_documents',
         };
 
-        // Map common DeepSeek-invented parameter names to actual parameter names
         const paramMap: Record<string, Record<string, string>> = {
           get_bank_statement: { statement_id: 'id' },
           get_bank_statement_transactions: { statement_id: 'id' },
@@ -1097,74 +1101,129 @@ chat.post('/', async (c) => {
           create_bookkeeping_transaction: { lines: 'entries' },
         };
 
-        // Pattern 1: <...invoke name="fnName">...<...parameter name="key">value</...>...</...invoke>
-        const invokePattern = /<[^>]*invoke\s+name="(\w+)"[^>]*>([\s\S]*?)<\/[^>]*invoke>/gi;
-        let im;
-        while ((im = invokePattern.exec(reply)) !== null) {
-          const rawFnName = im[1];
-          const fnName = fnNameMap[rawFnName] || rawFnName;
-          const paramPattern = /<[^>]*parameter\s+name="(\w+)"[^>]*>([\s\S]*?)<\/[^>]*parameter>/gi;
-          const fnArgs: Record<string, any> = {};
-          let pm;
-          while ((pm = paramPattern.exec(im[2])) !== null) {
-            const rawKey = pm[1];
-            let val: any = pm[2].trim();
-            // Try to parse JSON arrays/objects
-            if ((val.startsWith('[') && val.endsWith(']')) || (val.startsWith('{') && val.endsWith('}'))) {
-              try { val = JSON.parse(val); } catch {}
+        // Parse and execute all invoke blocks
+        const executeDsmlInvokes = async (text: string): Promise<{ results: string[]; errors: string[]; log: string[] }> => {
+          const results: string[] = [];
+          const errors: string[] = [];
+          const log: string[] = [];
+          const invokePattern = /<[^>]*invoke\s+name="(\w+)"[^>]*>([\s\S]*?)<\/[^>]*invoke>/gi;
+          let im;
+          while ((im = invokePattern.exec(text)) !== null) {
+            const rawFnName = im[1];
+            const fnName = fnNameMap[rawFnName] || rawFnName;
+            log.push(`Function: ${rawFnName} → ${fnName}`);
+            const paramPattern = /<[^>]*parameter\s+name="(\w+)"[^>]*>([\s\S]*?)<\/[^>]*parameter>/gi;
+            const fnArgs: Record<string, any> = {};
+            let pm;
+            while ((pm = paramPattern.exec(im[2])) !== null) {
+              const rawKey = pm[1];
+              let val: any = pm[2].trim();
+              if ((val.startsWith('[') && val.endsWith(']')) || (val.startsWith('{') && val.endsWith('}'))) {
+                try { val = JSON.parse(val); } catch {}
+              }
+              const pMap = paramMap[fnName] || {};
+              const mappedKey = pMap[rawKey];
+              if (mappedKey === '__skip__') continue;
+              fnArgs[mappedKey || rawKey] = val;
+              log.push(`  Param: ${rawKey}${mappedKey && mappedKey !== rawKey ? ` → ${mappedKey}` : ''} = ${typeof val === 'object' ? JSON.stringify(val) : val}`);
             }
-            const pMap = paramMap[fnName] || {};
-            const mappedKey = pMap[rawKey];
-            if (mappedKey === '__skip__') continue;
-            fnArgs[mappedKey || rawKey] = val;
+            if (fnArgs.year && fnArgs.month) {
+              const y = fnArgs.year;
+              const m = fnArgs.month.padStart(2, '0');
+              fnArgs.start_date = `${y}-${m}-01`;
+              fnArgs.end_date = `${y}-${m}-${new Date(parseInt(y), parseInt(m), 0).getDate()}`;
+              delete fnArgs.year;
+              delete fnArgs.month;
+              log.push(`  Converted year+month → start_date=${fnArgs.start_date}, end_date=${fnArgs.end_date}`);
+            }
+            try {
+              const result = await executeTool(fnName, db, user.id, fnArgs);
+              results.push(`${fnName}: ${result}`);
+              log.push(`  Result: OK`);
+            } catch (e: any) {
+              const errMsg = e.message || 'unknown';
+              errors.push(`${fnName}: Error - ${errMsg}`);
+              log.push(`  Error: ${errMsg}`);
+            }
           }
-          // Convert year+month to start_date/end_date if present for bookkeeping functions
-          if (fnArgs.year && fnArgs.month) {
-            const y = fnArgs.year;
-            const m = fnArgs.month.padStart(2, '0');
-            fnArgs.start_date = `${y}-${m}-01`;
-            const lastDay = new Date(parseInt(y), parseInt(m), 0).getDate();
-            fnArgs.end_date = `${y}-${m}-${lastDay}`;
-            delete fnArgs.year;
-            delete fnArgs.month;
-          }
+          return { results, errors, log };
+        };
+
+        // Phase 1: Initial execution attempt
+        const phase1 = await executeDsmlInvokes(reply);
+        let allResults = [...phase1.results];
+        let allErrors = [...phase1.errors];
+        const fullLog = [`=== DSML Auto-Repair Log ===`, `Phase 1 (initial):`, ...phase1.log];
+
+        // Phase 2: If there were errors, re-prompt DeepSeek with available functions + error info
+        if (allErrors.length > 0 || (allResults.length === 0 && allErrors.length === 0)) {
+          const availableFns = TOOLS.map((t: any) => t.function?.name).filter(Boolean).join(', ');
+          const retryPrompt = allErrors.length > 0
+            ? `The previous tool calls had errors:\n${allErrors.join('\n')}\n\nAvailable functions: ${availableFns}\n\nPlease retry using ONLY the exact function names above with correct parameters. Output your calls in the same XML/invoke format.`
+            : `No tool calls could be parsed from the previous response. The user's question was: "${userMessage}"\n\nAvailable functions: ${availableFns}\n\nPlease call the appropriate function(s) using the exact names above in <invoke name="..."> format.`;
+
+          fullLog.push(`Phase 2 (retry prompt):`, `  Errors: ${allErrors.length}, Results: ${allResults.length}`, `  Re-prompting DeepSeek...`);
+
           try {
-            const result = await executeTool(fnName, db, user.id, fnArgs);
-            toolResults.push(`${fnName}: ${result}`);
-          } catch (e: any) {
-            toolErrors.push(`${fnName}: Error - ${e.message || 'unknown'}`);
+            const retryMessages = [...messages];
+            retryMessages.push({ role: 'assistant', content: cleanReply || 'Processing...' });
+            retryMessages.push({ role: 'user', content: retryPrompt });
+            const retryResp = await callDeepSeek(apiKey, retryMessages);
+            const retryText = retryResp.choices?.[0]?.message?.content || '';
+
+            // Check if retry produced new DSML tool calls
+            const retryHasTags = /<[^>]*invoke\s+name=/i.test(retryText);
+            if (retryHasTags) {
+              const phase2 = await executeDsmlInvokes(retryText);
+              fullLog.push(`Phase 2 (execution):`, ...phase2.log);
+              allResults.push(...phase2.results);
+              allErrors.push(...phase2.errors);
+
+              // Phase 3: If retry also had DSML, get final text answer
+              if (allResults.length > 0 || phase2.results.length > 0) {
+                const combinedResults = [...allResults, ...phase2.results];
+                messages.push({ role: 'assistant', content: stripXml(retryText) || 'Processing...' });
+                messages.push({ role: 'user', content: `[Tool results]\n${combinedResults.join('\n')}\n\nSummarize concisely. Do NOT use any XML or tool call tags.` });
+                const finalResp = await callDeepSeek(apiKey, messages);
+                reply = finalResp.choices?.[0]?.message?.content || 'Done.';
+                fullLog.push(`Phase 3: Final answer generated (${reply.length} chars)`);
+              } else {
+                // Retry tools also failed — ask for plain text answer
+                messages.push({ role: 'assistant', content: 'Tool calls failed.' });
+                messages.push({ role: 'user', content: 'All tool call attempts failed. Please answer the question directly in plain text.' });
+                const textResp = await callDeepSeek(apiKey, messages);
+                reply = textResp.choices?.[0]?.message?.content || cleanReply || 'Sorry, I could not process that.';
+                fullLog.push(`Phase 3: Fallback to plain text answer`);
+              }
+            } else {
+              // Retry gave plain text directly
+              reply = retryText || cleanReply || 'Done.';
+              fullLog.push(`Phase 2: DeepSeek responded in plain text (${reply.length} chars)`);
+            }
+          } catch (retryErr: any) {
+            fullLog.push(`Phase 2 error: ${retryErr.message}`);
+            reply = cleanReply || 'Sorry, an error occurred while processing your request.';
           }
-        }
-
-        // Always strip all DSML/XML tags — never let raw XML reach the user
-        const cleanReply = reply
-          .replace(/<[^>]*DSML[^>]*>[\s\S]*?(<\/[^>]*DSML[^>]*>)?/gi, '')
-          .replace(/<[^>]*tool_call[^>]*>[\s\S]*?(<\/[^>]*tool_call[^>]*>)?/gi, '')
-          .replace(/<[^>]*invoke[^>]*>[\s\S]*?<\/[^>]*invoke>/gi, '')
-          .replace(/<[^>]*parameter[^>]*>[\s\S]*?<\/[^>]*parameter>/gi, '')
-          .trim();
-
-        if (toolResults.length > 0 || toolErrors.length > 0) {
-          // Re-query DeepSeek with tool results so it generates a proper text response
-          const allResults = [...toolResults, ...toolErrors];
+        } else {
+          // Phase 1 succeeded — get final answer from DeepSeek
           messages.push({ role: 'assistant', content: cleanReply || 'Processing...' });
-          messages.push({ role: 'user', content: `[Tool execution results]\n${allResults.join('\n')}\n\nPlease provide a clear, concise answer based on these results. Do NOT output any XML or tool call tags.` });
+          messages.push({ role: 'user', content: `[Tool results]\n${allResults.join('\n')}\n\nSummarize concisely. Do NOT use any XML or tool call tags.` });
           const resp2 = await callDeepSeek(apiKey, messages);
           reply = resp2.choices?.[0]?.message?.content || cleanReply || 'Done.';
-        } else {
-          // No tools were extracted — ask DeepSeek to respond normally
-          messages.push({ role: 'assistant', content: 'I attempted to call a function but could not parse it correctly.' });
-          messages.push({ role: 'user', content: 'The tool call format was not recognized. Please answer the previous question directly in plain text without using any tool calls.' });
-          const resp2 = await callDeepSeek(apiKey, messages);
-          reply = resp2.choices?.[0]?.message?.content || cleanReply || 'Sorry, I could not process that request.';
+          fullLog.push(`Phase 1 success: Final answer generated (${reply.length} chars)`);
         }
 
-        // Final safety: strip any remaining XML tags from the reply
-        reply = reply.replace(/<[^>]*DSML[^>]*>[\s\S]*?(<\/[^>]*DSML[^>]*>)?/gi, '')
-          .replace(/<[^>]*tool_call[^>]*>[\s\S]*?(<\/[^>]*tool_call[^>]*>)?/gi, '')
-          .replace(/<[^>]*invoke[^>]*>[\s\S]*?<\/[^>]*invoke>/gi, '')
-          .replace(/<[^>]*parameter[^>]*>[\s\S]*?<\/[^>]*parameter>/gi, '')
-          .trim();
+        // Final safety: strip any remaining XML
+        reply = stripXml(reply) || 'Done.';
+        fullLog.push(`=== End Log ===`);
+
+        // Save repair log to database
+        try {
+          const logId = `dl-${uuidv4().slice(0, 8)}`;
+          await db.prepare(
+            'INSERT INTO chat_messages (id, session_id, role, content) VALUES (?, ?, ?, ?)'
+          ).bind(logId, sid, 'system', fullLog.join('\n')).run();
+        } catch {}
       }
     }
 
