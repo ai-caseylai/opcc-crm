@@ -224,7 +224,7 @@ export default function Chatbot({ onClose, className }: ChatbotPanelProps) {
             {busy && (
               <div className="flex justify-start">
                 <div className="bg-muted px-3 py-2 rounded-lg rounded-bl-sm text-sm text-muted-foreground">
-                  <span className="animate-pulse">...</span>
+                  <span className="animate-pulse">系統正在查詢中，請稍候...</span>
                 </div>
               </div>
             )}

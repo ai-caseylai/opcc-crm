@@ -1052,13 +1052,14 @@ chat.post('/', async (c) => {
       reply = choice?.message?.content || 'Sorry, I could not process that.';
 
       // Handle DSML or XML-like tool calls in text (fallback for models without structured tool calling)
-      // Broad match: any tag containing "DSML" or "tool_call"
-      const tagPattern = /<[^>]*DSML[^>]*>|<[^>]*tool_call[^>]*>/i;
+      // Broad match: any tag containing "DSML" or "tool_call" or "invoke"
+      const tagPattern = /<[^>]*DSML[^>]*>|<[^>]*tool_call[^>]*>|<[^>]*invoke\s+name=/i;
       const hasToolTags = tagPattern.test(reply);
 
       if (hasToolTags) {
         // Try to extract function name and parameters from various formats
         const toolResults: string[] = [];
+        const toolErrors: string[] = [];
 
         // Map common DeepSeek-invented function names to actual function names
         const fnNameMap: Record<string, string> = {
@@ -1127,11 +1128,15 @@ chat.post('/', async (c) => {
             delete fnArgs.year;
             delete fnArgs.month;
           }
-          const result = await executeTool(fnName, db, user.id, fnArgs);
-          toolResults.push(`${fnName}: ${result}`);
+          try {
+            const result = await executeTool(fnName, db, user.id, fnArgs);
+            toolResults.push(`${fnName}: ${result}`);
+          } catch (e: any) {
+            toolErrors.push(`${fnName}: Error - ${e.message || 'unknown'}`);
+          }
         }
 
-        // Strip all DSML/tool_call tags from reply
+        // Always strip all DSML/XML tags — never let raw XML reach the user
         const cleanReply = reply
           .replace(/<[^>]*DSML[^>]*>[\s\S]*?(<\/[^>]*DSML[^>]*>)?/gi, '')
           .replace(/<[^>]*tool_call[^>]*>[\s\S]*?(<\/[^>]*tool_call[^>]*>)?/gi, '')
@@ -1139,14 +1144,27 @@ chat.post('/', async (c) => {
           .replace(/<[^>]*parameter[^>]*>[\s\S]*?<\/[^>]*parameter>/gi, '')
           .trim();
 
-        if (toolResults.length > 0) {
-          messages.push({ role: 'assistant', content: cleanReply });
-          messages.push({ role: 'user', content: `[Tool results]\n${toolResults.join('\n')}\n\nPlease summarize the results concisely.` });
+        if (toolResults.length > 0 || toolErrors.length > 0) {
+          // Re-query DeepSeek with tool results so it generates a proper text response
+          const allResults = [...toolResults, ...toolErrors];
+          messages.push({ role: 'assistant', content: cleanReply || 'Processing...' });
+          messages.push({ role: 'user', content: `[Tool execution results]\n${allResults.join('\n')}\n\nPlease provide a clear, concise answer based on these results. Do NOT output any XML or tool call tags.` });
           const resp2 = await callDeepSeek(apiKey, messages);
           reply = resp2.choices?.[0]?.message?.content || cleanReply || 'Done.';
         } else {
-          reply = cleanReply || 'Done.';
+          // No tools were extracted — ask DeepSeek to respond normally
+          messages.push({ role: 'assistant', content: 'I attempted to call a function but could not parse it correctly.' });
+          messages.push({ role: 'user', content: 'The tool call format was not recognized. Please answer the previous question directly in plain text without using any tool calls.' });
+          const resp2 = await callDeepSeek(apiKey, messages);
+          reply = resp2.choices?.[0]?.message?.content || cleanReply || 'Sorry, I could not process that request.';
         }
+
+        // Final safety: strip any remaining XML tags from the reply
+        reply = reply.replace(/<[^>]*DSML[^>]*>[\s\S]*?(<\/[^>]*DSML[^>]*>)?/gi, '')
+          .replace(/<[^>]*tool_call[^>]*>[\s\S]*?(<\/[^>]*tool_call[^>]*>)?/gi, '')
+          .replace(/<[^>]*invoke[^>]*>[\s\S]*?<\/[^>]*invoke>/gi, '')
+          .replace(/<[^>]*parameter[^>]*>[\s\S]*?<\/[^>]*parameter>/gi, '')
+          .trim();
       }
     }
 
