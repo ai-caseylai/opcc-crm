@@ -1072,11 +1072,24 @@ chat.post('/', async (c) => {
           create_transaction: 'create_bookkeeping_transaction',
           create_journal_entry: 'create_bookkeeping_transaction',
           remove_journal_entry: 'delete_journal_entry',
+          get_bank_statement_transactions: 'get_bank_statement',
+          get_bank_transactions: 'get_bank_statement',
+          view_bank_statement: 'get_bank_statement',
+          list_bank_transactions: 'list_bank_statements',
+          get_expenses: 'list_expense_receipts',
+          list_expenses: 'list_expense_receipts',
+          get_receipts: 'list_expense_receipts',
+          get_files: 'list_files',
+          search_files: 'list_files',
+          get_documents: 'list_documents',
+          search_documents: 'list_documents',
         };
 
         // Map common DeepSeek-invented parameter names to actual parameter names
         const paramMap: Record<string, Record<string, string>> = {
           get_bank_statement: { statement_id: 'id' },
+          get_bank_statement_transactions: { statement_id: 'id' },
+          get_bank_transactions: { statement_id: 'id' },
           get_bookkeeping_transactions: { year: '__skip__', month: '__skip__', start_date: 'start_date', end_date: 'end_date' },
         };
 
