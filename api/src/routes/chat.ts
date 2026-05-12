@@ -117,6 +117,8 @@ const TOOLS: any[] = [
 
   // ── Bookkeeping / Reports ──
   { type: 'function', function: { name: 'get_bookkeeping', description: 'Get P&L (income statement) for a date range', parameters: { type: 'object', properties: { start_date: { type: 'string', description: 'YYYY-MM-DD' }, end_date: { type: 'string', description: 'YYYY-MM-DD' } }, required: [] } } },
+  { type: 'function', function: { name: 'list_accounts', description: 'List all chart of accounts with code, name, and type', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'add_account', description: 'Add a new account to the chart of accounts', parameters: { type: 'object', properties: { account_code: { type: 'string', description: 'Account code (e.g. 5105)' }, account_name: { type: 'string', description: 'Account name (e.g. 差旅費用)' }, account_type: { type: 'string', description: 'Type: asset, liability, equity, revenue, expense' }, parent_code: { type: 'string', description: 'Optional parent account code' } }, required: ['account_code', 'account_name', 'account_type'] } } },
   { type: 'function', function: { name: 'get_bookkeeping_transactions', description: 'Get detailed transactions. If account_code is provided, returns transactions for that account with running balance. If account_code is omitted, returns ALL journal entries for the date range with their line items.', parameters: { type: 'object', properties: { account_code: { type: 'string', description: 'Optional account code (e.g. 2102, 1101). Omit to get all entries.' }, start_date: { type: 'string', description: 'YYYY-MM-DD' }, end_date: { type: 'string', description: 'YYYY-MM-DD' } }, required: [] } } },
   { type: 'function', function: { name: 'create_bookkeeping_transaction', description: 'Create a double-entry journal entry. Debits must equal credits. Use this to record transactions like Director Loans, repayments, revenue, expenses, etc.', parameters: { type: 'object', properties: { date: { type: 'string', description: 'Entry date YYYY-MM-DD' }, description: { type: 'string', description: 'Description of the journal entry' }, entries: { type: 'array', description: 'Array of line items. Each line has account_code, debit (number, default 0), credit (number, default 0), description (optional)', items: { type: 'object', properties: { account_code: { type: 'string', description: 'Account code (e.g. 1101, 2102, 4100)' }, debit: { type: 'number' }, credit: { type: 'number' }, description: { type: 'string' } }, required: ['account_code'] } } }, required: ['date', 'description', 'entries'] } } },
   { type: 'function', function: { name: 'update_journal_entry', description: 'Update an existing journal entry. Can change date, description, and line items. Debits must equal credits. Pass ALL lines (existing lines not included will be deleted). Accepts entry_number (e.g. JE-7db3) or entry id (e.g. je-xxxxxxxx).', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Journal entry ID or entry_number (e.g. je-xxxxxxxx or JE-7db3)' }, date: { type: 'string', description: 'New entry date YYYY-MM-DD' }, description: { type: 'string', description: 'New description' }, entries: { type: 'array', description: 'New array of line items (replaces all existing lines)', items: { type: 'object', properties: { account_code: { type: 'string' }, debit: { type: 'number' }, credit: { type: 'number' }, description: { type: 'string' } }, required: ['account_code'] } } }, required: ['id'] } } },
@@ -286,6 +288,24 @@ async function executeTool(name: string, db: D1Database, userId: string, args: a
       } catch {
         return JSON.stringify([]);
       }
+    }
+    case 'list_accounts': {
+      const rows = await db.prepare('SELECT account_code, account_name, account_type, parent_code FROM accounts WHERE user_id = ? ORDER BY account_code').bind(userId).all();
+      return JSON.stringify(rows.results);
+    }
+    case 'add_account': {
+      const code = args?.account_code;
+      const name = args?.account_name;
+      const type = args?.account_type;
+      if (!code || !name || !type) return JSON.stringify({ error: 'account_code, account_name, and account_type are required' });
+      const validTypes = ['asset', 'liability', 'equity', 'revenue', 'expense'];
+      if (!validTypes.includes(type)) return JSON.stringify({ error: `Invalid type. Must be one of: ${validTypes.join(', ')}` });
+      const existing = await db.prepare('SELECT account_code FROM accounts WHERE user_id = ? AND account_code = ?').bind(userId, code).first();
+      if (existing) return JSON.stringify({ error: `Account ${code} already exists` });
+      const id = `acc-${uuidv4().slice(0, 8)}`;
+      await db.prepare('INSERT INTO accounts (id, user_id, account_code, account_name, account_type, parent_code) VALUES (?, ?, ?, ?, ?, ?)')
+        .bind(id, userId, code, name, type, args?.parent_code || null).run();
+      return JSON.stringify({ success: true, account: { code, name, type } });
     }
     case 'get_bookkeeping_transactions': {
       const accountCode = args?.account_code || '';
