@@ -33,7 +33,15 @@ CRITICAL BOOKKEEPING RULES:
 - If the user does not confirm, do NOT make any changes
 - When modifying an existing entry, use update_journal_entry to change it directly rather than creating offsetting entries
 - IMPORTANT: Use EXACTLY these function names: get_bookkeeping_transactions, create_bookkeeping_transaction, update_journal_entry, delete_journal_entry. Do NOT invent other names like get_account_transactions or get_journal_entries.
-- If an account code does not exist, use add_account to create it first, then retry the transaction. For example, if "Account code 5105 not found", call add_account with account_code=5105, then retry the original operation.`;
+- If an account code does not exist, use add_account to create it first, then retry the transaction. For example, if "Account code 5105 not found", call add_account with account_code=5105, then retry the original operation.
+
+DYNAMIC QUERY RULES:
+- If you need to query data that is NOT covered by any specific function, use query_database with a SQL SELECT query
+- ALWAYS include WHERE user_id = ? and pass the user_id as the first parameter
+- Example: query_database with sql="SELECT * FROM invoices WHERE user_id = ? AND status = ? LIMIT 10" and params=["user_id", "paid"]
+- NEVER use query_database for INSERT, UPDATE, or DELETE — only SELECT
+- For any write operations (create, update, delete) on customers, suppliers, products, invoices, etc., ALWAYS ask user to confirm first
+- All operations are logged automatically.`;
 
 const TOOLS: any[] = [
   // ── Dashboard / Summary ──
@@ -147,6 +155,9 @@ const TOOLS: any[] = [
   { type: 'function', function: { name: 'get_document', description: 'Get document details', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Document ID' } }, required: ['id'] } } },
   { type: 'function', function: { name: 'update_document', description: 'Update document metadata (br_number, company_name, issue_date, expiry_date)', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Document ID' }, br_number: { type: 'string' }, company_name: { type: 'string' }, issue_date: { type: 'string' }, expiry_date: { type: 'string' } }, required: ['id'] } } },
   { type: 'function', function: { name: 'delete_document', description: 'Delete a document', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Document ID' } }, required: ['id'] } } },
+
+  // ── Dynamic Query (fallback for any data not covered by specific functions) ──
+  { type: 'function', function: { name: 'query_database', description: 'Execute a SQL SELECT query on the database to retrieve data. Only SELECT queries are allowed. Use this when no specific function covers the data you need. Tables: customers, suppliers, products, invoices, invoice_items, quotations, quotation_items, purchase_orders, purchase_order_items, service_orders, service_order_items, services, service_bookings, todos, calendar_events, journal_entries, journal_lines, accounts, bank_statements, bank_transactions, expense_receipts, file_records, documents, chat_sessions, chat_messages, company_settings, domains. All tables have user_id column for filtering.', parameters: { type: 'object', properties: { sql: { type: 'string', description: 'SQL SELECT query. Must include WHERE user_id = ? placeholder. Example: SELECT * FROM customers WHERE user_id = ? AND name LIKE ? LIMIT 10' }, params: { type: 'array', description: 'Parameters for the query. First param must always be the user_id, additional params as needed.', items: { type: 'string' } } }, required: ['sql'] } } },
 ];
 
 async function ensureAccount(db: D1Database, userId: string, code: string): Promise<{ code: string; name: string } | null> {
@@ -881,6 +892,49 @@ async function executeTool(name: string, db: D1Database, userId: string, args: a
       return JSON.stringify({ success: true, deleted: args.id });
     }
 
+    // ── Dynamic Query (fallback for unmapped data queries) ──
+    case 'query_database': {
+      let sql = args?.sql || '';
+      if (!sql) return JSON.stringify({ error: 'sql is required' });
+      // Security: only allow SELECT
+      const normalizedSql = sql.trim().toUpperCase();
+      if (!normalizedSql.startsWith('SELECT')) {
+        return JSON.stringify({ error: 'Only SELECT queries are allowed' });
+      }
+      // Block dangerous keywords
+      const blocked = ['DROP', 'DELETE', 'INSERT', 'UPDATE', 'ALTER', 'CREATE', 'ATTACH', 'PRAGMA'];
+      for (const kw of blocked) {
+        if (normalizedSql.includes(kw)) {
+          return JSON.stringify({ error: `Keyword ${kw} is not allowed` });
+        }
+      }
+      // Ensure user_id filter — inject if not present
+      if (!sql.includes('user_id')) {
+        // Try to inject WHERE user_id = ? before LIMIT/ORDER BY/GROUP BY
+        const insertBefore = /\b(LIMIT|ORDER|GROUP|HAVING)\b/i.exec(sql);
+        if (insertBefore) {
+          sql = sql.substring(0, insertBefore.index) + ' WHERE user_id = ? ' + sql.substring(insertBefore.index);
+        } else {
+          sql += ' WHERE user_id = ?';
+        }
+        // Shift params: add userId at the position where we injected
+        const params = Array.isArray(args?.params) ? [userId, ...args.params] : [userId];
+        const rows = await db.prepare(sql).bind(...params).all();
+        return JSON.stringify({ rows: rows.results, count: rows.results.length });
+      }
+      // user_id already in query — replace first ? with userId if params don't include it
+      const params = Array.isArray(args?.params) ? args.params : [];
+      if (params[0] !== userId) {
+        params.unshift(userId);
+      }
+      try {
+        const rows = await db.prepare(sql).bind(...params.slice(0, 20)).all();
+        return JSON.stringify({ rows: rows.results, count: rows.results.length });
+      } catch (e: any) {
+        return JSON.stringify({ error: `SQL error: ${e.message}`, sql });
+      }
+    }
+
     default:
       return '{}';
   }
@@ -1038,16 +1092,27 @@ chat.post('/', async (c) => {
 
     if (toolCalls && toolCalls.length > 0) {
       messages.push(choice.message);
+      const toolLog: string[] = [];
       for (const tc of toolCalls) {
         const fnName = tc.function?.name;
         let fnArgs: any = {};
         try { fnArgs = JSON.parse(tc.function?.arguments || '{}'); } catch {}
+        const startTime = Date.now();
         const result = fnName ? await executeTool(fnName, db, user.id, fnArgs) : '{}';
+        const elapsed = Date.now() - startTime;
+        toolLog.push(`[${fnName}] ${elapsed}ms args=${JSON.stringify(fnArgs).slice(0, 200)} result=${String(result).slice(0, 100)}`);
         messages.push({ role: 'tool', tool_call_id: tc.id, content: result });
       }
 
       const response2 = await callDeepSeek(apiKey, messages);
       reply = response2.choices?.[0]?.message?.content || 'Sorry, I could not process that.';
+
+      // Log tool operations to database
+      try {
+        const logId = `tl-${uuidv4().slice(0, 8)}`;
+        await db.prepare('INSERT INTO chat_messages (id, session_id, role, content) VALUES (?, ?, ?, ?)')
+          .bind(logId, sid, 'tool_log', toolLog.join('\n')).run();
+      } catch {}
     } else {
       reply = choice?.message?.content || 'Sorry, I could not process that.';
 
@@ -1089,6 +1154,14 @@ chat.post('/', async (c) => {
           search_files: 'list_files',
           get_documents: 'list_documents',
           search_documents: 'list_documents',
+          run_query: 'query_database',
+          execute_query: 'query_database',
+          sql_query: 'query_database',
+          query: 'query_database',
+          raw_query: 'query_database',
+          search_data: 'query_database',
+          find_data: 'query_database',
+          get_data: 'query_database',
         };
 
         const paramMap: Record<string, Record<string, string>> = {
