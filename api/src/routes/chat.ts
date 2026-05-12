@@ -1103,11 +1103,15 @@ chat.post('/', async (c) => {
           const rawFnName = im[1];
           const fnName = fnNameMap[rawFnName] || rawFnName;
           const paramPattern = /<[^>]*parameter\s+name="(\w+)"[^>]*>([\s\S]*?)<\/[^>]*parameter>/gi;
-          const fnArgs: Record<string, string> = {};
+          const fnArgs: Record<string, any> = {};
           let pm;
           while ((pm = paramPattern.exec(im[2])) !== null) {
             const rawKey = pm[1];
-            const val = pm[2].trim();
+            let val: any = pm[2].trim();
+            // Try to parse JSON arrays/objects
+            if ((val.startsWith('[') && val.endsWith(']')) || (val.startsWith('{') && val.endsWith('}'))) {
+              try { val = JSON.parse(val); } catch {}
+            }
             const pMap = paramMap[fnName] || {};
             const mappedKey = pMap[rawKey];
             if (mappedKey === '__skip__') continue;
