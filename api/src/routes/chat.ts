@@ -119,7 +119,7 @@ const TOOLS: any[] = [
   { type: 'function', function: { name: 'get_bookkeeping', description: 'Get P&L (income statement) for a date range', parameters: { type: 'object', properties: { start_date: { type: 'string', description: 'YYYY-MM-DD' }, end_date: { type: 'string', description: 'YYYY-MM-DD' } }, required: [] } } },
   { type: 'function', function: { name: 'get_bookkeeping_transactions', description: 'Get detailed transactions. If account_code is provided, returns transactions for that account with running balance. If account_code is omitted, returns ALL journal entries for the date range with their line items.', parameters: { type: 'object', properties: { account_code: { type: 'string', description: 'Optional account code (e.g. 2102, 1101). Omit to get all entries.' }, start_date: { type: 'string', description: 'YYYY-MM-DD' }, end_date: { type: 'string', description: 'YYYY-MM-DD' } }, required: [] } } },
   { type: 'function', function: { name: 'create_bookkeeping_transaction', description: 'Create a double-entry journal entry. Debits must equal credits. Use this to record transactions like Director Loans, repayments, revenue, expenses, etc.', parameters: { type: 'object', properties: { date: { type: 'string', description: 'Entry date YYYY-MM-DD' }, description: { type: 'string', description: 'Description of the journal entry' }, entries: { type: 'array', description: 'Array of line items. Each line has account_code, debit (number, default 0), credit (number, default 0), description (optional)', items: { type: 'object', properties: { account_code: { type: 'string', description: 'Account code (e.g. 1101, 2102, 4100)' }, debit: { type: 'number' }, credit: { type: 'number' }, description: { type: 'string' } }, required: ['account_code'] } } }, required: ['date', 'description', 'entries'] } } },
-  { type: 'function', function: { name: 'update_journal_entry', description: 'Update an existing journal entry. Can change date, description, and line items. Debits must equal credits. Pass ALL lines (existing lines not included will be deleted).', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Journal entry ID (e.g. je-xxxxxxxx)' }, date: { type: 'string', description: 'New entry date YYYY-MM-DD' }, description: { type: 'string', description: 'New description' }, entries: { type: 'array', description: 'New array of line items (replaces all existing lines)', items: { type: 'object', properties: { account_code: { type: 'string' }, debit: { type: 'number' }, credit: { type: 'number' }, description: { type: 'string' } }, required: ['account_code'] } } }, required: ['id'] } } },
+  { type: 'function', function: { name: 'update_journal_entry', description: 'Update an existing journal entry. Can change date, description, and line items. Debits must equal credits. Pass ALL lines (existing lines not included will be deleted). Accepts entry_number (e.g. JE-7db3) or entry id (e.g. je-xxxxxxxx).', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Journal entry ID or entry_number (e.g. je-xxxxxxxx or JE-7db3)' }, date: { type: 'string', description: 'New entry date YYYY-MM-DD' }, description: { type: 'string', description: 'New description' }, entries: { type: 'array', description: 'New array of line items (replaces all existing lines)', items: { type: 'object', properties: { account_code: { type: 'string' }, debit: { type: 'number' }, credit: { type: 'number' }, description: { type: 'string' } }, required: ['account_code'] } } }, required: ['id'] } } },
   { type: 'function', function: { name: 'delete_journal_entry', description: 'Delete a journal entry and all its line items', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Journal entry ID (e.g. je-xxxxxxxx)' } }, required: ['id'] } } },
   { type: 'function', function: { name: 'get_recent_activity', description: 'Get recent audit log entries (recent changes)', parameters: { type: 'object', properties: { limit: { type: 'number' } }, required: [] } } },
 
@@ -355,9 +355,14 @@ async function executeTool(name: string, db: D1Database, userId: string, args: a
       return JSON.stringify({ success: true, entry_id: entryId, entry_number: entryNumber, date, description: desc, total_debit: totalDr, total_credit: totalCr });
     }
     case 'update_journal_entry': {
-      const entryId = args?.id;
-      if (!entryId) return JSON.stringify({ error: 'id is required' });
-      const existing = await db.prepare('SELECT * FROM journal_entries WHERE id = ? AND user_id = ?').bind(entryId, userId).first();
+      let entryId = args?.id;
+      if (!entryId) return JSON.stringify({ error: 'id or entry_number is required' });
+      // Try lookup by id first, then by entry_number
+      let existing = await db.prepare('SELECT * FROM journal_entries WHERE id = ? AND user_id = ?').bind(entryId, userId).first();
+      if (!existing) {
+        existing = await db.prepare('SELECT * FROM journal_entries WHERE entry_number = ? AND user_id = ?').bind(entryId, userId).first();
+        if (existing) entryId = (existing as any).id;
+      }
       if (!existing) return JSON.stringify({ error: 'Journal entry not found' });
       const updates: string[] = [];
       const params: any[] = [];
