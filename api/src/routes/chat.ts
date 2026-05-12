@@ -1091,6 +1091,9 @@ chat.post('/', async (c) => {
           get_bank_statement_transactions: { statement_id: 'id' },
           get_bank_transactions: { statement_id: 'id' },
           get_bookkeeping_transactions: { year: '__skip__', month: '__skip__', start_date: 'start_date', end_date: 'end_date' },
+          update_journal_entry: { entry_id: 'id', lines: 'entries', journal_id: 'id' },
+          delete_journal_entry: { entry_id: 'id', journal_id: 'id' },
+          create_bookkeeping_transaction: { lines: 'entries' },
         };
 
         // Pattern 1: <...invoke name="fnName">...<...parameter name="key">value</...>...</...invoke>
