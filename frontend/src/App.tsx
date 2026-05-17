@@ -33,6 +33,8 @@ import CardGenerator from './pages/CardGenerator';
 import Settings from './pages/Settings';
 import FileStorage from './pages/FileStorage';
 import Compliance from './pages/Compliance';
+import PricingPage from './pages/PricingPage';
+import SubscriptionPage from './pages/SubscriptionPage';
 
 const queryClient = new QueryClient();
 
@@ -95,6 +97,8 @@ function AppRoutes() {
       <Route path="/register" element={<Register />} />
       <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
       <Route path="/compliance" element={<ProtectedRoute><FeatureGuard><Compliance /></FeatureGuard></ProtectedRoute>} />
+      <Route path="/pricing" element={<ProtectedRoute><PricingPage /></ProtectedRoute>} />
+      <Route path="/subscription" element={<ProtectedRoute><SubscriptionPage /></ProtectedRoute>} />
       <Route path="/customers" element={<ProtectedRoute><FeatureGuard><Customers /></FeatureGuard></ProtectedRoute>} />
       <Route path="/suppliers" element={<ProtectedRoute><FeatureGuard><Suppliers /></FeatureGuard></ProtectedRoute>} />
       <Route path="/products" element={<ProtectedRoute><FeatureGuard><Products /></FeatureGuard></ProtectedRoute>} />

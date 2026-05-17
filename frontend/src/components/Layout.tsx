@@ -7,7 +7,7 @@ import { api } from '../lib/api';
 import Chatbot from './Chatbot';
 import {
   LayoutDashboard, Users, Truck, Package, FileText, FileSpreadsheet, Mail,
-  Calculator, Upload, Settings, LogOut, Menu, X, MessageCircle, Calendar, Briefcase, FolderOpen, Plug, SlidersHorizontal, Landmark, Receipt, CheckSquare, Globe, CreditCard, Smartphone, HardDrive, ShoppingCart, ClipboardList, AlertCircle, BookOpen, ChevronLeft, ChevronRight, Shield,
+  Calculator, Upload, Settings, LogOut, Menu, X, MessageCircle, Calendar, Briefcase, FolderOpen, Plug, SlidersHorizontal, Landmark, Receipt, CheckSquare, Globe, CreditCard, Smartphone, HardDrive, ShoppingCart, ClipboardList, AlertCircle, BookOpen, ChevronLeft, ChevronRight, Shield, Tag,
 } from 'lucide-react';
 
 const navGroups = [
@@ -58,6 +58,13 @@ const navGroups = [
       { to: '/file-storage', icon: HardDrive, key: 'fileStorage' },
       { to: '/todos', icon: CheckSquare, key: 'todos' },
       { to: '/documents', icon: FolderOpen, key: 'documents' },
+    ],
+  },
+  {
+    label: '帳戶 Account',
+    items: [
+      { to: '/pricing', icon: Tag, key: 'pricing' },
+      { to: '/subscription', icon: CreditCard, key: 'subscription' },
     ],
   },
   {

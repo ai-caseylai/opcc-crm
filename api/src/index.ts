@@ -32,12 +32,15 @@ import { fileStorageRoutes } from './routes/file-storage';
 import { purchaseOrderRoutes } from './routes/purchase-orders';
 import { serviceOrderRoutes } from './routes/service-orders';
 import { complianceRoutes } from './routes/compliance';
+import { plansRoutes } from './routes/plans';
+import { emailDashRoutes } from './routes/email-dash';
+import { waitlistRoutes } from './routes/waitlist';
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 // Middleware
 app.use('*', cors({
-  origin: ['http://localhost:5173', 'https://opcc-crm.techforliving.net', 'https://oppc-crm.techforliving.net', 'https://secondact.hk', 'https://www.secondact.hk'],
+  origin: ['http://localhost:5173', 'https://opcc-crm.techforliving.net', 'https://oppc-crm.techforliving.net', 'https://secondact.hk', 'https://www.secondact.hk', 'https://secondact.techforliving.net', 'https://secondact-landing.pages.dev'],
   credentials: true,
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowHeaders: ['Content-Type', 'Authorization'],
@@ -79,6 +82,9 @@ app.route('/api/file-storage', fileStorageRoutes);
 app.route('/api/purchase-orders', purchaseOrderRoutes);
 app.route('/api/service-orders', serviceOrderRoutes);
 app.route('/api/compliance', complianceRoutes);
+app.route('/api/plans', plansRoutes);
+app.route('/api/email-dash', emailDashRoutes);
+app.route('/api/waitlist', waitlistRoutes);
 
 // 404
 app.notFound((c) => c.json({ error: 'Not found' }, 404));

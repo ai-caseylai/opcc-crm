@@ -32,7 +32,9 @@
     "fileStorage": "檔案儲存",
     "purchaseOrders": "採購單",
     "serviceOrders": "服務合約",
-    "compliance": "合規儀表板"
+    "compliance": "合規儀表板",
+    "pricing": "定價方案",
+    "subscription": "我的訂閱"
   },
   "auth": {
     "login": "登入",

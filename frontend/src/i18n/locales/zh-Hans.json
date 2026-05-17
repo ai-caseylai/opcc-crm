@@ -32,7 +32,9 @@
     "fileStorage": "文件存储",
     "purchaseOrders": "采购单",
     "serviceOrders": "服务合约",
-    "compliance": "合规仪表板"
+    "compliance": "合规仪表板",
+    "pricing": "定价方案",
+    "subscription": "我的订阅"
   },
   "auth": {
     "login": "登录",

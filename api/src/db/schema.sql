@@ -731,3 +731,15 @@ CREATE INDEX IF NOT EXISTS idx_compliance_log_user ON compliance_log(user_id);
 CREATE INDEX IF NOT EXISTS idx_plans_key ON plans(plan_key);
 CREATE INDEX IF NOT EXISTS idx_subscriptions_user ON subscriptions(user_id);
 CREATE INDEX IF NOT EXISTS idx_subscriptions_plan ON subscriptions(plan_id);
+
+-- ═══════════════════════════════════════════
+-- SecondAct — Waitlist
+-- ═══════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS waitlist (
+  id TEXT PRIMARY KEY,
+  email TEXT UNIQUE NOT NULL,
+  source TEXT DEFAULT 'landing',
+  notes TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

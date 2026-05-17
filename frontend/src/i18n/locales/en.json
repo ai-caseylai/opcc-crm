@@ -32,7 +32,9 @@
     "fileStorage": "File Storage",
     "purchaseOrders": "Purchase Orders",
     "serviceOrders": "Service Orders",
-    "compliance": "Compliance"
+    "compliance": "Compliance",
+    "pricing": "Pricing",
+    "subscription": "Subscription"
   },
   "auth": {
     "login": "Login",
