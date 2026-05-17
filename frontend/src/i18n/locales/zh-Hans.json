@@ -31,7 +31,8 @@
     "communication": "通讯",
     "fileStorage": "文件存储",
     "purchaseOrders": "采购单",
-    "serviceOrders": "服务合约"
+    "serviceOrders": "服务合约",
+    "compliance": "合规仪表板"
   },
   "auth": {
     "login": "登录",
@@ -443,5 +444,33 @@
     "view": "查看",
     "downloadPdf": "下载 PDF",
     "allStatus": "全部状态"
+  },
+  "compliance": {
+    "title": "合规仪表板",
+    "subtitle": "追踪你的合规状态，确保不会错过任何期限",
+    "refresh": "刷新",
+    "compliant": "合规",
+    "pending": "待处理",
+    "overdue": "逾期",
+    "notApplicable": "不适用",
+    "company": "公司基本",
+    "tax": "税务",
+    "employment": "雇佣相关",
+    "privacy": "资料隐私",
+    "industry": "行业特定",
+    "upcomingDeadlines": "即将到期提醒",
+    "companyInfo": "公司基本资料",
+    "brNumber": "BR No.",
+    "brExpiry": "BR 到期",
+    "ciNumber": "CI No.",
+    "secretary": "公司秘书",
+    "auditor": "审计师",
+    "fiscalYearEnd": "年结日",
+    "daysLeft": "天",
+    "markCompliant": "合规",
+    "markPending": "待处理",
+    "markNotApplicable": "不适用",
+    "required": "必须",
+    "errorLoading": "无法载入合规资料，请稍后再试"
   }
 }

@@ -31,12 +31,13 @@ import { serviceRoutes } from './routes/services';
 import { fileStorageRoutes } from './routes/file-storage';
 import { purchaseOrderRoutes } from './routes/purchase-orders';
 import { serviceOrderRoutes } from './routes/service-orders';
+import { complianceRoutes } from './routes/compliance';
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 // Middleware
 app.use('*', cors({
-  origin: ['http://localhost:5173', 'https://opcc-crm.techforliving.net', 'https://oppc-crm.techforliving.net'],
+  origin: ['http://localhost:5173', 'https://opcc-crm.techforliving.net', 'https://oppc-crm.techforliving.net', 'https://secondact.hk', 'https://www.secondact.hk'],
   credentials: true,
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowHeaders: ['Content-Type', 'Authorization'],
@@ -77,6 +78,7 @@ app.route('/api/wb', workbuddyMgmtRoutes);
 app.route('/api/file-storage', fileStorageRoutes);
 app.route('/api/purchase-orders', purchaseOrderRoutes);
 app.route('/api/service-orders', serviceOrderRoutes);
+app.route('/api/compliance', complianceRoutes);
 
 // 404
 app.notFound((c) => c.json({ error: 'Not found' }, 404));

@@ -32,6 +32,7 @@ import WebsiteGenerator from './pages/WebsiteGenerator';
 import CardGenerator from './pages/CardGenerator';
 import Settings from './pages/Settings';
 import FileStorage from './pages/FileStorage';
+import Compliance from './pages/Compliance';
 
 const queryClient = new QueryClient();
 
@@ -66,6 +67,7 @@ const FEATURE_ROUTES: Record<string, string> = {
   '/file-storage': 'fileStorage',
   '/purchase-orders': 'purchaseOrders',
   '/service-orders': 'serviceOrders',
+  '/compliance': 'compliance',
 };
 
 function FeatureGuard({ children }: { children: React.ReactNode }) {
@@ -92,6 +94,7 @@ function AppRoutes() {
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
       <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+      <Route path="/compliance" element={<ProtectedRoute><FeatureGuard><Compliance /></FeatureGuard></ProtectedRoute>} />
       <Route path="/customers" element={<ProtectedRoute><FeatureGuard><Customers /></FeatureGuard></ProtectedRoute>} />
       <Route path="/suppliers" element={<ProtectedRoute><FeatureGuard><Suppliers /></FeatureGuard></ProtectedRoute>} />
       <Route path="/products" element={<ProtectedRoute><FeatureGuard><Products /></FeatureGuard></ProtectedRoute>} />

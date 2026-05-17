@@ -31,7 +31,8 @@
     "communication": "Comm",
     "fileStorage": "File Storage",
     "purchaseOrders": "Purchase Orders",
-    "serviceOrders": "Service Orders"
+    "serviceOrders": "Service Orders",
+    "compliance": "Compliance"
   },
   "auth": {
     "login": "Login",
@@ -443,5 +444,33 @@
     "view": "View",
     "downloadPdf": "Download PDF",
     "allStatus": "All Status"
+  },
+  "compliance": {
+    "title": "Compliance Dashboard",
+    "subtitle": "Track your compliance status and never miss a deadline",
+    "refresh": "Refresh",
+    "compliant": "Compliant",
+    "pending": "Pending",
+    "overdue": "Overdue",
+    "notApplicable": "N/A",
+    "company": "Company",
+    "tax": "Tax",
+    "employment": "Employment",
+    "privacy": "Privacy",
+    "industry": "Industry",
+    "upcomingDeadlines": "Upcoming Deadlines",
+    "companyInfo": "Company Info",
+    "brNumber": "BR No.",
+    "brExpiry": "BR Expiry",
+    "ciNumber": "CI No.",
+    "secretary": "Secretary",
+    "auditor": "Auditor",
+    "fiscalYearEnd": "Fiscal Year End",
+    "daysLeft": "days",
+    "markCompliant": "Compliant",
+    "markPending": "Pending",
+    "markNotApplicable": "Not Applicable",
+    "required": "Required",
+    "errorLoading": "Unable to load compliance data. Please try again."
   }
 }

@@ -588,3 +588,146 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_user ON chat_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_updated ON chat_sessions(user_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id);
+
+-- ═══════════════════════════════════════════
+-- SecondAct — Compliance Dashboard
+-- ═══════════════════════════════════════════
+
+-- Company settings — extended for compliance
+CREATE TABLE IF NOT EXISTS company_settings (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  name TEXT,
+  legal_name TEXT,
+  short_name TEXT,
+  tagline TEXT,
+  address TEXT,
+  address2 TEXT,
+  phone TEXT,
+  email TEXT,
+  website TEXT,
+  tax_id TEXT,
+  logo_url TEXT,
+  bank_name TEXT,
+  bank_account TEXT,
+  bank_swift TEXT,
+  bank_address TEXT,
+  signatory_name TEXT,
+  invoice_number_pattern TEXT,
+  features TEXT DEFAULT '{}',
+  -- Compliance fields
+  br_number TEXT,
+  br_expiry_date TEXT,
+  ci_number TEXT,
+  industry TEXT DEFAULT 'general',
+  employee_count INTEGER DEFAULT 0,
+  fiscal_year_end TEXT DEFAULT '03-31',
+  secretary_name TEXT,
+  secretary_contact TEXT,
+  auditor_name TEXT,
+  auditor_contact TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(user_id)
+);
+
+-- Compliance templates — shared across all tenants
+CREATE TABLE IF NOT EXISTS compliance_templates (
+  id TEXT PRIMARY KEY,
+  category TEXT NOT NULL,
+  industry TEXT DEFAULT 'general',
+  title_zh TEXT NOT NULL,
+  title_en TEXT,
+  description_zh TEXT,
+  is_required INTEGER NOT NULL DEFAULT 1,
+  has_deadline INTEGER NOT NULL DEFAULT 0,
+  deadline_field TEXT,
+  action_url TEXT,
+  action_label_zh TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Per-member compliance status
+CREATE TABLE IF NOT EXISTS member_compliance (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  template_id TEXT NOT NULL REFERENCES compliance_templates(id),
+  status TEXT NOT NULL DEFAULT 'pending',
+  notes TEXT,
+  completed_at TEXT,
+  reminder_enabled INTEGER NOT NULL DEFAULT 1,
+  last_reminded_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(user_id, template_id)
+);
+
+-- Compliance key dates
+CREATE TABLE IF NOT EXISTS compliance_dates (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  date_type TEXT NOT NULL,
+  date_value TEXT NOT NULL,
+  reminder_days TEXT DEFAULT '90,60,30,7',
+  notes TEXT,
+  last_reminded_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(user_id, date_type)
+);
+
+-- Compliance action log
+CREATE TABLE IF NOT EXISTS compliance_log (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  action TEXT NOT NULL,
+  template_id TEXT REFERENCES compliance_templates(id),
+  details TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ═══════════════════════════════════════════
+-- Plans & Subscriptions
+-- ═══════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS plans (
+  id TEXT PRIMARY KEY,
+  plan_key TEXT UNIQUE NOT NULL,
+  name_zh TEXT NOT NULL,
+  name_en TEXT NOT NULL,
+  monthly_price INTEGER NOT NULL,
+  skill_allowlist TEXT NOT NULL,
+  limits TEXT NOT NULL,
+  features TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS subscriptions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  plan_id TEXT NOT NULL REFERENCES plans(id),
+  status TEXT NOT NULL DEFAULT 'active',
+  started_at TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at TEXT,
+  auto_renew INTEGER NOT NULL DEFAULT 1,
+  payment_method TEXT,
+  stripe_subscription_id TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Add BR number to invoices
+ALTER TABLE invoices ADD COLUMN br_number TEXT;
+
+-- Indexes
+CREATE INDEX IF NOT EXISTS idx_company_settings_user ON company_settings(user_id);
+CREATE INDEX IF NOT EXISTS idx_compliance_templates_industry ON compliance_templates(industry);
+CREATE INDEX IF NOT EXISTS idx_member_compliance_user ON member_compliance(user_id);
+CREATE INDEX IF NOT EXISTS idx_compliance_dates_user ON compliance_dates(user_id);
+CREATE INDEX IF NOT EXISTS idx_compliance_log_user ON compliance_log(user_id);
+CREATE INDEX IF NOT EXISTS idx_plans_key ON plans(plan_key);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_user ON subscriptions(user_id);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_plan ON subscriptions(plan_id);

@@ -22,7 +22,17 @@ const DEFAULT_COMPANY = {
   bank_swift: 'HSBCHKHHHKH',
   bank_address: "1 Queen's Road Central, Hong Kong",
   signatory_name: '',
-  features: '{"customers":true,"suppliers":true,"products":true,"services":true,"invoices":true,"quotations":true,"bookkeeping":true,"bankStatements":true,"expenseReceipts":true,"calendar":true,"messages":true,"documents":true}',
+  features: '{"customers":true,"suppliers":true,"products":true,"services":true,"invoices":true,"quotations":true,"bookkeeping":true,"bankStatements":true,"expenseReceipts":true,"calendar":true,"messages":true,"documents":true,"fileStorage":true,"purchaseOrders":true,"serviceOrders":true,"compliance":true}',
+  br_number: '',
+  br_expiry_date: '',
+  ci_number: '',
+  industry: 'general',
+  employee_count: '0',
+  fiscal_year_end: '03-31',
+  secretary_name: '',
+  secretary_contact: '',
+  auditor_name: '',
+  auditor_contact: '',
 };
 
 // Available modules with their config keys
@@ -35,6 +45,7 @@ const FEATURE_MODULES: Record<string, string[]> = {
   calendar: ['calendar'],
   messages: ['messages'],
   documents: ['documents'],
+  compliance: ['compliance'],
 };
 
 const company = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -79,6 +90,13 @@ const updateSchema = z.object({
   legal_name: z.string().optional(), short_name: z.string().optional(), tagline: z.string().optional(),
   features: z.string().optional(), // JSON string: {"products":true,...}
   invoice_number_pattern: z.string().optional(),
+  // Compliance fields
+  br_number: z.string().optional(), br_expiry_date: z.string().optional(),
+  ci_number: z.string().optional(), industry: z.string().optional(),
+  employee_count: z.union([z.string(), z.number()]).optional(),
+  fiscal_year_end: z.string().optional(),
+  secretary_name: z.string().optional(), secretary_contact: z.string().optional(),
+  auditor_name: z.string().optional(), auditor_contact: z.string().optional(),
 });
 
 company.put('/', authMiddleware, zValidator('json', updateSchema), async (c) => {
@@ -95,13 +113,17 @@ company.put('/', authMiddleware, zValidator('json', updateSchema), async (c) => 
     await db.prepare(`UPDATE company_settings SET ${sets.join(', ')} WHERE user_id = ?`).bind(...params).run();
   } else {
     await db.prepare(
-      `INSERT INTO company_settings (user_id, name, legal_name, short_name, tagline, address, address2, phone, email, website, bank_name, bank_account, bank_swift, bank_address, signatory_name, tax_id, invoice_number_pattern)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      `INSERT INTO company_settings (user_id, name, legal_name, short_name, tagline, address, address2, phone, email, website, bank_name, bank_account, bank_swift, bank_address, signatory_name, tax_id, invoice_number_pattern, br_number, br_expiry_date, ci_number, industry, employee_count, fiscal_year_end, secretary_name, secretary_contact, auditor_name, auditor_contact)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     ).bind(user.id, data.name || 'OPCC', data.legal_name || null, data.short_name || null,
       data.tagline || null, data.address || 'Hong Kong', data.address2 || null,
       data.phone || null, data.email || null, data.website || null, data.bank_name || null,
       data.bank_account || null, data.bank_swift || null, data.bank_address || null,
-      data.signatory_name || null, data.tax_id || null, data.invoice_number_pattern || null).run();
+      data.signatory_name || null, data.tax_id || null, data.invoice_number_pattern || null,
+      data.br_number || null, data.br_expiry_date || null, data.ci_number || null,
+      data.industry || 'general', String(data.employee_count || 0), data.fiscal_year_end || '03-31',
+      data.secretary_name || null, data.secretary_contact || null,
+      data.auditor_name || null, data.auditor_contact || null).run();
   }
   const row = await db.prepare('SELECT * FROM company_settings WHERE user_id = ?').bind(user.id).first();
   return c.json(row);
