@@ -159,6 +159,11 @@ function FolderTree({ node, depth, expanded, toggle, onFileAction, onSetDirectio
                   </button>
                 )}
                 <button onClick={() => downloadFile(f.id, f.filename || 'file')} className="p-1 hover:bg-muted rounded"><Download className="h-3.5 w-3.5" /></button>
+                {(f.category === 'bank_statement' || f.category === 'bank' || (f.file_type || '').includes('pdf')) && (
+                  <button onClick={() => onFileAction('import-statement', f)} className="px-1.5 py-0.5 rounded text-[10px] font-medium border border-green-300 text-green-600 hover:bg-green-50" title="匯入為銀行月結單">
+                    匯入
+                  </button>
+                )}
                 <button onClick={() => onFileAction('edit', f)} className="p-1 hover:bg-muted rounded"><Pencil className="h-3.5 w-3.5" /></button>
                 <button onClick={() => { if (confirm(t('common.confirmDelete'))) onFileAction('delete', f); }} className="p-1 hover:bg-muted rounded text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
               </div>
@@ -235,6 +240,19 @@ export default function FileStorage() {
     },
   });
 
+  const importStmtMut = useMutation({
+    mutationFn: (id: string) => api(`/file-storage/${id}/import-statement`, { method: 'POST' }),
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ['file-storage'] });
+      queryClient.invalidateQueries({ queryKey: ['file-storage-folders'] });
+      queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
+      alert(`已匯入銀行月結單！\n交易筆數：${data.transactions_count || 0}\n銀行：${data.bank_name || '未知'}`);
+    },
+    onError: (err: any) => {
+      alert(`匯入失敗：${err?.message || err?.error || '未知錯誤'}`);
+    },
+  });
+
   const uploadFiles = useCallback((fileList: FileList | File[]) => {
     const arr = Array.from(fileList);
     if (arr.length === 0) return;
@@ -286,6 +304,10 @@ export default function FileStorage() {
       setEditDesc(f.description || '');
     } else if (action === 'delete') {
       deleteMut.mutate(f.id);
+    } else if (action === 'import-statement') {
+      if (confirm(`確定要將「${f.filename}」匯入為銀行月結單嗎？系統會自動 OCR 辨識並解析交易紀錄。`)) {
+        importStmtMut.mutate(f.id);
+      }
     }
   };
 

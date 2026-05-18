@@ -132,6 +132,7 @@ const TOOLS: any[] = [
   { type: 'function', function: { name: 'create_bookkeeping_transaction', description: 'Create a double-entry journal entry. Debits must equal credits. Use this to record transactions like Director Loans, repayments, revenue, expenses, etc.', parameters: { type: 'object', properties: { date: { type: 'string', description: 'Entry date YYYY-MM-DD' }, description: { type: 'string', description: 'Description of the journal entry' }, entries: { type: 'array', description: 'Array of line items. Each line has account_code, debit (number, default 0), credit (number, default 0), description (optional)', items: { type: 'object', properties: { account_code: { type: 'string', description: 'Account code (e.g. 1101, 2102, 4100)' }, debit: { type: 'number' }, credit: { type: 'number' }, description: { type: 'string' } }, required: ['account_code'] } } }, required: ['date', 'description', 'entries'] } } },
   { type: 'function', function: { name: 'update_journal_entry', description: 'Update an existing journal entry. Can change date, description, and line items. Debits must equal credits. Pass ALL lines (existing lines not included will be deleted). Accepts entry_number (e.g. JE-7db3) or entry id (e.g. je-xxxxxxxx).', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Journal entry ID or entry_number (e.g. je-xxxxxxxx or JE-7db3)' }, date: { type: 'string', description: 'New entry date YYYY-MM-DD' }, description: { type: 'string', description: 'New description' }, entries: { type: 'array', description: 'New array of line items (replaces all existing lines)', items: { type: 'object', properties: { account_code: { type: 'string' }, debit: { type: 'number' }, credit: { type: 'number' }, description: { type: 'string' } }, required: ['account_code'] } } }, required: ['id'] } } },
   { type: 'function', function: { name: 'delete_journal_entry', description: 'Delete a journal entry and all its line items', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Journal entry ID (e.g. je-xxxxxxxx)' } }, required: ['id'] } } },
+  { type: 'function', function: { name: 'get_balance_sheet', description: 'Get the balance sheet (Assets, Liabilities, Equity) as of a date. Shows financial position.', parameters: { type: 'object', properties: { as_of: { type: 'string', description: 'As-of date YYYY-MM-DD, defaults to today' } }, required: [] } } },
   { type: 'function', function: { name: 'get_recent_activity', description: 'Get recent audit log entries (recent changes)', parameters: { type: 'object', properties: { limit: { type: 'number' } }, required: [] } } },
 
   // ── Bank Statements ──
@@ -149,6 +150,9 @@ const TOOLS: any[] = [
   { type: 'function', function: { name: 'get_file', description: 'Get file metadata details', parameters: { type: 'object', properties: { id: { type: 'string', description: 'File ID' } }, required: ['id'] } } },
   { type: 'function', function: { name: 'update_file', description: 'Update file metadata (filename, folder, description)', parameters: { type: 'object', properties: { id: { type: 'string', description: 'File ID' }, filename: { type: 'string' }, folder: { type: 'string' }, description: { type: 'string' } }, required: ['id'] } } },
   { type: 'function', function: { name: 'delete_file', description: 'Delete a file', parameters: { type: 'object', properties: { id: { type: 'string', description: 'File ID' } }, required: ['id'] } } },
+  { type: 'function', function: { name: 'read_file_content', description: 'Read the text content of a file (PDF, image, or text). Downloads from storage, extracts text via OCR if needed. Use this to read bank statements, invoices, receipts, or any uploaded document.', parameters: { type: 'object', properties: { id: { type: 'string', description: 'File ID (e.g. fs-xxxxxxxx)' } }, required: ['id'] } } },
+  { type: 'function', function: { name: 'import_bank_statement', description: 'Import a file from File Storage as a bank statement. Extracts text, parses transactions (dates, descriptions, deposits, withdrawals, balances), and creates bank_statement + bank_transactions records. The file must already exist in File Storage.', parameters: { type: 'object', properties: { file_id: { type: 'string', description: 'File record ID (e.g. fs-xxxxxxxx)' }, bank_name: { type: 'string', description: 'Optional bank name (e.g. HSBC, BOC, Hang Seng)' }, account_number: { type: 'string', description: 'Optional account number' }, currency: { type: 'string', description: 'Currency code, default HKD' }, statement_year: { type: 'number', description: 'e.g. 2025' }, statement_month: { type: 'number', description: '1-12' } }, required: ['file_id'] } } },
+  { type: 'function', function: { name: 'import_invoice_from_file', description: 'Import a file from File Storage as an invoice. Extracts text via OCR, parses invoice number, customer, dates, line items, and amounts, then creates the invoice and customer records. The file must already exist in File Storage.', parameters: { type: 'object', properties: { file_id: { type: 'string', description: 'File record ID (e.g. fs-xxxxxxxx)' } }, required: ['file_id'] } } },
 
   // ── Documents (BR/CI/EI etc.) ──
   { type: 'function', function: { name: 'list_documents', description: 'List documents (BR, CI, EI, EC, TC, RL) with optional type filter', parameters: { type: 'object', properties: { type: { type: 'string', description: 'Document type: br, ci, ei, ec, tc, rl' }, limit: { type: 'number' } }, required: [] } } },
@@ -172,7 +176,7 @@ async function ensureAccount(db: D1Database, userId: string, code: string): Prom
   return null;
 }
 
-async function executeTool(name: string, db: D1Database, userId: string, args: any = {}): Promise<string> {
+async function executeTool(name: string, db: D1Database, userId: string, args: any = {}, env?: any): Promise<string> {
   const limit = args?.limit || 10;
   switch (name) {
     case 'get_counts': {
@@ -312,6 +316,40 @@ async function executeTool(name: string, db: D1Database, userId: string, args: a
       } catch {
         return JSON.stringify([]);
       }
+    }
+    case 'get_balance_sheet': {
+      const asOf = args?.as_of || new Date().toISOString().split('T')[0];
+      const rows = await db.prepare(
+        `SELECT jl.account_code, jl.account_name, a.account_type, SUM(jl.debit) as total_debit, SUM(jl.credit) as total_credit
+         FROM journal_lines jl JOIN journal_entries je ON jl.entry_id = je.id
+         LEFT JOIN accounts a ON jl.account_code = a.account_code AND je.user_id = a.user_id
+         WHERE je.user_id = ? AND je.entry_date <= ?
+         GROUP BY jl.account_code, jl.account_name
+         ORDER BY jl.account_code`
+      ).bind(userId, asOf).all();
+      if (rows.results.length > 0) {
+        const assets: any[] = [], liabilities: any[] = [], equity: any[] = [];
+        let rev = 0, exp = 0;
+        for (const r of rows.results as any[]) {
+          const bal = (r.account_type === 'asset' || r.account_type === 'expense') ? (r.total_debit - r.total_credit) : (r.total_credit - r.total_debit);
+          if (r.account_code?.startsWith('1') || r.account_type === 'asset') assets.push({ code: r.account_code, name: r.account_name, balance: bal });
+          else if (r.account_code?.startsWith('2') || r.account_type === 'liability') liabilities.push({ code: r.account_code, name: r.account_name, balance: bal });
+          else if (r.account_code?.startsWith('3') || r.account_type === 'equity') equity.push({ code: r.account_code, name: r.account_name, balance: bal });
+          else if (r.account_code?.startsWith('4') || r.account_type === 'revenue') rev += bal;
+          else if (r.account_code?.startsWith('5') || r.account_type === 'expense') exp += bal;
+        }
+        const re = rev - exp;
+        if (Math.abs(re) > 0.01) equity.push({ code: '3xxx', name: 'Retained Earnings', balance: re });
+        const ta = assets.reduce((s: number, a: any) => s + a.balance, 0);
+        const tl = liabilities.reduce((s: number, l: any) => s + l.balance, 0);
+        const te = equity.reduce((s: number, e: any) => s + e.balance, 0);
+        return JSON.stringify({ as_of: asOf, total_assets: ta, total_liabilities: tl, total_equity: te, retained_earnings: re, check: Math.abs(ta - (tl + te)) < 0.01, assets, liabilities, equity });
+      }
+      // Fallback
+      const dep = await db.prepare('SELECT COALESCE(SUM(deposit_amount),0) as amount FROM bank_transactions WHERE user_id = ? AND transaction_date <= ?').bind(userId, asOf).first<{amount:number}>();
+      const wit = await db.prepare('SELECT COALESCE(SUM(withdrawal_amount),0) as amount FROM bank_transactions WHERE user_id = ? AND transaction_date <= ?').bind(userId, asOf).first<{amount:number}>();
+      const net = (dep?.amount||0) - (wit?.amount||0);
+      return JSON.stringify({ as_of: asOf, total_assets: Math.max(net,0), total_liabilities: Math.max(-net,0), total_equity: net, retained_earnings: net, check: true, assets: [{code:'1101',name:'Cash (est.)',balance:Math.max(net,0)}], liabilities: net<0?[{code:'2102',name:'Dir Loan (est.)',balance:-net}]:[], equity: [{code:'3xxx',name:'Retained Earnings (est.)',balance:net}], source: 'bank_estimate' });
     }
     case 'list_accounts': {
       const rows = await db.prepare('SELECT account_code, account_name, account_type, parent_code FROM accounts WHERE user_id = ? ORDER BY account_code').bind(userId).all();
@@ -859,6 +897,218 @@ async function executeTool(name: string, db: D1Database, userId: string, args: a
       await db.prepare('DELETE FROM file_records WHERE id = ? AND user_id = ?').bind(args.id, userId).run();
       return JSON.stringify({ success: true, deleted: args.id });
     }
+    case 'read_file_content': {
+      const row = await db.prepare('SELECT id, r2_key, filename, original_name, file_type, ocr_text, ocr_status, category FROM file_records WHERE id = ? AND user_id = ?').bind(args.id, userId).first<{ id: string; r2_key: string; filename: string; original_name: string; file_type: string; ocr_text: string; ocr_status: string; category: string }>();
+      if (!row) return JSON.stringify({ error: 'File not found' });
+      if (row.ocr_text && row.ocr_text.length > 20) {
+        return JSON.stringify({ file_id: row.id, filename: row.filename, file_type: row.file_type, category: row.category, ocr_status: row.ocr_status, content: row.ocr_text });
+      }
+      if (!env?.FILE_BUCKET) return JSON.stringify({ error: 'Storage not available', ocr_status: row.ocr_status, ocr_text: row.ocr_text || '' });
+      try {
+        const obj = await env.FILE_BUCKET.get(row.r2_key);
+        if (!obj) return JSON.stringify({ error: 'File data not found in storage' });
+        const buffer = await obj.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        const base64 = btoa(binary);
+        const mimeType = row.file_type || 'application/octet-stream';
+        const isPdf = mimeType.includes('pdf');
+        const isImage = mimeType.includes('image') || mimeType.includes('png') || mimeType.includes('jpg') || mimeType.includes('jpeg');
+        if (!isPdf && !isImage) {
+          const text = new TextDecoder().decode(buffer);
+          return JSON.stringify({ file_id: row.id, filename: row.filename, file_type: row.file_type, content: text.slice(0, 10000) });
+        }
+        let ocrText = '';
+        if (env.AI) {
+          try {
+            const aiResponse = await env.AI.run('@cf/unum/uform-gen2-qwen-500m', {
+              prompt: 'Extract all visible text from this document. Include all dates, amounts, transaction descriptions, account numbers, company names, and any financial data.',
+              image: isPdf ? [...bytes].map(b => String.fromCharCode(b)).join('') : base64,
+            });
+            ocrText = aiResponse?.description || '';
+          } catch {}
+        }
+        if (!ocrText && env.DEEPSEEK_API_KEY && isImage) {
+          try {
+            const resp = await fetch('https://api.deepseek.com/chat/completions', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${env.DEEPSEEK_API_KEY}` },
+              body: JSON.stringify({ model: 'deepseek-chat', messages: [{ role: 'user', content: [{ type: 'text', text: 'Extract all visible text from this document thoroughly.' }, { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } }] }], max_tokens: 2000 }),
+            });
+            const data = await resp.json() as any;
+            ocrText = data.choices?.[0]?.message?.content || '';
+          } catch {}
+        }
+        if (ocrText) {
+          await db.prepare("UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ?").bind(ocrText, row.id).run();
+        }
+        return JSON.stringify({ file_id: row.id, filename: row.filename, file_type: row.file_type, category: row.category, ocr_status: ocrText ? 'completed' : (row.ocr_status || 'failed'), content: ocrText || row.ocr_text || '(No text could be extracted. The file may be a scanned PDF that requires a different OCR engine.)' });
+      } catch (e: any) {
+        return JSON.stringify({ error: 'Failed to read file: ' + (e.message || 'unknown error') });
+      }
+    }
+    case 'import_bank_statement': {
+      const fileId = args.file_id;
+      const fileRow = await db.prepare('SELECT id, r2_key, filename, original_name, file_type, ocr_text, ocr_status, category, folder FROM file_records WHERE id = ? AND user_id = ?').bind(fileId, userId).first<{ id: string; r2_key: string; filename: string; original_name: string; file_type: string; ocr_text: string; ocr_status: string; category: string; folder: string }>();
+      if (!fileRow) return JSON.stringify({ error: 'File not found. Use list_files to find available files.' });
+      const existing = await db.prepare('SELECT id FROM bank_statements WHERE user_id = ? AND r2_key = ?').bind(userId, fileRow.r2_key).first();
+      if (existing) return JSON.stringify({ error: 'This file has already been imported as a bank statement', statement_id: existing.id });
+      let ocrText = fileRow.ocr_text || '';
+      if (!ocrText || ocrText.length < 20) {
+        if (env?.FILE_BUCKET) {
+          try {
+            const obj = await env.FILE_BUCKET.get(fileRow.r2_key);
+            if (obj) {
+              const buffer = await obj.arrayBuffer();
+              const bytes = new Uint8Array(buffer);
+              let binary = '';
+              for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+              const base64 = btoa(binary);
+              const mimeType = fileRow.file_type || 'application/pdf';
+              if (env.AI) {
+                try {
+                  const aiResponse = await env.AI.run('@cf/unum/uform-gen2-qwen-500m', { prompt: 'Extract all visible text from this bank statement. Include all transaction dates, descriptions, deposit amounts, withdrawal amounts, balances, account numbers, bank name, statement period, opening and closing balances.', image: base64 });
+                  ocrText = aiResponse?.description || '';
+                } catch {}
+              }
+            }
+          } catch {}
+        }
+      }
+      if (!ocrText || ocrText.length < 10) return JSON.stringify({ error: 'Could not extract text from this file. The file may be corrupted or in an unsupported format.' });
+      let parsed: any = null;
+      const deepseekKey = env?.DEEPSEEK_API_KEY;
+      if (deepseekKey) {
+        try {
+          const parseResp = await fetch('https://api.deepseek.com/chat/completions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${deepseekKey}` },
+            body: JSON.stringify({
+              model: 'deepseek-chat',
+              messages: [{ role: 'user', content: `Parse the following bank statement OCR text into structured JSON. Extract:
+- bank_name: the bank name
+- account_number: account number if visible
+- currency: default "HKD"
+- statement_year and statement_month: from statement period
+- period_start and period_end: dates in YYYY-MM-DD
+- opening_balance and closing_balance: numbers
+- transactions: array of { transaction_date (YYYY-MM-DD), description, deposit_amount (number, 0 if withdrawal), withdrawal_amount (number, 0 if deposit), balance (number or null) }
+
+Return ONLY valid JSON, no explanation. If you can't parse something, use null.
+
+OCR TEXT:
+${ocrText.slice(0, 8000)}` }],
+              max_tokens: 4000,
+            }),
+          });
+          const parseData = await parseResp.json() as any;
+          const raw = parseData.choices?.[0]?.message?.content || '';
+          const jsonMatch = raw.match(/\{[\s\S]*\}/);
+          if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+        } catch {}
+      }
+      const stmtId = `bs-${uuidv4().slice(0, 8)}`;
+      const bankName = args.bank_name || parsed?.bank_name || null;
+      const accountNumber = args.account_number || parsed?.account_number || null;
+      const currency = args.currency || parsed?.currency || 'HKD';
+      const stmtYear = args.statement_year || parsed?.statement_year || null;
+      const stmtMonth = args.statement_month || parsed?.statement_month || null;
+      const periodStart = parsed?.period_start || null;
+      const periodEnd = parsed?.period_end || null;
+      const openingBal = parsed?.opening_balance ?? null;
+      const closingBal = parsed?.closing_balance ?? null;
+      await db.prepare(
+        `INSERT INTO bank_statements (id, user_id, file_name, file_type, file_data, r2_key, bank_name, account_number, branch, currency, account_type, statement_year, statement_month, period_start, period_end, opening_balance, closing_balance, page_count, ocr_text)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      ).bind(stmtId, userId, fileRow.original_name || fileRow.filename, fileRow.file_type, '', fileRow.r2_key, bankName, accountNumber, null, currency, null, stmtYear, stmtMonth, periodStart, periodEnd, openingBal, closingBal, null, ocrText).run();
+      let txCount = 0;
+      const transactions = parsed?.transactions || [];
+      for (const tx of transactions) {
+        if (!tx.transaction_date) continue;
+        const txId = `bt-${uuidv4().slice(0, 8)}`;
+        await db.prepare(
+          `INSERT INTO bank_transactions (id, bank_statement_id, user_id, transaction_date, description, deposit_amount, withdrawal_amount, balance, sort_order)
+           VALUES (?,?,?,?,?,?,?,?,?)`
+        ).bind(txId, stmtId, userId, tx.transaction_date, tx.description || '', tx.deposit_amount || 0, tx.withdrawal_amount || 0, tx.balance ?? null, txCount).run();
+        txCount++;
+      }
+      await db.prepare("UPDATE file_records SET category = 'bank_statement', folder = 'Bank Statements', updated_at = datetime('now') WHERE id = ?").bind(fileId).run();
+      return JSON.stringify({ success: true, statement_id: stmtId, file_name: fileRow.original_name || fileRow.filename, bank_name: bankName, account_number: accountNumber, currency, statement_year: stmtYear, statement_month: stmtMonth, opening_balance: openingBal, closing_balance: closingBal, transactions_count: txCount, parsed_via_ai: !!parsed });
+    }
+    case 'import_invoice_from_file': {
+      const fileId = args.file_id;
+      const fileRow = await db.prepare('SELECT id, r2_key, filename, original_name, file_type, ocr_text, ocr_status, category, direction FROM file_records WHERE id = ? AND user_id = ?').bind(fileId, userId).first<{ id: string; r2_key: string; filename: string; original_name: string; file_type: string; ocr_text: string; ocr_status: string; category: string; direction: string }>();
+      if (!fileRow) return JSON.stringify({ error: 'File not found. Use list_files to find available files.' });
+      let ocrText = fileRow.ocr_text || '';
+      if (!ocrText || ocrText.length < 20) {
+        if (env?.FILE_BUCKET) {
+          try {
+            const obj = await env.FILE_BUCKET.get(fileRow.r2_key);
+            if (obj) {
+              const buffer = await obj.arrayBuffer();
+              const bytes = new Uint8Array(buffer);
+              let binary = '';
+              for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+              const base64 = btoa(binary);
+              if (env.AI) {
+                try {
+                  const aiResponse = await env.AI.run('@cf/unum/uform-gen2-qwen-500m', { prompt: 'Extract all visible text from this invoice. Include invoice number, dates, company names, amounts, line items with descriptions and prices.', image: base64 });
+                  ocrText = aiResponse?.description || '';
+                } catch {}
+              }
+            }
+          } catch {}
+        }
+      }
+      if (!ocrText || ocrText.length < 10) return JSON.stringify({ error: 'Could not extract text. This file may not be readable.' });
+      const deepseekKey = env?.DEEPSEEK_API_KEY;
+      let parsed: any = null;
+      if (deepseekKey) {
+        try {
+          const resp = await fetch('https://api.deepseek.com/chat/completions', {
+            method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${deepseekKey}` },
+            body: JSON.stringify({ model: 'deepseek-chat', messages: [{ role: 'user', content: `Parse this invoice OCR text into structured JSON. Extract: invoice_number, customer_name, customer_email, issue_date (YYYY-MM-DD), due_date, currency (default "HKD"), items as array of { description, quantity, unit_price, amount }, total, notes. Return ONLY valid JSON. OCR:\n${ocrText.slice(0, 8000)}` }], max_tokens: 4000 }),
+          });
+          const data = await resp.json() as any;
+          const raw = data.choices?.[0]?.message?.content || '';
+          const jsonMatch = raw.match(/\{[\s\S]*\}/);
+          if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+        } catch {}
+      }
+      // Match or create customer
+      let customerId: string | null = null;
+      if (parsed?.customer_email) {
+        const c = await db.prepare('SELECT id FROM customers WHERE user_id = ? AND email = ?').bind(userId, parsed.customer_email).first<{ id: string }>();
+        if (c) customerId = c.id;
+      }
+      if (!customerId && parsed?.customer_name) {
+        const c = await db.prepare('SELECT id FROM customers WHERE user_id = ? AND name LIKE ?').bind(userId, `%${parsed.customer_name}%`).first<{ id: string }>();
+        if (c) customerId = c.id;
+      }
+      if (!customerId && parsed?.customer_name) {
+        customerId = `c-${uuidv4().slice(0, 8)}`;
+        await db.prepare('INSERT INTO customers (id, user_id, name, email, is_active) VALUES (?, ?, ?, ?, 1)').bind(customerId, userId, parsed.customer_name, parsed.customer_email || null).run();
+      }
+      if (!customerId) return JSON.stringify({ error: 'Could not identify customer from invoice. The OCR text may not contain a company name.' });
+      const items: any[] = (parsed?.items || []).map((it: any, i: number) => ({ description: it.description || 'Item', quantity: it.quantity || 1, unit_price: it.unit_price || 0, amount: it.amount || ((it.quantity || 1) * (it.unit_price || 0)), sort_order: i }));
+      if (items.length === 0 && parsed?.total) {
+        items.push({ description: 'Invoice item', quantity: 1, unit_price: parsed.total, amount: parsed.total, sort_order: 0 });
+      }
+      if (items.length === 0) return JSON.stringify({ error: 'No line items found in invoice' });
+      const subtotal = items.reduce((s: number, it: any) => s + it.amount, 0);
+      const total = parsed?.total || subtotal;
+      const invNumber = parsed?.invoice_number || `INV-${Date.now().toString(36).toUpperCase()}`;
+      const existing = await db.prepare('SELECT id FROM invoices WHERE user_id = ? AND invoice_number = ?').bind(userId, invNumber).first();
+      if (existing) return JSON.stringify({ error: `Invoice ${invNumber} already exists`, invoice_id: existing.id });
+      const invId = `i-${uuidv4().slice(0, 8)}`;
+      await db.prepare('INSERT INTO invoices (id, user_id, invoice_number, customer_id, status, issue_date, due_date, subtotal, total, currency, notes) VALUES (?,?,?,?,?,?,?,?,?,?,?)').bind(invId, userId, invNumber, customerId, 'draft', parsed?.issue_date || new Date().toISOString().split('T')[0], parsed?.due_date || new Date(Date.now() + 30*86400000).toISOString().split('T')[0], subtotal, total, parsed?.currency || 'HKD', parsed?.notes || null).run();
+      for (const item of items) {
+        await db.prepare('INSERT INTO invoice_items (id, invoice_id, description, quantity, unit_price, amount, sort_order) VALUES (?,?,?,?,?,?,?)').bind(`ii-${uuidv4().slice(0, 8)}`, invId, item.description, item.quantity, item.unit_price, item.amount, item.sort_order).run();
+      }
+      await db.prepare("UPDATE file_records SET category = 'invoice', payment_status = 'unmatched', amount = ?, updated_at = datetime('now') WHERE id = ?").bind(total, fileId).run();
+      return JSON.stringify({ success: true, invoice_id: invId, invoice_number: invNumber, customer_name: parsed?.customer_name, items_count: items.length, total, parsed_via_ai: !!parsed });
+    }
 
     // ── Documents ──
     case 'list_documents': {
@@ -1098,7 +1348,7 @@ chat.post('/', async (c) => {
         let fnArgs: any = {};
         try { fnArgs = JSON.parse(tc.function?.arguments || '{}'); } catch {}
         const startTime = Date.now();
-        const result = fnName ? await executeTool(fnName, db, user.id, fnArgs) : '{}';
+        const result = fnName ? await executeTool(fnName, db, user.id, fnArgs, c.env) : '{}';
         const elapsed = Date.now() - startTime;
         toolLog.push(`[${fnName}] ${elapsed}ms args=${JSON.stringify(fnArgs).slice(0, 200)} result=${String(result).slice(0, 100)}`);
         messages.push({ role: 'tool', tool_call_id: tc.id, content: result });
@@ -1210,7 +1460,7 @@ chat.post('/', async (c) => {
               log.push(`  Converted year+month → start_date=${fnArgs.start_date}, end_date=${fnArgs.end_date}`);
             }
             try {
-              const result = await executeTool(fnName, db, user.id, fnArgs);
+              const result = await executeTool(fnName, db, user.id, fnArgs, c.env);
               results.push(`${fnName}: ${result}`);
               log.push(`  Result: OK`);
             } catch (e: any) {

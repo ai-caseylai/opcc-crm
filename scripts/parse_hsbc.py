@@ -21,7 +21,12 @@ def parse_amount(s):
 
 def to_iso_date(day, month_str, year):
     m = MONTH_MAP.get(month_str.lower()[:3])
-    return f"{year}-{m:02d}-{int(day):02d}" if m else None
+    if not m:
+        return None
+    yr = int(year)
+    if yr < 100:
+        yr += 2000
+    return f"{yr}-{m:02d}-{int(day):02d}"
 
 
 def parse_statement_date(text):
@@ -33,7 +38,7 @@ def parse_statement_date(text):
 
 
 def classify_amounts(line, deposit_ref, withdrawal_ref, balance_ref):
-    """Find all amounts on a line and classify by column zone.
+    """Find all amounts on a line and classify by nearest column.
     Returns (deposit, withdrawal, balance, has_explicit_balance, all_positions).
     """
     deposit = 0.0
@@ -48,12 +53,18 @@ def classify_amounts(line, deposit_ref, withdrawal_ref, balance_ref):
         pos = m.start()
         positions.append((pos, val, m.group(), is_dr))
 
-        if pos >= balance_ref - 3:
+        # Find nearest column reference
+        dist_bal = abs(pos - balance_ref)
+        dist_wit = abs(pos - withdrawal_ref)
+        dist_dep = abs(pos - deposit_ref)
+        min_dist = min(dist_bal, dist_wit, dist_dep)
+
+        if min_dist == dist_bal and dist_bal < 30:
             balance = -val if is_dr else val
             has_explicit_balance = True
-        elif pos >= withdrawal_ref - 3:
+        elif min_dist == dist_wit and dist_wit < 30:
             withdrawal = val
-        elif pos >= deposit_ref - 3:
+        elif min_dist == dist_dep and dist_dep < 30:
             deposit = val
         # else: amount in description area → ignore
 
@@ -83,9 +94,9 @@ def parse_account_section(section_text, account_type, year):
     balance_ref = -1
 
     for idx, line in enumerate(lines):
-        dm = re.search(r'\bDeposit\b', line)
-        wm = re.search(r'\bWithdrawal\b', line)
-        bm = re.search(r'\bBalance\b', line)
+        dm = re.search(r'\bDeposit\b', line, re.IGNORECASE)
+        wm = re.search(r'\bWithdrawal\b', line, re.IGNORECASE)
+        bm = re.search(r'\bBalance\b', line, re.IGNORECASE)
         if dm and wm and bm:
             header_idx = idx
             deposit_ref = dm.start()
@@ -115,11 +126,47 @@ def parse_account_section(section_text, account_type, year):
                ['Special Privileges', 'Others', 'Thank you', 'The Hongkong']):
             break
 
-        # Check for date at line start
-        date_match = re.match(r'^(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b', stripped)
+        # Skip mid-page headers and metadata lines (page continuations)
+        if re.match(r'(?:HKD|USD|CNY|GBP|EUR)\s+(?:STATEMENT\s+)?(?:Savings|Current|SAVINGS)', stripped):
+            continue
+        if re.match(r'BANK REFERENCE\s+\d+', stripped):
+            continue
+        if re.match(r'銀行參考編號', stripped):
+            continue
+        if re.match(r'PAGE\s+\d', stripped):
+            continue
+        if re.match(r'頁數', stripped):
+            continue
+        if re.match(r'STATEMENT DATE\s+\d+', stripped):
+            continue
+        if re.match(r'結單日期', stripped):
+            continue
+        if re.match(r'ACCOUNT TYPE\s+', stripped):
+            continue
+        if re.match(r'賬戶種類', stripped):
+            continue
+        if re.match(r'BRANCH\s+', stripped):
+            continue
+        if re.match(r'分行', stripped):
+            continue
+        if re.match(r'ACCOUNT NO\.\s*賬戶號碼', stripped):
+            continue
+        if re.match(r'\[ INTEGRATED ACCOUNT', stripped):
+            continue
+        if re.match(r'DATE\s+PARTICULARS', stripped) or re.match(r'日期\s+交易詳情', stripped):
+            continue
+        if re.match(r'\(DR=DEBIT\)', stripped) or re.match(r'DR=結欠', stripped):
+            continue
+
+        # Check for date at line start (supports "27 JAN 26", "27JAN26", "27 Jan 2026")
+        date_match = re.match(r'^(\d{1,2})\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s*(\d{2,4})?\b', stripped, re.IGNORECASE)
         if date_match:
-            current_date = to_iso_date(date_match.group(1), date_match.group(2), year)
-            date_start = len(date_match.group(0))
+            yr = int(date_match.group(3)) if date_match.group(3) else year
+            if yr < 100:
+                yr += 2000
+            current_date = to_iso_date(date_match.group(1), date_match.group(2), yr)
+            # date_start relative to original line (stripped offset + leading whitespace)
+            date_start = len(date_match.group(0)) + (len(line) - len(stripped))
         else:
             date_start = 0
 
@@ -202,15 +249,31 @@ def parse_statement(text):
         'accounts': [],
     }
 
-    m = re.search(r'(\d{3}-\d{6}-\d{3})', text)
+    m = re.search(r'(\d{3,4}-\d{5,6}-\d{1,3})', text)
     if m:
         result['account_number'] = m.group(1)
+    if not result['account_number']:
+        m = re.search(r'ACCOUNT\s+NO\.?\s*賬戶號碼\s*(\d{3,4}-\d{3,4})', text)
+        if m:
+            result['account_number'] = m.group(1)
+    if not result['account_number']:
+        m = re.search(r'(\d{3,4}-\d{3,4})', text)
+        if m:
+            result['account_number'] = m.group(1)
 
     m = re.search(r'Branch\s*:?\s*([A-Za-z\s]{3,25}?)(?:\s{3,}|Page|\d{1,2}\s+\w+)', text)
     if m:
         val = m.group(1).strip().strip(':').strip()
         if val and val != ':':
             result['branch'] = val
+    if not result['branch']:
+        m = re.search(r'BRANCH\s+分行\s*\n?\s*([A-Za-z\s]{3,25}?)(?:\s{3,}|總行|\n)', text)
+        if m:
+            val = m.group(1).strip()
+            if val and val != 'HEAD OFFICE':
+                result['branch'] = val
+            else:
+                result['branch'] = val
 
     pages = re.findall(r'Page\s+\d+\s+of\s+(\d+)', text)
     if pages:
@@ -226,41 +289,70 @@ def parse_statement(text):
 
     year = result['statement_year'] or 2025
 
-    activities_match = re.search(r'Account Activities', text)
+    activities_match = re.search(r'Account Activities', text, re.IGNORECASE)
     if not activities_match:
         return result
 
     activities_text = text[activities_match.end():]
 
+    # Try both section patterns
     section_splits = re.split(
         r'\n\s*HSBC Business Direct ((?:HKD|USD|CNY|GBP|EUR) (?:Savings|Current))\s*\n',
         activities_text
     )
 
-    for i in range(1, len(section_splits) - 1, 2):
-        account_type = section_splits[i].strip()
-        section_text = section_splits[i + 1]
-        transactions = parse_account_section(section_text, account_type, year)
-
-        opening = None
-        closing = None
+    if len(section_splits) <= 1:
+        # Fallback: parse as single-section (HSBC HK format with Chinese)
+        atype_match = re.search(r'(?:HKD|USD|CNY|GBP|EUR)\s+(?:STATEMENT\s+)?(?:Savings|Current|SAVINGS)', activities_text, re.IGNORECASE)
+        account_type = atype_match.group(0) if atype_match else 'HKD Savings'
+        transactions = parse_account_section(activities_text, account_type, year)
         if transactions:
+            opening = None
             closing = transactions[-1].get('balance', 0)
             for tx in transactions:
-                if 'B/F' in tx['description']:
+                if 'B/F' in tx['description'].upper():
                     opening = tx['balance']
                     break
             if opening is None and transactions:
                 first = transactions[0]
                 opening = round(first['balance'] - first['deposit_amount'] +
                                 first['withdrawal_amount'], 2)
+            result['accounts'] = [{
+                'account_type': account_type,
+                'opening_balance': opening,
+                'closing_balance': closing,
+                'transactions': transactions,
+            }]
+        result['opening_balance'] = opening
+        result['closing_balance'] = closing
+        if transactions:
+            result['period_start'] = transactions[0].get('transaction_date')
+            result['period_end'] = transactions[-1].get('transaction_date')
+    else:
+        for i in range(1, len(section_splits) - 1, 2):
+            account_type = section_splits[i].strip()
+            section_text = section_splits[i + 1]
+            transactions = parse_account_section(section_text, account_type, year)
 
-        result['accounts'].append({
-            'account_type': account_type,
-            'opening_balance': opening,
-            'closing_balance': closing,
-            'transactions': transactions,
-        })
+            opening = None
+            closing = None
+            if transactions:
+                closing = transactions[-1].get('balance', 0)
+                for tx in transactions:
+                    if 'B/F' in tx['description'].upper():
+                        opening = tx['balance']
+                        break
+                if opening is None and transactions:
+                    first = transactions[0]
+                    opening = round(first['balance'] - first['deposit_amount'] +
+                                    first['withdrawal_amount'], 2)
+
+            result['accounts'].append({
+                'account_type': account_type,
+                'opening_balance': opening,
+                'closing_balance': closing,
+                'transactions': transactions,
+            })
 
     if result['accounts']:
         # Prefer Savings account for summary balances (primary deposit account)

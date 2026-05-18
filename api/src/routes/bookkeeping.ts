@@ -152,6 +152,114 @@ bookkeeping.get('/income-statement', async (c) => {
   return c.json({ revenue: bankRevenue?.amount || 0, expenses: bankExpenses?.amount || 0, net_income: netIncome, source: 'bank', period: { start: startDate, end: endDate } });
 });
 
+// Balance Sheet — Assets, Liabilities, and Equity as of a date
+bookkeeping.get('/balance-sheet', async (c) => {
+  const user = c.get('user');
+  const db = c.env.DB;
+  const asOf = c.req.query('as_of') || new Date().toISOString().split('T')[0];
+
+  // Get all journal lines up to as_of date
+  const rows = await db.prepare(
+    `SELECT jl.account_code, jl.account_name, a.account_type, SUM(jl.debit) as total_debit, SUM(jl.credit) as total_credit
+     FROM journal_lines jl JOIN journal_entries je ON jl.entry_id = je.id
+     LEFT JOIN accounts a ON jl.account_code = a.account_code AND je.user_id = a.user_id
+     WHERE je.user_id = ? AND je.entry_date <= ?
+     GROUP BY jl.account_code, jl.account_name
+     ORDER BY jl.account_code`
+  ).bind(user.id, asOf).all();
+
+  const jeCount = await db.prepare(
+    'SELECT COUNT(*) as cnt FROM journal_entries WHERE user_id = ? AND entry_date <= ?'
+  ).bind(user.id, asOf).first<{ cnt: number }>();
+
+  if ((jeCount?.cnt || 0) > 0 && (rows.results || []).length > 0) {
+    // Calculate balances: Assets/Expenses = debit - credit, Liabilities/Equity/Revenue = credit - debit
+    const calcBalance = (row: any) => {
+      if (row.account_type === 'asset' || row.account_type === 'expense') {
+        return row.total_debit - row.total_credit;
+      }
+      return row.total_credit - row.total_debit;
+    };
+
+    const assets: { code: string; name: string; balance: number }[] = [];
+    const liabilities: { code: string; name: string; balance: number }[] = [];
+    const equity: { code: string; name: string; balance: number }[] = [];
+    let totalRevenue = 0;
+    let totalExpenses = 0;
+
+    for (const row of rows.results as any[]) {
+      const balance = calcBalance(row);
+      const accountType = (row.account_type || '').toLowerCase();
+      if (row.account_code?.startsWith('1') || accountType === 'asset') {
+        assets.push({ code: row.account_code, name: row.account_name, balance });
+      } else if (row.account_code?.startsWith('2') || accountType === 'liability') {
+        liabilities.push({ code: row.account_code, name: row.account_name, balance });
+      } else if (row.account_code?.startsWith('3') || accountType === 'equity') {
+        equity.push({ code: row.account_code, name: row.account_name, balance });
+      } else if (row.account_code?.startsWith('4') || accountType === 'revenue') {
+        totalRevenue += balance;
+      } else if (row.account_code?.startsWith('5') || accountType === 'expense') {
+        totalExpenses += balance;
+      }
+    }
+
+    const retainedEarnings = totalRevenue - totalExpenses;
+    if (Math.abs(retainedEarnings) > 0.01) {
+      equity.push({ code: '3xxx', name: 'Retained Earnings (本年度盈餘)', balance: retainedEarnings });
+    }
+
+    const totalAssets = assets.reduce((s, a) => s + a.balance, 0);
+    const totalLiabilities = liabilities.reduce((s, l) => s + l.balance, 0);
+    const totalEquity = equity.reduce((s, e) => s + e.balance, 0);
+
+    return c.json({
+      assets, liabilities, equity,
+      total_assets: totalAssets,
+      total_liabilities: totalLiabilities,
+      total_equity: totalEquity,
+      retained_earnings: retainedEarnings,
+      total_revenue: totalRevenue,
+      total_expenses: totalExpenses,
+      check: Math.abs(totalAssets - (totalLiabilities + totalEquity)) < 0.01,
+      as_of: asOf,
+      source: 'journal',
+    });
+  }
+
+  // Fallback: estimate from bank transactions
+  const bankDeposits = await db.prepare(
+    `SELECT COALESCE(SUM(deposit_amount), 0) as amount FROM bank_transactions WHERE user_id = ? AND transaction_date <= ?`
+  ).bind(user.id, asOf).first<{ amount: number }>();
+  const bankWithdrawals = await db.prepare(
+    `SELECT COALESCE(SUM(withdrawal_amount), 0) as amount FROM bank_transactions WHERE user_id = ? AND transaction_date <= ?`
+  ).bind(user.id, asOf).first<{ amount: number }>();
+
+  const cashBalance = (bankDeposits?.amount || 0) - (bankWithdrawals?.amount || 0);
+  const netCash = Math.max(cashBalance, 0);
+  const netDeficit = Math.max(-cashBalance, 0);
+
+  return c.json({
+    assets: [
+      { code: '1101', name: 'Cash (銀行現金估算)', balance: netCash },
+    ],
+    liabilities: netDeficit > 0.01 ? [
+      { code: '2102', name: 'Director Loan (估算)', balance: netDeficit },
+    ] : [],
+    equity: [
+      { code: '3xxx', name: 'Retained Earnings (估算)', balance: netCash - netDeficit },
+    ],
+    total_assets: netCash,
+    total_liabilities: netDeficit,
+    total_equity: netCash - netDeficit,
+    retained_earnings: netCash - netDeficit,
+    total_revenue: bankDeposits?.amount || 0,
+    total_expenses: bankWithdrawals?.amount || 0,
+    check: true,
+    as_of: asOf,
+    source: 'bank',
+  });
+});
+
 // General Ledger — grouped by account with running balances
 bookkeeping.get('/ledger', async (c) => {
   const user = c.get('user');

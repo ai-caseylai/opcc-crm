@@ -5,7 +5,7 @@ import { Plus, Calculator, Download } from 'lucide-react';
 
 export default function Bookkeeping() {
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<'entries' | 'accounts' | 'trial' | 'pl' | 'ledger' | 'export'>('entries');
+  const [tab, setTab] = useState<'entries' | 'accounts' | 'trial' | 'pl' | 'bs' | 'ledger' | 'export'>('entries');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [showEntryForm, setShowEntryForm] = useState(false);
@@ -39,6 +39,12 @@ export default function Bookkeeping() {
     enabled: tab === 'pl',
   });
 
+  const { data: balanceSheet } = useQuery({
+    queryKey: ['balance-sheet'],
+    queryFn: () => api('/bookkeeping/balance-sheet'),
+    enabled: tab === 'bs',
+  });
+
   const { data: ledgerData, isLoading: ledgerLoading } = useQuery({
     queryKey: ['ledger', ledgerAccount, startDate, endDate],
     queryFn: () => {
@@ -59,6 +65,7 @@ export default function Bookkeeping() {
       queryClient.invalidateQueries({ queryKey: ['entries'] });
       queryClient.invalidateQueries({ queryKey: ['trial-balance'] });
       queryClient.invalidateQueries({ queryKey: ['income-statement'] });
+      queryClient.invalidateQueries({ queryKey: ['balance-sheet'] });
       alert(`已建立 ${data.created} 筆分錄（共 ${data.total_transactions} 筆銀行交易，跳過 ${data.skipped} 筆已存在）`);
     },
   });
@@ -96,6 +103,7 @@ export default function Bookkeeping() {
     { id: 'ledger', label: '分類帳 Ledger' },
     { id: 'trial', label: '試算 Trial Balance' },
     { id: 'pl', label: '損益 P&L' },
+    { id: 'bs', label: '資產負債 Balance Sheet' },
     { id: 'export', label: '導出 Export' },
   ] as const;
 
@@ -292,6 +300,87 @@ export default function Bookkeeping() {
             <span className={`font-bold ${(incomeStatement.net_income || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
               HKD {incomeStatement.net_income?.toLocaleString()}
             </span>
+          </div>
+        </div>
+      )}
+
+      {/* Balance Sheet Tab */}
+      {tab === 'bs' && balanceSheet && (
+        <div className="space-y-4">
+          <p className="text-xs text-muted-foreground">截至 As of: {balanceSheet.as_of} | 來源 Source: {balanceSheet.source === 'journal' ? '分錄' : '銀行交易估算'}</p>
+
+          {/* Assets */}
+          <div className="bg-card border rounded-xl overflow-hidden">
+            <div className="px-4 py-2.5 bg-blue-50 dark:bg-blue-950/30 border-b font-semibold text-blue-700 dark:text-blue-300">
+              資產 Assets
+            </div>
+            <table className="w-full text-sm">
+              <tbody>
+                {(balanceSheet.assets || []).map((a: any) => (
+                  <tr key={a.code} className="border-b border-muted/30 hover:bg-muted/20">
+                    <td className="py-2 px-4">{a.code} – {a.name}</td>
+                    <td className="py-2 px-4 text-right font-mono">{a.balance?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                  </tr>
+                ))}
+                <tr className="bg-muted/30 font-bold">
+                  <td className="py-2.5 px-4">總資產 Total Assets</td>
+                  <td className="py-2.5 px-4 text-right font-mono">{balanceSheet.total_assets?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {/* Liabilities */}
+          <div className="bg-card border rounded-xl overflow-hidden">
+            <div className="px-4 py-2.5 bg-red-50 dark:bg-red-950/30 border-b font-semibold text-red-700 dark:text-red-300">
+              負債 Liabilities
+            </div>
+            <table className="w-full text-sm">
+              <tbody>
+                {(balanceSheet.liabilities || []).length === 0 ? (
+                  <tr><td className="py-4 px-4 text-center text-muted-foreground">無負債項目</td></tr>
+                ) : (
+                  (balanceSheet.liabilities || []).map((l: any) => (
+                    <tr key={l.code} className="border-b border-muted/30 hover:bg-muted/20">
+                      <td className="py-2 px-4">{l.code} – {l.name}</td>
+                      <td className="py-2 px-4 text-right font-mono">{l.balance?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                    </tr>
+                  ))
+                )}
+                <tr className="bg-muted/30 font-bold">
+                  <td className="py-2.5 px-4">總負債 Total Liabilities</td>
+                  <td className="py-2.5 px-4 text-right font-mono">{balanceSheet.total_liabilities?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {/* Equity */}
+          <div className="bg-card border rounded-xl overflow-hidden">
+            <div className="px-4 py-2.5 bg-green-50 dark:bg-green-950/30 border-b font-semibold text-green-700 dark:text-green-300">
+              股東權益 Equity
+            </div>
+            <table className="w-full text-sm">
+              <tbody>
+                {(balanceSheet.equity || []).map((e: any) => (
+                  <tr key={e.code} className="border-b border-muted/30 hover:bg-muted/20">
+                    <td className="py-2 px-4">{e.code} – {e.name}</td>
+                    <td className="py-2 px-4 text-right font-mono">{e.balance?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                  </tr>
+                ))}
+                <tr className="bg-muted/30 font-bold">
+                  <td className="py-2.5 px-4">總權益 Total Equity</td>
+                  <td className="py-2.5 px-4 text-right font-mono">{balanceSheet.total_equity?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {/* Accounting Equation Check */}
+          <div className={`p-3 rounded-lg text-sm font-medium text-center ${balanceSheet.check ? 'bg-green-50 dark:bg-green-950/30 text-green-700' : 'bg-red-50 dark:bg-red-950/30 text-red-700'}`}>
+            {balanceSheet.check
+              ? `✓ 會計等式平衡：Assets (${balanceSheet.total_assets?.toLocaleString()}) = Liabilities (${balanceSheet.total_liabilities?.toLocaleString()}) + Equity (${balanceSheet.total_equity?.toLocaleString()})`
+              : `⚠ 會計等式不平衡！差異：${Math.abs((balanceSheet.total_assets || 0) - ((balanceSheet.total_liabilities || 0) + (balanceSheet.total_equity || 0))).toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
           </div>
         </div>
       )}

@@ -4,6 +4,262 @@ import { Bindings, Variables } from '../types';
 import { authMiddleware } from '../middleware/auth';
 import { wsBroadcast } from './ws';
 
+// Shared import: file_record → bank_statement + bank_transactions
+async function importStatementFromFile(
+  fileId: string, userId: string, db: D1Database, fileBucket: R2Bucket, ai: any, deepseekKey: string,
+): Promise<{ success: boolean; statement_id?: string; error?: string; transactions_count?: number; parsed_via_ai?: boolean }> {
+  const fileRow = await db.prepare(
+    'SELECT id, r2_key, filename, original_name, file_type, ocr_text, ocr_status, category FROM file_records WHERE id = ? AND user_id = ?'
+  ).bind(fileId, userId).first<{ id: string; r2_key: string; filename: string; original_name: string; file_type: string; ocr_text: string; ocr_status: string; category: string }>();
+  if (!fileRow) return { success: false, error: 'File not found' };
+
+  const existing = await db.prepare('SELECT id FROM bank_statements WHERE user_id = ? AND r2_key = ?').bind(userId, fileRow.r2_key).first();
+  if (existing) return { success: false, error: 'Statement already imported', statement_id: existing.id as string };
+
+  // Get OCR text
+  let ocrText = fileRow.ocr_text || '';
+  if (!ocrText || ocrText.length < 20) {
+    const obj = await fileBucket.get(fileRow.r2_key);
+    if (obj) {
+      const buffer = await obj.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      const base64 = btoa(binary);
+      if (ai) {
+        try {
+          const aiResponse = await ai.run('@cf/unum/uform-gen2-qwen-500m', {
+            prompt: 'Extract all visible text from this bank statement. Include all transaction dates, descriptions, deposit amounts, withdrawal amounts, balances, account numbers, bank name, statement period, opening and closing balances.',
+            image: base64,
+          });
+          ocrText = aiResponse?.description || '';
+        } catch {}
+      }
+      if (ocrText) {
+        await db.prepare("UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ?").bind(ocrText, fileId).run();
+      }
+    }
+  }
+
+  if (!ocrText || ocrText.length < 10) return { success: false, error: 'Could not extract text' };
+
+  // Parse with DeepSeek AI
+  let parsed: any = null;
+  if (deepseekKey) {
+    try {
+      const parseResp = await fetch('https://api.deepseek.com/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${deepseekKey}` },
+        body: JSON.stringify({
+          model: 'deepseek-chat',
+          messages: [{ role: 'user', content: `Parse the following bank statement OCR text into structured JSON. Extract:
+- bank_name: the bank name
+- account_number: account number if visible
+- currency: default "HKD"
+- statement_year and statement_month: from statement period
+- period_start and period_end: dates in YYYY-MM-DD
+- opening_balance and closing_balance: numbers (opening is the starting balance, closing is the ending balance)
+- transactions: array of { transaction_date (YYYY-MM-DD), description, deposit_amount (number, 0 if withdrawal), withdrawal_amount (number, 0 if deposit), balance (number or null) }
+Return ONLY valid JSON, no explanation. If you can't parse something, use null.
+
+OCR TEXT:
+${ocrText.slice(0, 8000)}` }],
+          max_tokens: 4000,
+        }),
+      });
+      const parseData = await parseResp.json() as any;
+      const raw = parseData.choices?.[0]?.message?.content || '';
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+    } catch {}
+  }
+
+  const stmtId = `bs-${uuidv4().slice(0, 8)}`;
+  const bankName = parsed?.bank_name || null;
+  const accountNumber = parsed?.account_number || null;
+  const currency = parsed?.currency || 'HKD';
+  const stmtYear = parsed?.statement_year || null;
+  const stmtMonth = parsed?.statement_month || null;
+  const periodStart = parsed?.period_start || null;
+  const periodEnd = parsed?.period_end || null;
+  const openingBal = parsed?.opening_balance ?? null;
+  const closingBal = parsed?.closing_balance ?? null;
+
+  await db.prepare(
+    `INSERT INTO bank_statements (id, user_id, file_name, file_type, file_data, r2_key,
+     bank_name, account_number, branch, currency, account_type,
+     statement_year, statement_month, period_start, period_end,
+     opening_balance, closing_balance, page_count, ocr_text)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+  ).bind(stmtId, userId, fileRow.original_name || fileRow.filename, fileRow.file_type, '',
+    fileRow.r2_key, bankName, accountNumber, null, currency, null,
+    stmtYear, stmtMonth, periodStart, periodEnd,
+    openingBal, closingBal, null, ocrText
+  ).run();
+
+  let txCount = 0;
+  const transactions = parsed?.transactions || [];
+  for (const tx of transactions) {
+    if (!tx.transaction_date) continue;
+    const txId = `bt-${uuidv4().slice(0, 8)}`;
+    await db.prepare(
+      `INSERT INTO bank_transactions (id, bank_statement_id, user_id, transaction_date, description,
+       deposit_amount, withdrawal_amount, balance, sort_order)
+       VALUES (?,?,?,?,?,?,?,?,?)`
+    ).bind(txId, stmtId, userId, tx.transaction_date, tx.description || '',
+      tx.deposit_amount || 0, tx.withdrawal_amount || 0, tx.balance ?? null, txCount
+    ).run();
+    txCount++;
+  }
+
+  await db.prepare(
+    "UPDATE file_records SET category = 'bank_statement', folder = 'Bank Statements', updated_at = datetime('now') WHERE id = ?"
+  ).bind(fileId).run();
+
+  return {
+    success: true,
+    statement_id: stmtId,
+    transactions_count: txCount,
+    parsed_via_ai: !!parsed,
+  };
+}
+
+// Shared import: file_record → invoice + invoice_items
+async function importInvoiceFromFile(
+  fileId: string, userId: string, db: D1Database, fileBucket: R2Bucket, ai: any, deepseekKey: string,
+): Promise<{ success: boolean; invoice_id?: string; error?: string; items_count?: number }> {
+  const fileRow = await db.prepare(
+    'SELECT id, r2_key, filename, original_name, file_type, ocr_text, ocr_status, category, direction FROM file_records WHERE id = ? AND user_id = ?'
+  ).bind(fileId, userId).first<{ id: string; r2_key: string; filename: string; original_name: string; file_type: string; ocr_text: string; ocr_status: string; category: string; direction: string }>();
+  if (!fileRow) return { success: false, error: 'File not found' };
+
+  let ocrText = fileRow.ocr_text || '';
+  if (!ocrText || ocrText.length < 20) {
+    const obj = await fileBucket.get(fileRow.r2_key);
+    if (obj) {
+      const buffer = await obj.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      const base64 = btoa(binary);
+      if (ai) {
+        try {
+          const aiResponse = await ai.run('@cf/unum/uform-gen2-qwen-500m', {
+            prompt: 'Extract all visible text from this invoice. Include invoice number, dates, company names, amounts, line items with descriptions and prices.',
+            image: base64,
+          });
+          ocrText = aiResponse?.description || '';
+        } catch {}
+      }
+      if (ocrText) {
+        await db.prepare("UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ?").bind(ocrText, fileId).run();
+      }
+    }
+  }
+
+  if (!ocrText || ocrText.length < 10) return { success: false, error: 'No OCR text available' };
+
+  // Parse with DeepSeek AI
+  let parsed: any = null;
+  if (deepseekKey) {
+    try {
+      const resp = await fetch('https://api.deepseek.com/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${deepseekKey}` },
+        body: JSON.stringify({
+          model: 'deepseek-chat',
+          messages: [{ role: 'user', content: `Parse this invoice OCR text into structured JSON. Extract:
+- invoice_number: the invoice number/ID
+- customer_name: the customer/company being billed
+- customer_email: optional customer email
+- issue_date: YYYY-MM-DD
+- due_date: YYYY-MM-DD if visible
+- currency: default "HKD"
+- items: array of { description, quantity (number, default 1), unit_price (number), amount (number) }
+- total: the total amount
+- notes: any additional notes
+
+Return ONLY valid JSON, no explanation. Use null for missing values.
+
+OCR TEXT:
+${ocrText.slice(0, 8000)}` }],
+          max_tokens: 4000,
+        }),
+      });
+      const data = await resp.json() as any;
+      const raw = data.choices?.[0]?.message?.content || '';
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+    } catch {}
+  }
+
+  // Match or create customer
+  let customerId: string | null = null;
+  const customerName = parsed?.customer_name || null;
+  const customerEmail = parsed?.customer_email || null;
+  if (customerEmail) {
+    const c = await db.prepare('SELECT id FROM customers WHERE user_id = ? AND email = ?').bind(userId, customerEmail).first<{ id: string }>();
+    if (c) customerId = c.id;
+  }
+  if (!customerId && customerName) {
+    const c = await db.prepare('SELECT id FROM customers WHERE user_id = ? AND name LIKE ?').bind(userId, `%${customerName}%`).first<{ id: string }>();
+    if (c) customerId = c.id;
+  }
+  if (!customerId && customerName) {
+    customerId = `c-${uuidv4().slice(0, 8)}`;
+    await db.prepare('INSERT INTO customers (id, user_id, name, email, is_active) VALUES (?, ?, ?, ?, 1)')
+      .bind(customerId, userId, customerName, customerEmail || null).run();
+  }
+  if (!customerId) return { success: false, error: 'Could not identify customer from invoice' };
+
+  // Calculate totals
+  const items: any[] = (parsed?.items || []).map((it: any, i: number) => ({
+    description: it.description || 'Item',
+    quantity: it.quantity || 1,
+    unit_price: it.unit_price || 0,
+    amount: it.amount || ((it.quantity || 1) * (it.unit_price || 0)),
+    sort_order: i,
+  }));
+  if (items.length === 0) {
+    // Single-item fallback from total
+    const total = parsed?.total || parseFloat(ocrText.match(/(?:total|合計|金額)[^\d]*([\d,]+\.?\d*)/i)?.[1]?.replace(/,/g, '') || '0') || 0;
+    if (total > 0) {
+      items.push({ description: 'Invoice item', quantity: 1, unit_price: total, amount: total, sort_order: 0 });
+    }
+  }
+  if (items.length === 0) return { success: false, error: 'No line items found in invoice' };
+
+  const subtotal = items.reduce((s: number, it: any) => s + it.amount, 0);
+  const total = parsed?.total || subtotal;
+  const invNumber = parsed?.invoice_number || `INV-${Date.now().toString(36).toUpperCase()}`;
+  const issueDate = parsed?.issue_date || new Date().toISOString().split('T')[0];
+  const dueDate = parsed?.due_date || new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
+  const direction = fileRow.direction || (parsed?.customer_name ? 'outgoing' : 'incoming');
+
+  // Check for duplicate invoice number
+  const existing = await db.prepare('SELECT id FROM invoices WHERE user_id = ? AND invoice_number = ?').bind(userId, invNumber).first();
+  if (existing) return { success: false, error: `Invoice ${invNumber} already exists`, invoice_id: existing.id };
+
+  const invId = `i-${uuidv4().slice(0, 8)}`;
+  await db.prepare(
+    `INSERT INTO invoices (id, user_id, invoice_number, customer_id, status, issue_date, due_date, subtotal, total, currency, notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(invId, userId, invNumber, customerId, 'draft', issueDate, dueDate, subtotal, total, parsed?.currency || 'HKD', parsed?.notes || null).run();
+
+  for (const item of items) {
+    await db.prepare(
+      'INSERT INTO invoice_items (id, invoice_id, description, quantity, unit_price, amount, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).bind(`ii-${uuidv4().slice(0, 8)}`, invId, item.description, item.quantity, item.unit_price, item.amount, item.sort_order).run();
+  }
+
+  // Update file record
+  await db.prepare(
+    "UPDATE file_records SET category = 'invoice', direction = ?, payment_status = 'unmatched', amount = ?, updated_at = datetime('now') WHERE id = ?"
+  ).bind(direction, total, fileId).run();
+
+  return { success: true, invoice_id: invId, items_count: items.length };
+}
+
 // Extract the largest dollar amount from OCR text
 function extractAmount(ocrText: string): number | null {
   const amounts: number[] = [];
@@ -202,6 +458,20 @@ files.post('/upload', async (c) => {
     wsBroadcast(user.id, { type: 'ocr_request', file_id: id, filename: displayName, file_type: file_type || 'application/octet-stream', folder: folder, category: classification.category });
   } catch { /* WebSocket not available */ }
 
+  // Auto-import bank statements
+  if (classification.category === 'bank_statement' && ocrResult.status === 'completed') {
+    c.executionCtx.waitUntil(
+      importStatementFromFile(id, user.id, c.env.DB, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY)
+    );
+  }
+
+  // Auto-import invoices
+  if (classification.category === 'invoice' && ocrResult.status === 'completed') {
+    c.executionCtx.waitUntil(
+      importInvoiceFromFile(id, user.id, c.env.DB, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY)
+    );
+  }
+
   return c.json(row, 201);
 });
 
@@ -249,6 +519,20 @@ files.post('/upload-batch', async (c) => {
       r2Key, batchDesc || '', ocrResult.text, ocrResult.status, classification.category).run();
 
     results.push({ id, filename: displayName, folder, ocr_status: ocrResult.status, category: classification.category });
+
+    // Auto-import bank statements
+    if (classification.category === 'bank_statement' && ocrResult.status === 'completed') {
+      c.executionCtx.waitUntil(
+        importStatementFromFile(id, user.id, c.env.DB, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY)
+      );
+    }
+
+    // Auto-import invoices
+    if (classification.category === 'invoice' && ocrResult.status === 'completed') {
+      c.executionCtx.waitUntil(
+        importInvoiceFromFile(id, user.id, c.env.DB, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY)
+      );
+    }
   }
 
   return c.json({ uploaded: results.length, files: results }, 201);
@@ -446,7 +730,48 @@ files.post('/:id/ocr-result', async (c) => {
 
   await db.prepare(`UPDATE file_records SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).bind(...params).run();
   const row = await db.prepare('SELECT id, filename, ocr_status, ocr_text, category, folder FROM file_records WHERE id = ?').bind(id).first();
+
+  // Auto-import bank statements / invoices when Docker worker provides good OCR
+  const updatedCategory = category || (row as any)?.category || '';
+  const updatedOcrStatus = ocr_status || (row as any)?.ocr_status || '';
+  if ((updatedCategory === 'bank_statement' || updatedCategory === 'bank') && updatedOcrStatus === 'completed') {
+    c.executionCtx.waitUntil(
+      importStatementFromFile(id, user.id, db, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY)
+    );
+  }
+  if (updatedCategory === 'invoice' && updatedOcrStatus === 'completed') {
+    c.executionCtx.waitUntil(
+      importInvoiceFromFile(id, user.id, db, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY)
+    );
+  }
+
   return c.json(row);
+});
+
+// Import a file as a bank statement (OCR + AI parse → bank_statement + bank_transactions)
+files.post('/:id/import-statement', async (c) => {
+  const user = c.get('user');
+  const result = await importStatementFromFile(
+    c.req.param('id'), user.id, c.env.DB, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY
+  );
+  if (!result.success) {
+    const status = result.error === 'File not found' ? 404 : result.error === 'Statement already imported' ? 409 : 422;
+    return c.json({ error: result.error, statement_id: result.statement_id }, status as any);
+  }
+  return c.json(result, 201);
+});
+
+// Import a file as an invoice (OCR + AI parse → invoice + invoice_items)
+files.post('/:id/import-invoice', async (c) => {
+  const user = c.get('user');
+  const result = await importInvoiceFromFile(
+    c.req.param('id'), user.id, c.env.DB, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY
+  );
+  if (!result.success) {
+    const status = result.error === 'File not found' ? 404 : result.error?.includes('already exists') ? 409 : 422;
+    return c.json({ error: result.error, invoice_id: result.invoice_id }, status as any);
+  }
+  return c.json(result, 201);
 });
 
 // ── Auto-match invoice files with bank transactions ──
