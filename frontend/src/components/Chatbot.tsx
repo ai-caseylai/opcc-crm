@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { api } from '../lib/api';
+import { api, streamChat } from '../lib/api';
 import { MessageCircle, X, Send, Paperclip, Plus, Trash2, History } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -113,19 +113,43 @@ export default function Chatbot({ onClose, className }: ChatbotPanelProps) {
     setAttachedFile(null);
     setBusy(true);
 
-    try {
-      const body: any = { message: content, history: messages, session_id: sessionId || undefined };
-      if (file) body.file = { name: file.name, data: file.data, type: file.type };
-      const data = await api('/chat', { method: 'POST', body });
-      setMessages(prev => [...prev, { role: 'assistant', content: data.reply }]);
-      if (data.session_id && !sessionId) {
-        setSessionId(data.session_id);
-      }
-    } catch {
-      setMessages(prev => [...prev, { role: 'assistant', content: 'Sorry, something went wrong.' }]);
-    } finally {
-      setBusy(false);
-    }
+    // Add empty assistant message for streaming
+    setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
+
+    const body: any = { message: content, history: messages, session_id: sessionId || undefined };
+    if (file) body.file = { name: file.name, data: file.data, type: file.type };
+
+    streamChat(
+      body,
+      // onChunk: append text as it arrives
+      (chunk) => {
+        setMessages(prev => {
+          const updated = [...prev];
+          const last = updated[updated.length - 1];
+          if (last && last.role === 'assistant') {
+            last.content += chunk;
+          }
+          return updated;
+        });
+      },
+      // onDone
+      (newSid) => {
+        if (newSid && !sessionId) setSessionId(newSid);
+        setBusy(false);
+      },
+      // onError
+      (err) => {
+        setMessages(prev => {
+          const updated = [...prev];
+          const last = updated[updated.length - 1];
+          if (last && last.role === 'assistant' && !last.content) {
+            last.content = `❌ ${err}`;
+          }
+          return updated;
+        });
+        setBusy(false);
+      },
+    );
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {

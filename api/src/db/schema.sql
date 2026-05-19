@@ -588,3 +588,53 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_user ON chat_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_updated ON chat_sessions(user_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id);
+
+-- ── Accounting Firm Mode ──
+
+-- Firms: top-level accounting firm organization
+CREATE TABLE IF NOT EXISTS firms (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  owner_user_id TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Firm members: staff who work at a firm
+CREATE TABLE IF NOT EXISTS firm_members (
+  id TEXT PRIMARY KEY,
+  firm_id TEXT NOT NULL REFERENCES firms(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  role TEXT NOT NULL DEFAULT 'staff',
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(firm_id, user_id)
+);
+
+-- Firm clients: companies managed by the firm
+CREATE TABLE IF NOT EXISTS firm_clients (
+  id TEXT PRIMARY KEY,
+  firm_id TEXT NOT NULL REFERENCES firms(id) ON DELETE CASCADE,
+  client_user_id TEXT NOT NULL REFERENCES users(id),
+  display_name TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(firm_id, client_user_id)
+);
+
+-- Staff-to-client assignments (M:N)
+CREATE TABLE IF NOT EXISTS firm_client_assignments (
+  id TEXT PRIMARY KEY,
+  firm_member_id TEXT NOT NULL REFERENCES firm_members(id) ON DELETE CASCADE,
+  firm_client_id TEXT NOT NULL REFERENCES firm_clients(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(firm_member_id, firm_client_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_firm_members_user ON firm_members(user_id);
+CREATE INDEX IF NOT EXISTS idx_firm_members_firm ON firm_members(firm_id);
+CREATE INDEX IF NOT EXISTS idx_firm_clients_firm ON firm_clients(firm_id);
+CREATE INDEX IF NOT EXISTS idx_firm_clients_user ON firm_clients(client_user_id);
+CREATE INDEX IF NOT EXISTS idx_firm_assignments_member ON firm_client_assignments(firm_member_id);
+CREATE INDEX IF NOT EXISTS idx_firm_assignments_client ON firm_client_assignments(firm_client_id);
+ALTER TABLE bank_transactions ADD COLUMN account_code TEXT;

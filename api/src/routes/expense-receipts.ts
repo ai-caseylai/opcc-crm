@@ -49,6 +49,7 @@ expenses.use('*', authMiddleware);
 // ── List ──
 expenses.get('/', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const category = c.req.query('category') || '';
   const year = c.req.query('year') || '';
   let q = 'SELECT id, file_name, vendor_name, amount, expense_date, category, description, payment_method, ocr_text, status, created_at FROM expense_receipts WHERE user_id = ?';
@@ -63,8 +64,9 @@ expenses.get('/', async (c) => {
 // ── Get single ──
 expenses.get('/:id', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const row = await c.env.DB.prepare('SELECT * FROM expense_receipts WHERE id = ? AND user_id = ?')
-    .bind(c.req.param('id'), user.id).first();
+    .bind(c.req.param('id'), tenantId).first();
   if (!row) return c.json({ error: 'Not found' }, 404);
   return c.json(row);
 });
@@ -72,6 +74,7 @@ expenses.get('/:id', async (c) => {
 // ── Upload ──
 expenses.post('/upload', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const body = await c.req.json();
   const { file_name, file_type, file_data, vendor_name, amount, expense_date, category, description, payment_method } = body;
@@ -124,11 +127,12 @@ expenses.post('/upload', async (c) => {
 // ── Delete ──
 expenses.delete('/:id', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const existing = await c.env.DB.prepare('SELECT id FROM expense_receipts WHERE id = ? AND user_id = ?')
-    .bind(c.req.param('id'), user.id).first();
+    .bind(c.req.param('id'), tenantId).first();
   if (!existing) return c.json({ error: 'Not found' }, 404);
   await c.env.DB.prepare('DELETE FROM expense_receipts WHERE id = ? AND user_id = ?')
-    .bind(c.req.param('id'), user.id).run();
+    .bind(c.req.param('id'), tenantId).run();
   return c.json({ success: true });
 });
 

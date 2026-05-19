@@ -60,6 +60,18 @@ auth.post('/login', zValidator('json', loginSchema), async (c) => {
     id: row.id, email: row.email, name: row.name, role: row.role,
     company_name: row.company_name || undefined,
   };
+
+  // Check firm membership
+  const firmMember = await db.prepare(
+    `SELECT fm.firm_id, fm.role as firm_role, f.name as firm_name
+     FROM firm_members fm JOIN firms f ON f.id = fm.firm_id
+     WHERE fm.user_id = ? AND fm.is_active = 1`
+  ).bind(row.id).first<{ firm_id: string; firm_role: string; firm_name: string }>();
+  if (firmMember) {
+    user.firm_id = firmMember.firm_id;
+    user.firm_role = firmMember.firm_role;
+  }
+
   const token = sign(user, jwtSecret, { expiresIn: '24h' });
   return c.json({ user, token });
 });

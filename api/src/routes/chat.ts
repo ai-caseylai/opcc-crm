@@ -10,13 +10,16 @@ const SYSTEM_PROMPT = `You are the OPCC CRM AI assistant with access to the user
 
 Rules:
 - ALWAYS call functions to get real numbers — never guess or provide example data
+- NEVER fabricate or make up data. Only present data that was ACTUALLY returned by your function calls.
+- When a function returns data, present it EXACTLY as returned. Do not invent fake names, amounts, or transactions.
+- If you cannot access the data, say so honestly. Do not create plausible-looking fake data.
 - If a user asks "how many", call get_counts
 - If a user asks "list" or "search", call the appropriate function
 - If a user asks to create something, call the appropriate create function
 - Reply in the SAME language as the user (繁體中文, 简体中文, or English)
 - Be concise and direct
 - When presenting numbers, format them clearly
-- When presenting lists, show key fields in a readable format
+- When presenting lists, show the REAL data from your function calls — do not summarize into fake examples
 
 CRITICAL DELETE RULES:
 - NEVER call delete_invoice, delete_quotation, delete_purchase_order, or delete_service_order immediately
@@ -41,7 +44,14 @@ DYNAMIC QUERY RULES:
 - Example: query_database with sql="SELECT * FROM invoices WHERE user_id = ? AND status = ? LIMIT 10" and params=["user_id", "paid"]
 - NEVER use query_database for INSERT, UPDATE, or DELETE — only SELECT
 - For any write operations (create, update, delete) on customers, suppliers, products, invoices, etc., ALWAYS ask user to confirm first
-- All operations are logged automatically.`;
+- All operations are logged automatically.
+
+BANK STATEMENT RULES:
+- Use get_bank_statement_raw to list transactions. It returns a "display" field — present that text VERBATIM in your reply. Do not modify it at all.
+- Use get_bank_statement_summary for a quick overview (opening/closing, totals, top 10 transactions).
+- Use list_bank_statements to see all available statements.
+- Use ocr_bank_statement ONLY when the user explicitly asks to re-OCR the original PDF.
+- When the user asks to "list transactions" or "show statement", use get_bank_statement_raw — NEVER get_bank_statement or ocr_bank_statement.`;
 
 const TOOLS: any[] = [
   // ── Dashboard / Summary ──
@@ -137,8 +147,11 @@ const TOOLS: any[] = [
 
   // ── Bank Statements ──
   { type: 'function', function: { name: 'list_bank_statements', description: 'List bank statements with optional year filter', parameters: { type: 'object', properties: { year: { type: 'number', description: 'Filter by year (e.g. 2025)' }, limit: { type: 'number' } }, required: [] } } },
-  { type: 'function', function: { name: 'get_bank_statement', description: 'Get a bank statement with all its transactions', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Bank statement ID' } }, required: ['id'] } } },
+  { type: 'function', function: { name: 'get_bank_statement', description: 'Get a bank statement with its REAL transactions. The data returned is ACTUAL bank data — present it EXACTLY as returned. Do NOT invent or modify any transaction details.', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Bank statement ID' } }, required: ['id'] } } },
+  { type: 'function', function: { name: 'get_bank_statement_raw', description: 'Get pre-formatted bank statement listing ready for display. The returned "display" field is a COMPLETE formatted transaction list — copy it VERBATIM into your reply. Do NOT modify, summarize, or invent anything.', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Bank statement ID' } }, required: ['id'] } } },
   { type: 'function', function: { name: 'delete_bank_statement', description: 'Delete a bank statement and its transactions', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Bank statement ID' } }, required: ['id'] } } },
+  { type: 'function', function: { name: 'get_bank_statement_summary', description: 'Get a compact summary of a bank statement: opening/closing balances, deposit/withdrawal totals, and key transactions (top 10 by amount). Use this to quickly overview a statement without listing all transactions.', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Bank statement ID' } }, required: ['id'] } } },
+  { type: 'function', function: { name: 'ocr_bank_statement', description: 'Run GLM-OCR AI vision on a bank statement PDF to extract detailed transaction text. Use ONLY when user explicitly asks to verify or re-OCR the original PDF. This is SLOW (30+ seconds).', parameters: { type: 'object', properties: { statement_id: { type: 'string', description: 'Bank statement ID (e.g. bs-xxxxxxxx)' } }, required: ['statement_id'] } } },
 
   // ── Expense Receipts ──
   { type: 'function', function: { name: 'list_expense_receipts', description: 'List expense receipts with optional category and year filter', parameters: { type: 'object', properties: { category: { type: 'string', description: 'Filter by category' }, year: { type: 'number', description: 'Filter by year' }, limit: { type: 'number' } }, required: [] } } },
@@ -331,7 +344,7 @@ async function executeTool(name: string, db: D1Database, userId: string, args: a
         const assets: any[] = [], liabilities: any[] = [], equity: any[] = [];
         let rev = 0, exp = 0;
         for (const r of rows.results as any[]) {
-          const bal = (r.account_type === 'asset' || r.account_type === 'expense') ? (r.total_debit - r.total_credit) : (r.total_credit - r.total_debit);
+          const bal = (r.account_type === 'asset' || r.account_type === 'expense' || (r.account_code||'').startsWith('1') || (r.account_code||'').startsWith('5')) ? (r.total_debit - r.total_credit) : (r.total_credit - r.total_debit);
           if (r.account_code?.startsWith('1') || r.account_type === 'asset') assets.push({ code: r.account_code, name: r.account_name, balance: bal });
           else if (r.account_code?.startsWith('2') || r.account_type === 'liability') liabilities.push({ code: r.account_code, name: r.account_name, balance: bal });
           else if (r.account_code?.startsWith('3') || r.account_type === 'equity') equity.push({ code: r.account_code, name: r.account_name, balance: bal });
@@ -836,13 +849,117 @@ async function executeTool(name: string, db: D1Database, userId: string, args: a
     case 'get_bank_statement': {
       const bs = await db.prepare('SELECT * FROM bank_statements WHERE id = ? AND user_id = ?').bind(args.id, userId).first();
       if (!bs) return JSON.stringify({ error: 'Bank statement not found' });
-      const txns = await db.prepare('SELECT id, transaction_date, description, deposit_amount, withdrawal_amount, balance, reference, match_status, invoice_id FROM bank_transactions WHERE bank_statement_id = ? ORDER BY sort_order').bind(args.id).all();
-      return JSON.stringify({ ...bs, transactions: txns.results });
+      const txns = await db.prepare('SELECT transaction_date, description, deposit_amount, withdrawal_amount FROM bank_transactions WHERE bank_statement_id = ? AND description NOT LIKE ? ORDER BY sort_order LIMIT 50').bind(args.id, '%TRANSACTION SUMMARY%').all();
+      const lines = txns.results.map((t: any) =>
+        `${t.transaction_date} | ${(t.deposit_amount||0) > 0 ? '+' + t.deposit_amount : ''}${(t.withdrawal_amount||0) > 0 ? '-' + t.withdrawal_amount : ''} | ${(t.description||'').slice(0,60)}`
+      ).join('\n');
+      return JSON.stringify({
+        statement: `${bs.file_name} (${bs.bank_name} ${bs.account_number})`,
+        period: `${bs.period_start || ''} ~ ${bs.period_end || ''}`,
+        opening: bs.opening_balance,
+        closing: bs.closing_balance,
+        transactions: lines,
+        count: txns.results.length,
+      });
+    }
+    case 'get_bank_statement_raw': {
+      const bs = await db.prepare('SELECT id, file_name, bank_name, account_number, currency, statement_year, statement_month, period_start, period_end, opening_balance, closing_balance FROM bank_statements WHERE id = ? AND user_id = ?').bind(args.id, userId).first<any>();
+      if (!bs) return JSON.stringify({ error: 'Bank statement not found' });
+      const txns = await db.prepare(
+        "SELECT transaction_date, description, deposit_amount, withdrawal_amount, balance FROM bank_transactions WHERE bank_statement_id = ? AND description NOT LIKE '%TRANSACTION SUMMARY%' AND description NOT LIKE '%CARRIED FORWARD%' ORDER BY sort_order LIMIT 100"
+      ).bind(args.id).all();
+
+      let display = `## ${bs.file_name} — ${bs.bank_name} ${bs.account_number}\n`;
+      display += `**${bs.statement_year}-${String(bs.statement_month).padStart(2,'0')}** | Opening: ${Number(bs.opening_balance).toLocaleString()} | Closing: ${Number(bs.closing_balance).toLocaleString()}\n\n`;
+      display += `| Date | Description | Deposit | Withdrawal | Balance |\n`;
+      display += `|------|-------------|---------|------------|--------|\n`;
+
+      for (const tx of txns.results as any[]) {
+        const dep = tx.deposit_amount > 0 ? Number(tx.deposit_amount).toLocaleString() : '';
+        const wit = tx.withdrawal_amount > 0 ? Number(tx.withdrawal_amount).toLocaleString() : '';
+        const bal = tx.balance != null ? Number(tx.balance).toLocaleString() : '';
+        const desc = (tx.description || '').replace(/\|/g, '/').slice(0, 60);
+        display += `| ${tx.transaction_date} | ${desc} | ${dep} | ${wit} | ${bal} |\n`;
+      }
+
+      display += `\n**Total: ${txns.results.length} transactions**`;
+      return JSON.stringify({ display, count: txns.results.length });
+    }
+    case 'get_bank_statement_summary': {
+      const bs = await db.prepare('SELECT id, file_name, bank_name, account_number, currency, statement_year, statement_month, period_start, period_end, opening_balance, closing_balance FROM bank_statements WHERE id = ? AND user_id = ?').bind(args.id, userId).first();
+      if (!bs) return JSON.stringify({ error: 'Bank statement not found' });
+      const totals = await db.prepare(
+        "SELECT COUNT(*) as tx_count, COALESCE(SUM(deposit_amount),0) as total_dep, COALESCE(SUM(withdrawal_amount),0) as total_wit FROM bank_transactions WHERE bank_statement_id = ? AND description NOT LIKE '%TRANSACTION SUMMARY%' AND description NOT LIKE '%CARRIED FORWARD%'"
+      ).bind(args.id).first();
+      const topTx = await db.prepare(
+        "SELECT transaction_date, description, deposit_amount, withdrawal_amount FROM bank_transactions WHERE bank_statement_id = ? ORDER BY (deposit_amount + withdrawal_amount) DESC LIMIT 10"
+      ).bind(args.id).all();
+      return JSON.stringify({ ...bs, ...totals, top_transactions: topTx.results });
     }
     case 'delete_bank_statement': {
       await db.prepare('DELETE FROM bank_transactions WHERE bank_statement_id = ? AND user_id = ?').bind(args.id, userId).run();
       await db.prepare('DELETE FROM bank_statements WHERE id = ? AND user_id = ?').bind(args.id, userId).run();
       return JSON.stringify({ success: true, deleted: args.id });
+    }
+    case 'ocr_bank_statement': {
+      const stmt = await db.prepare('SELECT id, r2_key, file_name, file_type, ocr_text FROM bank_statements WHERE id = ? AND user_id = ?').bind(args.statement_id, userId).first<{ id: string; r2_key: string; file_name: string; file_type: string; ocr_text: string }>();
+      if (!stmt) return JSON.stringify({ error: 'Bank statement not found' });
+      if (!env?.FILE_BUCKET) return JSON.stringify({ error: 'Storage not available' });
+
+      try {
+        const obj = await env.FILE_BUCKET.get(stmt.r2_key);
+        if (!obj) return JSON.stringify({ error: 'PDF file not found in storage' });
+
+        const buffer = await obj.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        const base64 = btoa(binary);
+
+        const glmResp = await fetch('https://api.z.ai/api/paas/v4/layout_parsing', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer bc604bbc774c49528e8615564aa51ea3.f0Hzibmlxdd5bKGZ',
+          },
+          body: JSON.stringify({ model: 'glm-ocr', file: `data:${stmt.file_type || 'application/pdf'};base64,${base64}` }),
+        });
+
+        if (!glmResp.ok) {
+          const errText = await glmResp.text();
+          return JSON.stringify({ error: 'GLM-OCR API failed', status: glmResp.status, detail: errText.slice(0, 500) });
+        }
+
+        const glmData = await glmResp.json() as any;
+
+        // Save FULL GLM-OCR result to bank_statements
+        const fullResult = JSON.stringify(glmData);
+        await db.prepare("UPDATE bank_statements SET ocr_text = ?, updated_at = datetime('now') WHERE id = ?")
+          .bind(fullResult.slice(0, 50000), stmt.id).run();
+
+        // Also extract text from layout_details for readability
+        const layouts = glmData?.layout_details || [];
+        let readableText = '';
+        for (const pageIdx in layouts) {
+          readableText += `\n=== Page ${parseInt(pageIdx)+1} ===\n`;
+          for (const item of layouts[pageIdx]) {
+            if (item.content) {
+              const label = item.label || 'text';
+              readableText += `[${label}] ${item.content}\n`;
+            }
+          }
+        }
+
+        return JSON.stringify({
+          success: true,
+          statement_id: stmt.id,
+          file_name: stmt.file_name,
+          pages: glmData?.data_info?.num_pages || 0,
+          full_text: readableText.slice(0, 20000),
+        });
+      } catch (e: any) {
+        return JSON.stringify({ error: 'OCR failed: ' + (e.message || 'unknown') });
+      }
     }
 
     // ── Expense Receipts ──
@@ -1192,10 +1309,10 @@ ${ocrText.slice(0, 8000)}` }],
 
 async function callDeepSeek(apiKey: string, messages: any[], tools?: any[]): Promise<any> {
   const body: any = {
-    model: 'deepseek-chat',
+    model: 'deepseek-v4-pro',
     messages,
-    max_tokens: 800,
-    temperature: 0.3,
+    max_tokens: 4000,
+    temperature: 0.1,
   };
   if (tools && tools.length > 0) body.tools = tools;
   if (tools && tools.length > 0) body.tool_choice = 'auto';
@@ -1211,6 +1328,53 @@ async function callDeepSeek(apiKey: string, messages: any[], tools?: any[]): Pro
     throw new Error(`DeepSeek API error: ${resp.status} ${err}`);
   }
   return resp.json();
+}
+
+// Streaming version — returns a ReadableStream of SSE chunks for the final text response
+async function callDeepSeekStream(apiKey: string, messages: any[]): Promise<ReadableStream> {
+  const body = JSON.stringify({
+    model: 'deepseek-v4-pro',
+    messages,
+    max_tokens: 4000,
+    temperature: 0.1,
+    stream: true,
+  });
+
+  const resp = await fetch('https://api.deepseek.com/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+    body,
+  });
+
+  if (!resp.ok) {
+    const err = await resp.text();
+    throw new Error(`DeepSeek API error: ${resp.status} ${err}`);
+  }
+
+  // Transform DeepSeek SSE → simple text SSE
+  const reader = resp.body!.getReader();
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+
+  return new ReadableStream({
+    async pull(controller) {
+      const { done, value } = await reader.read();
+      if (done) { controller.close(); return; }
+      const text = decoder.decode(value, { stream: true });
+      const lines = text.split('\n');
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6);
+          if (data === '[DONE]') { controller.close(); return; }
+          try {
+            const parsed = JSON.parse(data);
+            const content = parsed.choices?.[0]?.delta?.content;
+            if (content) controller.enqueue(encoder.encode(content));
+          } catch {}
+        }
+      }
+    },
+  });
 }
 
 // ── Chat Sessions ──
@@ -1264,8 +1428,9 @@ chat.delete('/messages/:id', async (c) => {
 
 chat.post('/', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const body = await c.req.json();
-  const { message, history, file, session_id } = body;
+  const { message, history, file, session_id, stream: doStream } = body;
 
   if (!message && !file) return c.json({ reply: 'Message required' });
 
@@ -1348,14 +1513,25 @@ chat.post('/', async (c) => {
         let fnArgs: any = {};
         try { fnArgs = JSON.parse(tc.function?.arguments || '{}'); } catch {}
         const startTime = Date.now();
-        const result = fnName ? await executeTool(fnName, db, user.id, fnArgs, c.env) : '{}';
+        const result = fnName ? await executeTool(fnName, db, tenantId, fnArgs, c.env) : '{}';
         const elapsed = Date.now() - startTime;
         toolLog.push(`[${fnName}] ${elapsed}ms args=${JSON.stringify(fnArgs).slice(0, 200)} result=${String(result).slice(0, 100)}`);
         messages.push({ role: 'tool', tool_call_id: tc.id, content: result });
       }
 
-      const response2 = await callDeepSeek(apiKey, messages);
-      reply = response2.choices?.[0]?.message?.content || 'Sorry, I could not process that.';
+      // Check if any result is a raw display (bypass LLM to prevent hallucination)
+      const rawDisplay = messages.find((m: any) => {
+        if (m.role !== 'tool') return false;
+        try { const p = JSON.parse(m.content); return !!p.display; } catch { return false; }
+      });
+
+      if (rawDisplay) {
+        const parsed = JSON.parse(rawDisplay.content);
+        reply = parsed.display;
+      } else {
+        const response2 = await callDeepSeek(apiKey, messages);
+        reply = response2.choices?.[0]?.message?.content || 'Sorry, I could not process that.';
+      }
 
       // Log tool operations to database
       try {
@@ -1393,9 +1569,10 @@ chat.post('/', async (c) => {
           create_transaction: 'create_bookkeeping_transaction',
           create_journal_entry: 'create_bookkeeping_transaction',
           remove_journal_entry: 'delete_journal_entry',
-          get_bank_statement_transactions: 'get_bank_statement',
-          get_bank_transactions: 'get_bank_statement',
-          view_bank_statement: 'get_bank_statement',
+          get_bank_statement_transactions: 'get_bank_statement_raw',
+          get_bank_transactions: 'get_bank_statement_raw',
+          view_bank_statement: 'get_bank_statement_raw',
+          show_bank_statement: 'get_bank_statement_raw',
           list_bank_transactions: 'list_bank_statements',
           get_expenses: 'list_expense_receipts',
           list_expenses: 'list_expense_receipts',
@@ -1416,8 +1593,10 @@ chat.post('/', async (c) => {
 
         const paramMap: Record<string, Record<string, string>> = {
           get_bank_statement: { statement_id: 'id' },
+          get_bank_statement_raw: { statement_id: 'id' },
           get_bank_statement_transactions: { statement_id: 'id' },
           get_bank_transactions: { statement_id: 'id' },
+          get_bank_statement_summary: { statement_id: 'id' },
           get_bookkeeping_transactions: { year: '__skip__', month: '__skip__', start_date: 'start_date', end_date: 'end_date' },
           update_journal_entry: { entry_id: 'id', lines: 'entries', journal_id: 'id' },
           delete_journal_entry: { entry_id: 'id', journal_id: 'id' },
@@ -1460,7 +1639,7 @@ chat.post('/', async (c) => {
               log.push(`  Converted year+month → start_date=${fnArgs.start_date}, end_date=${fnArgs.end_date}`);
             }
             try {
-              const result = await executeTool(fnName, db, user.id, fnArgs, c.env);
+              const result = await executeTool(fnName, db, tenantId, fnArgs, c.env);
               results.push(`${fnName}: ${result}`);
               log.push(`  Result: OK`);
             } catch (e: any) {
@@ -1478,8 +1657,23 @@ chat.post('/', async (c) => {
         let allErrors = [...phase1.errors];
         const fullLog = [`=== DSML Auto-Repair Log ===`, `Phase 1 (initial):`, ...phase1.log];
 
-        // Phase 2: If there were errors, re-prompt DeepSeek with available functions + error info
-        if (allErrors.length > 0 || (allResults.length === 0 && allErrors.length === 0)) {
+        // If a raw display function was called, return its output directly (bypass LLM hallucination)
+        let bypassLlm = false;
+        const rawDisplayResult = allResults.find(r => r.startsWith('get_bank_statement_raw:'));
+        if (rawDisplayResult) {
+          try {
+            const parsed = JSON.parse(rawDisplayResult.replace('get_bank_statement_raw: ', ''));
+            if (parsed.display) {
+              reply = (cleanReply || '## 月結單交易記錄\n\n') + parsed.display;
+              bypassLlm = true;
+              fullLog.push('Bypass LLM: raw display returned directly');
+            }
+          } catch {}
+        }
+
+        if (!bypassLlm) {
+          // Phase 2: If there were errors, re-prompt DeepSeek with available functions + error info
+          if (allErrors.length > 0 || (allResults.length === 0 && allErrors.length === 0)) {
           const availableFns = TOOLS.map((t: any) => t.function?.name).filter(Boolean).join(', ');
           const retryPrompt = allErrors.length > 0
             ? `The previous tool calls had errors:\n${allErrors.join('\n')}\n\nAvailable functions: ${availableFns}\n\nPlease retry using ONLY the exact function names above with correct parameters. Output your calls in the same XML/invoke format.`
@@ -1506,7 +1700,7 @@ chat.post('/', async (c) => {
               if (allResults.length > 0 || phase2.results.length > 0) {
                 const combinedResults = [...allResults, ...phase2.results];
                 messages.push({ role: 'assistant', content: stripXml(retryText) || 'Processing...' });
-                messages.push({ role: 'user', content: `[Tool results]\n${combinedResults.join('\n')}\n\nSummarize concisely. Do NOT use any XML or tool call tags.` });
+                messages.push({ role: 'user', content: `[Tool results]\n${combinedResults.join('\n')}\n\nPresent this data EXACTLY as shown above. Copy the table verbatim into your response. Do NOT summarize, modify, or invent any data.` });
                 const finalResp = await callDeepSeek(apiKey, messages);
                 reply = finalResp.choices?.[0]?.message?.content || 'Done.';
                 fullLog.push(`Phase 3: Final answer generated (${reply.length} chars)`);
@@ -1530,11 +1724,13 @@ chat.post('/', async (c) => {
         } else {
           // Phase 1 succeeded — get final answer from DeepSeek
           messages.push({ role: 'assistant', content: cleanReply || 'Processing...' });
-          messages.push({ role: 'user', content: `[Tool results]\n${allResults.join('\n')}\n\nSummarize concisely. Do NOT use any XML or tool call tags.` });
+          messages.push({ role: 'user', content: `[Tool results]\n${allResults.join('\n')}\n\nPresent this data EXACTLY as shown. Copy the formatted table verbatim. Do NOT summarize, modify, or invent anything.` });
           const resp2 = await callDeepSeek(apiKey, messages);
           reply = resp2.choices?.[0]?.message?.content || cleanReply || 'Done.';
           fullLog.push(`Phase 1 success: Final answer generated (${reply.length} chars)`);
         }
+
+        } // end if (!bypassLlm)
 
         // Final safety: strip any remaining XML
         reply = stripXml(reply) || 'Done.';
@@ -1555,9 +1751,36 @@ chat.post('/', async (c) => {
     await db.prepare('INSERT INTO chat_messages (id, session_id, role, content) VALUES (?, ?, ?, ?)').bind(asstMsgId, sid, 'assistant', reply).run();
     await db.prepare("UPDATE chat_sessions SET updated_at = datetime('now') WHERE id = ?").bind(sid).run();
 
+    // Streaming mode: return SSE stream
+    if (doStream) {
+      // For streaming, re-call DeepSeek in stream mode with the final messages
+      try {
+        const streamMessages = [{ role: 'system', content: SYSTEM_PROMPT + `\n\nCurrent date: ${today}` }];
+        if (Array.isArray(history)) {
+          for (const msg of history.slice(-4)) {
+            if (msg.role && msg.content) streamMessages.push({ role: msg.role, content: msg.content });
+          }
+        }
+        streamMessages.push({ role: 'user', content: userMessage });
+        streamMessages.push({ role: 'assistant', content: reply.slice(0, 100) + '...' });
+
+        const stream = await callDeepSeekStream(apiKey, streamMessages);
+        return new Response(stream, {
+          headers: {
+            'Content-Type': 'text/plain; charset=utf-8',
+            'Transfer-Encoding': 'chunked',
+            'X-Session-Id': sid,
+          },
+        });
+      } catch {
+        return c.json({ reply, session_id: sid });
+      }
+    }
+
     return c.json({ reply, session_id: sid });
   } catch (e: any) {
-    return c.json({ reply: `AI error: ${e.message || 'unknown'}` }, 500);
+    console.error('Chat error:', e?.message, e?.stack);
+    return c.json({ reply: `AI error: ${e.message || 'unknown'}`, error_detail: e?.message || 'unknown' }, 500);
   }
 });
 

@@ -31,7 +31,8 @@
     "communication": "Comm",
     "fileStorage": "File Storage",
     "purchaseOrders": "Purchase Orders",
-    "serviceOrders": "Service Orders"
+    "serviceOrders": "Service Orders",
+    "firmManagement": "Firm Management"
   },
   "auth": {
     "login": "Login",

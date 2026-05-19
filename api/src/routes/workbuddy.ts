@@ -85,6 +85,7 @@ workbuddy.get('/manifest', (c) => {
 
 workbuddy.get('/tokens', authMiddleware, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const rows = await c.env.DB.prepare(
     'SELECT id, name, scopes, last_used_at, expires_at, is_active, created_at FROM api_tokens WHERE user_id = ? ORDER BY created_at DESC'
   ).bind(user.id).all();
@@ -93,6 +94,7 @@ workbuddy.get('/tokens', authMiddleware, async (c) => {
 
 workbuddy.post('/tokens', authMiddleware, zValidator('json', z.object({ name: z.string().min(1), scopes: z.string().optional() })), async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const { name, scopes } = c.req.valid('json');
   const db = c.env.DB;
   const token = randomBytes(32).toString('hex');
@@ -104,12 +106,14 @@ workbuddy.post('/tokens', authMiddleware, zValidator('json', z.object({ name: z.
 
 workbuddy.delete('/tokens/:id', authMiddleware, async (c) => {
   const user = c.get('user');
-  await c.env.DB.prepare('UPDATE api_tokens SET is_active = 0 WHERE id = ? AND user_id = ?').bind(c.req.param('id'), user.id).run();
+  const tenantId = c.get('client_user_id') || user.id;
+  await c.env.DB.prepare('UPDATE api_tokens SET is_active = 0 WHERE id = ? AND user_id = ?').bind(c.req.param('id'), tenantId).run();
   return c.json({ success: true });
 });
 
 workbuddy.get('/customers', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const search = c.req.query('q') || '';
   let query = 'SELECT * FROM customers WHERE user_id = ?';
@@ -122,6 +126,7 @@ workbuddy.get('/customers', tokenAuth, async (c) => {
 
 workbuddy.post('/customers', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const body = await c.req.json();
   const id = `c-${uuidv4().slice(0, 8)}`;
   await c.env.DB.prepare('INSERT INTO customers (id, user_id, name, company_name, email, phone) VALUES (?, ?, ?, ?, ?, ?)')
@@ -132,18 +137,21 @@ workbuddy.post('/customers', tokenAuth, async (c) => {
 
 workbuddy.get('/suppliers', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const rows = await c.env.DB.prepare('SELECT * FROM suppliers WHERE user_id = ? AND is_active = 1 ORDER BY name ASC LIMIT 50').bind(user.id).all();
   return c.json({ data: rows.results });
 });
 
 workbuddy.get('/products', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const rows = await c.env.DB.prepare('SELECT * FROM products WHERE user_id = ? AND is_active = 1 ORDER BY name ASC LIMIT 100').bind(user.id).all();
   return c.json({ data: rows.results });
 });
 
 workbuddy.get('/invoices', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const status = c.req.query('status');
   let query = 'SELECT * FROM invoices WHERE user_id = ?';
   const params: any[] = [user.id];
@@ -155,6 +163,7 @@ workbuddy.get('/invoices', tokenAuth, async (c) => {
 
 workbuddy.post('/invoices', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const body = await c.req.json();
   const id = `i-${uuidv4().slice(0, 8)}`;
   const items = body.items || [];
@@ -173,16 +182,18 @@ workbuddy.post('/invoices', tokenAuth, async (c) => {
 
 workbuddy.delete('/invoices/:id', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const id = c.req.param('id');
-  const existing = await c.env.DB.prepare('SELECT id, status FROM invoices WHERE id = ? AND user_id = ?').bind(id, user.id).first<{ id: string; status: string }>();
+  const existing = await c.env.DB.prepare('SELECT id, status FROM invoices WHERE id = ? AND user_id = ?').bind(id, tenantId).first<{ id: string; status: string }>();
   if (!existing) return c.json({ error: 'Invoice not found' }, 404);
   await c.env.DB.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').bind(id).run();
-  await c.env.DB.prepare('DELETE FROM invoices WHERE id = ? AND user_id = ?').bind(id, user.id).run();
+  await c.env.DB.prepare('DELETE FROM invoices WHERE id = ? AND user_id = ?').bind(id, tenantId).run();
   return c.json({ success: true, deleted: id, status: existing.status });
 });
 
 workbuddy.get('/purchase-orders', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const status = c.req.query('status');
   let query = 'SELECT po.*, s.name as supplier_name FROM purchase_orders po LEFT JOIN suppliers s ON po.supplier_id = s.id WHERE po.user_id = ?';
   const params: any[] = [user.id];
@@ -194,16 +205,18 @@ workbuddy.get('/purchase-orders', tokenAuth, async (c) => {
 
 workbuddy.delete('/purchase-orders/:id', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const id = c.req.param('id');
-  const existing = await c.env.DB.prepare('SELECT id, status FROM purchase_orders WHERE id = ? AND user_id = ?').bind(id, user.id).first<{ id: string; status: string }>();
+  const existing = await c.env.DB.prepare('SELECT id, status FROM purchase_orders WHERE id = ? AND user_id = ?').bind(id, tenantId).first<{ id: string; status: string }>();
   if (!existing) return c.json({ error: 'Purchase order not found' }, 404);
   await c.env.DB.prepare('DELETE FROM purchase_order_items WHERE po_id = ?').bind(id).run();
-  await c.env.DB.prepare('DELETE FROM purchase_orders WHERE id = ? AND user_id = ?').bind(id, user.id).run();
+  await c.env.DB.prepare('DELETE FROM purchase_orders WHERE id = ? AND user_id = ?').bind(id, tenantId).run();
   return c.json({ success: true, deleted: id, status: existing.status });
 });
 
 workbuddy.get('/quotations', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const status = c.req.query('status');
   let query = 'SELECT * FROM quotations WHERE user_id = ?';
   const params: any[] = [user.id];
@@ -215,16 +228,18 @@ workbuddy.get('/quotations', tokenAuth, async (c) => {
 
 workbuddy.delete('/quotations/:id', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const id = c.req.param('id');
-  const existing = await c.env.DB.prepare('SELECT id, status FROM quotations WHERE id = ? AND user_id = ?').bind(id, user.id).first<{ id: string; status: string }>();
+  const existing = await c.env.DB.prepare('SELECT id, status FROM quotations WHERE id = ? AND user_id = ?').bind(id, tenantId).first<{ id: string; status: string }>();
   if (!existing) return c.json({ error: 'Quotation not found' }, 404);
   await c.env.DB.prepare('DELETE FROM quotation_items WHERE quotation_id = ?').bind(id).run();
-  await c.env.DB.prepare('DELETE FROM quotations WHERE id = ? AND user_id = ?').bind(id, user.id).run();
+  await c.env.DB.prepare('DELETE FROM quotations WHERE id = ? AND user_id = ?').bind(id, tenantId).run();
   return c.json({ success: true, deleted: id, status: existing.status });
 });
 
 workbuddy.get('/service-orders', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const status = c.req.query('status');
   let query = 'SELECT so.*, c.name as customer_name FROM service_orders so LEFT JOIN customers c ON so.customer_id = c.id WHERE so.user_id = ?';
   const params: any[] = [user.id];
@@ -236,17 +251,19 @@ workbuddy.get('/service-orders', tokenAuth, async (c) => {
 
 workbuddy.delete('/service-orders/:id', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const id = c.req.param('id');
-  const existing = await c.env.DB.prepare('SELECT id, status FROM service_orders WHERE id = ? AND user_id = ?').bind(id, user.id).first<{ id: string; status: string }>();
+  const existing = await c.env.DB.prepare('SELECT id, status FROM service_orders WHERE id = ? AND user_id = ?').bind(id, tenantId).first<{ id: string; status: string }>();
   if (!existing) return c.json({ error: 'Service order not found' }, 404);
   await c.env.DB.prepare('DELETE FROM service_order_items WHERE so_id = ?').bind(id).run();
-  await c.env.DB.prepare('DELETE FROM service_orders WHERE id = ? AND user_id = ?').bind(id, user.id).run();
+  await c.env.DB.prepare('DELETE FROM service_orders WHERE id = ? AND user_id = ?').bind(id, tenantId).run();
   return c.json({ success: true, deleted: id, status: existing.status });
 });
 
 // ── Customer Update / Delete ──
 workbuddy.put('/customers/:id', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const id = c.req.param('id');
   const body = await c.req.json();
   const fields = ['name', 'company_name', 'email', 'phone', 'address', 'city', 'state', 'postal_code', 'country', 'notes', 'tax_id'];
@@ -257,7 +274,7 @@ workbuddy.put('/customers/:id', tokenAuth, async (c) => {
   }
   if (sets.length === 0) return c.json({ error: 'No fields to update' }, 400);
   sets.push("updated_at = datetime('now')");
-  params.push(id, user.id);
+  params.push(id, tenantId);
   await c.env.DB.prepare(`UPDATE customers SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).bind(...params).run();
   const row = await c.env.DB.prepare('SELECT * FROM customers WHERE id = ?').bind(id).first();
   return c.json(row);
@@ -265,13 +282,15 @@ workbuddy.put('/customers/:id', tokenAuth, async (c) => {
 
 workbuddy.delete('/customers/:id', tokenAuth, async (c) => {
   const user = c.get('user');
-  await c.env.DB.prepare("UPDATE customers SET is_active = 0, updated_at = datetime('now') WHERE id = ? AND user_id = ?").bind(c.req.param('id'), user.id).run();
+  const tenantId = c.get('client_user_id') || user.id;
+  await c.env.DB.prepare("UPDATE customers SET is_active = 0, updated_at = datetime('now') WHERE id = ? AND user_id = ?").bind(c.req.param('id'), tenantId).run();
   return c.json({ success: true });
 });
 
 // ── Supplier Create / Update / Delete ──
 workbuddy.post('/suppliers', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const body = await c.req.json();
   const id = `s-${uuidv4().slice(0, 8)}`;
   await c.env.DB.prepare('INSERT INTO suppliers (id, user_id, name, company_name, email, phone, address, payment_terms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
@@ -282,6 +301,7 @@ workbuddy.post('/suppliers', tokenAuth, async (c) => {
 
 workbuddy.put('/suppliers/:id', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const id = c.req.param('id');
   const body = await c.req.json();
   const fields = ['name', 'company_name', 'email', 'phone', 'address', 'payment_terms'];
@@ -292,7 +312,7 @@ workbuddy.put('/suppliers/:id', tokenAuth, async (c) => {
   }
   if (sets.length === 0) return c.json({ error: 'No fields to update' }, 400);
   sets.push("updated_at = datetime('now')");
-  params.push(id, user.id);
+  params.push(id, tenantId);
   await c.env.DB.prepare(`UPDATE suppliers SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).bind(...params).run();
   const row = await c.env.DB.prepare('SELECT * FROM suppliers WHERE id = ?').bind(id).first();
   return c.json(row);
@@ -300,13 +320,15 @@ workbuddy.put('/suppliers/:id', tokenAuth, async (c) => {
 
 workbuddy.delete('/suppliers/:id', tokenAuth, async (c) => {
   const user = c.get('user');
-  await c.env.DB.prepare("UPDATE suppliers SET is_active = 0, updated_at = datetime('now') WHERE id = ? AND user_id = ?").bind(c.req.param('id'), user.id).run();
+  const tenantId = c.get('client_user_id') || user.id;
+  await c.env.DB.prepare("UPDATE suppliers SET is_active = 0, updated_at = datetime('now') WHERE id = ? AND user_id = ?").bind(c.req.param('id'), tenantId).run();
   return c.json({ success: true });
 });
 
 // ── Product Create / Update / Delete ──
 workbuddy.post('/products', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const body = await c.req.json();
   const id = `p-${uuidv4().slice(0, 8)}`;
   await c.env.DB.prepare('INSERT INTO products (id, user_id, name, unit_price, currency, unit, category, sku, description) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
@@ -317,6 +339,7 @@ workbuddy.post('/products', tokenAuth, async (c) => {
 
 workbuddy.put('/products/:id', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const id = c.req.param('id');
   const body = await c.req.json();
   const fields = ['name', 'unit_price', 'currency', 'unit', 'category', 'sku', 'description'];
@@ -327,7 +350,7 @@ workbuddy.put('/products/:id', tokenAuth, async (c) => {
   }
   if (sets.length === 0) return c.json({ error: 'No fields to update' }, 400);
   sets.push("updated_at = datetime('now')");
-  params.push(id, user.id);
+  params.push(id, tenantId);
   await c.env.DB.prepare(`UPDATE products SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).bind(...params).run();
   const row = await c.env.DB.prepare('SELECT * FROM products WHERE id = ?').bind(id).first();
   return c.json(row);
@@ -335,14 +358,16 @@ workbuddy.put('/products/:id', tokenAuth, async (c) => {
 
 workbuddy.delete('/products/:id', tokenAuth, async (c) => {
   const user = c.get('user');
-  await c.env.DB.prepare("UPDATE products SET is_active = 0, updated_at = datetime('now') WHERE id = ? AND user_id = ?").bind(c.req.param('id'), user.id).run();
+  const tenantId = c.get('client_user_id') || user.id;
+  await c.env.DB.prepare("UPDATE products SET is_active = 0, updated_at = datetime('now') WHERE id = ? AND user_id = ?").bind(c.req.param('id'), tenantId).run();
   return c.json({ success: true });
 });
 
 // ── Single entity GET (invoices, quotations, POs, SOs) ──
 workbuddy.get('/invoices/:id', tokenAuth, async (c) => {
   const user = c.get('user');
-  const inv = await c.env.DB.prepare('SELECT i.*, c.name as customer_name FROM invoices i LEFT JOIN customers c ON i.customer_id = c.id WHERE i.id = ? AND i.user_id = ?').bind(c.req.param('id'), user.id).first();
+  const tenantId = c.get('client_user_id') || user.id;
+  const inv = await c.env.DB.prepare('SELECT i.*, c.name as customer_name FROM invoices i LEFT JOIN customers c ON i.customer_id = c.id WHERE i.id = ? AND i.user_id = ?').bind(c.req.param('id'), tenantId).first();
   if (!inv) return c.json({ error: 'Invoice not found' }, 404);
   const items = await c.env.DB.prepare('SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY sort_order').bind(c.req.param('id')).all();
   return c.json({ ...inv, items: items.results });
@@ -350,16 +375,18 @@ workbuddy.get('/invoices/:id', tokenAuth, async (c) => {
 
 workbuddy.patch('/invoices/:id/status', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const { status } = await c.req.json();
   if (!status) return c.json({ error: 'status required' }, 400);
-  await c.env.DB.prepare("UPDATE invoices SET status = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?").bind(status, c.req.param('id'), user.id).run();
+  await c.env.DB.prepare("UPDATE invoices SET status = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?").bind(status, c.req.param('id'), tenantId).run();
   if (status === 'paid') await c.env.DB.prepare("UPDATE invoices SET paid_date = datetime('now') WHERE id = ?").bind(c.req.param('id')).run();
   return c.json({ success: true, status });
 });
 
 workbuddy.get('/quotations/:id', tokenAuth, async (c) => {
   const user = c.get('user');
-  const row = await c.env.DB.prepare('SELECT q.*, c.name as customer_name FROM quotations q LEFT JOIN customers c ON q.customer_id = c.id WHERE q.id = ? AND q.user_id = ?').bind(c.req.param('id'), user.id).first();
+  const tenantId = c.get('client_user_id') || user.id;
+  const row = await c.env.DB.prepare('SELECT q.*, c.name as customer_name FROM quotations q LEFT JOIN customers c ON q.customer_id = c.id WHERE q.id = ? AND q.user_id = ?').bind(c.req.param('id'), tenantId).first();
   if (!row) return c.json({ error: 'Quotation not found' }, 404);
   const items = await c.env.DB.prepare('SELECT * FROM quotation_items WHERE quotation_id = ? ORDER BY sort_order').bind(c.req.param('id')).all();
   return c.json({ ...row, items: items.results });
@@ -367,6 +394,7 @@ workbuddy.get('/quotations/:id', tokenAuth, async (c) => {
 
 workbuddy.post('/quotations', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const body = await c.req.json();
   const id = `q-${uuidv4().slice(0, 8)}`;
   const items: any[] = body.items || [];
@@ -385,7 +413,8 @@ workbuddy.post('/quotations', tokenAuth, async (c) => {
 
 workbuddy.post('/quotations/:id/convert', tokenAuth, async (c) => {
   const user = c.get('user');
-  const quo = await c.env.DB.prepare('SELECT * FROM quotations WHERE id = ? AND user_id = ?').bind(c.req.param('id'), user.id).first<any>();
+  const tenantId = c.get('client_user_id') || user.id;
+  const quo = await c.env.DB.prepare('SELECT * FROM quotations WHERE id = ? AND user_id = ?').bind(c.req.param('id'), tenantId).first<any>();
   if (!quo) return c.json({ error: 'Quotation not found' }, 404);
   const invId = `i-${uuidv4().slice(0, 8)}`;
   const invNum = `INV-${Date.now().toString(36).toUpperCase()}`;
@@ -402,7 +431,8 @@ workbuddy.post('/quotations/:id/convert', tokenAuth, async (c) => {
 
 workbuddy.get('/purchase-orders/:id', tokenAuth, async (c) => {
   const user = c.get('user');
-  const row = await c.env.DB.prepare('SELECT po.*, s.name as supplier_name FROM purchase_orders po LEFT JOIN suppliers s ON po.supplier_id = s.id WHERE po.id = ? AND po.user_id = ?').bind(c.req.param('id'), user.id).first();
+  const tenantId = c.get('client_user_id') || user.id;
+  const row = await c.env.DB.prepare('SELECT po.*, s.name as supplier_name FROM purchase_orders po LEFT JOIN suppliers s ON po.supplier_id = s.id WHERE po.id = ? AND po.user_id = ?').bind(c.req.param('id'), tenantId).first();
   if (!row) return c.json({ error: 'Purchase order not found' }, 404);
   const items = await c.env.DB.prepare('SELECT * FROM purchase_order_items WHERE po_id = ? ORDER BY sort_order').bind(c.req.param('id')).all();
   return c.json({ ...row, items: items.results });
@@ -410,6 +440,7 @@ workbuddy.get('/purchase-orders/:id', tokenAuth, async (c) => {
 
 workbuddy.post('/purchase-orders', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const body = await c.req.json();
   const id = `po-${uuidv4().slice(0, 8)}`;
   const items: any[] = body.items || [];
@@ -428,16 +459,18 @@ workbuddy.post('/purchase-orders', tokenAuth, async (c) => {
 
 workbuddy.patch('/purchase-orders/:id/status', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const { status } = await c.req.json();
   if (!status) return c.json({ error: 'status required' }, 400);
-  await c.env.DB.prepare("UPDATE purchase_orders SET status = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?").bind(status, c.req.param('id'), user.id).run();
+  await c.env.DB.prepare("UPDATE purchase_orders SET status = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?").bind(status, c.req.param('id'), tenantId).run();
   if (status === 'paid') await c.env.DB.prepare("UPDATE purchase_orders SET paid_date = datetime('now') WHERE id = ?").bind(c.req.param('id')).run();
   return c.json({ success: true, status });
 });
 
 workbuddy.get('/service-orders/:id', tokenAuth, async (c) => {
   const user = c.get('user');
-  const row = await c.env.DB.prepare('SELECT so.*, c.name as customer_name FROM service_orders so LEFT JOIN customers c ON so.customer_id = c.id WHERE so.id = ? AND so.user_id = ?').bind(c.req.param('id'), user.id).first();
+  const tenantId = c.get('client_user_id') || user.id;
+  const row = await c.env.DB.prepare('SELECT so.*, c.name as customer_name FROM service_orders so LEFT JOIN customers c ON so.customer_id = c.id WHERE so.id = ? AND so.user_id = ?').bind(c.req.param('id'), tenantId).first();
   if (!row) return c.json({ error: 'Service order not found' }, 404);
   const items = await c.env.DB.prepare('SELECT * FROM service_order_items WHERE so_id = ? ORDER BY sort_order').bind(c.req.param('id')).all();
   return c.json({ ...row, items: items.results });
@@ -445,6 +478,7 @@ workbuddy.get('/service-orders/:id', tokenAuth, async (c) => {
 
 workbuddy.post('/service-orders', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const body = await c.req.json();
   const id = `so-${uuidv4().slice(0, 8)}`;
   const items: any[] = body.items || [];
@@ -463,21 +497,24 @@ workbuddy.post('/service-orders', tokenAuth, async (c) => {
 
 workbuddy.patch('/service-orders/:id/status', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const { status } = await c.req.json();
   if (!status) return c.json({ error: 'status required' }, 400);
-  await c.env.DB.prepare("UPDATE service_orders SET status = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?").bind(status, c.req.param('id'), user.id).run();
+  await c.env.DB.prepare("UPDATE service_orders SET status = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?").bind(status, c.req.param('id'), tenantId).run();
   return c.json({ success: true, status });
 });
 
 // ── Services ──
 workbuddy.get('/services', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const rows = await c.env.DB.prepare('SELECT * FROM services WHERE user_id = ? AND is_active = 1 ORDER BY name').bind(user.id).all();
   return c.json({ data: rows.results });
 });
 
 workbuddy.post('/services', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const body = await c.req.json();
   const id = `svc-${uuidv4().slice(0, 8)}`;
   await c.env.DB.prepare('INSERT INTO services (id, user_id, name, price, duration_minutes, category) VALUES (?, ?, ?, ?, ?, ?)')
@@ -489,6 +526,7 @@ workbuddy.post('/services', tokenAuth, async (c) => {
 // ── Bookings ──
 workbuddy.get('/services/bookings', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const date = c.req.query('date');
   let q = 'SELECT sb.*, s.name as service_name, c.name as customer_name FROM service_bookings sb JOIN services s ON sb.service_id = s.id LEFT JOIN customers c ON sb.customer_id = c.id WHERE sb.user_id = ?';
   const params: any[] = [user.id];
@@ -500,6 +538,7 @@ workbuddy.get('/services/bookings', tokenAuth, async (c) => {
 
 workbuddy.post('/services/bookings', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const body = await c.req.json();
   const id = `bk-${uuidv4().slice(0, 8)}`;
   await c.env.DB.prepare('INSERT INTO service_bookings (id, user_id, service_id, customer_id, booking_date, start_time, end_time, notes, price) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
@@ -511,14 +550,16 @@ workbuddy.post('/services/bookings', tokenAuth, async (c) => {
 // ── Calendar ──
 workbuddy.get('/calendar/events', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const start = c.req.query('start') || new Date().toISOString().split('T')[0];
   const end = c.req.query('end') || new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
-  const rows = await c.env.DB.prepare('SELECT * FROM calendar_events WHERE user_id = ? AND start_time BETWEEN ? AND ? ORDER BY start_time').bind(user.id, start, end).all();
+  const rows = await c.env.DB.prepare('SELECT * FROM calendar_events WHERE user_id = ? AND start_time BETWEEN ? AND ? ORDER BY start_time').bind(tenantId, start, end).all();
   return c.json({ data: rows.results });
 });
 
 workbuddy.post('/calendar/events', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const body = await c.req.json();
   const id = `evt-${uuidv4().slice(0, 8)}`;
   await c.env.DB.prepare('INSERT INTO calendar_events (id, user_id, title, start_time, end_time, description, location, customer_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
@@ -529,19 +570,22 @@ workbuddy.post('/calendar/events', tokenAuth, async (c) => {
 
 workbuddy.delete('/calendar/events/:id', tokenAuth, async (c) => {
   const user = c.get('user');
-  await c.env.DB.prepare('DELETE FROM calendar_events WHERE id = ? AND user_id = ?').bind(c.req.param('id'), user.id).run();
+  const tenantId = c.get('client_user_id') || user.id;
+  await c.env.DB.prepare('DELETE FROM calendar_events WHERE id = ? AND user_id = ?').bind(c.req.param('id'), tenantId).run();
   return c.json({ success: true });
 });
 
 // ── Company Profile ──
 workbuddy.get('/company', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const row = await c.env.DB.prepare('SELECT * FROM company_settings WHERE user_id = ?').bind(user.id).first();
   return c.json(row || {});
 });
 
 workbuddy.put('/company', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const body = await c.req.json();
   const fields = ['name', 'address', 'phone', 'email', 'website', 'tagline', 'legal_name', 'short_name', 'tax_id', 'bank_name', 'bank_account'];
   const sets: string[] = [];
@@ -551,7 +595,7 @@ workbuddy.put('/company', tokenAuth, async (c) => {
   }
   if (sets.length === 0) return c.json({ error: 'No fields to update' }, 400);
   sets.push("updated_at = datetime('now')");
-  params.push(user.id);
+  params.push(tenantId);
   await c.env.DB.prepare(`UPDATE company_settings SET ${sets.join(', ')} WHERE user_id = ?`).bind(...params).run();
   const row = await c.env.DB.prepare('SELECT * FROM company_settings WHERE user_id = ?').bind(user.id).first();
   return c.json(row);
@@ -560,6 +604,7 @@ workbuddy.put('/company', tokenAuth, async (c) => {
 // ── Aggregate / Summary ──
 workbuddy.get('/counts', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const tables = ['customers', 'suppliers', 'products', 'invoices', 'quotations', 'purchase_orders', 'service_orders', 'todos'];
   const result: Record<string, number> = {};
   for (const t of tables) {
@@ -573,6 +618,7 @@ workbuddy.get('/counts', tokenAuth, async (c) => {
 
 workbuddy.get('/summary', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const counts: Record<string, number> = {};
   for (const t of ['customers', 'suppliers', 'products', 'invoices', 'quotations', 'purchase_orders', 'service_orders', 'todos']) {
     try {
@@ -592,18 +638,19 @@ workbuddy.get('/summary', tokenAuth, async (c) => {
 
 workbuddy.get('/bookkeeping', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const start = c.req.query('start_date') || '2020-01-01';
   const end = c.req.query('end_date') || '2099-12-31';
   try {
     const rows = await c.env.DB.prepare(
       'SELECT a.account_code as code, a.account_name as name, a.account_type as type, SUM(COALESCE(jl.debit,0)) as total_debit, SUM(COALESCE(jl.credit,0)) as total_credit FROM journal_lines jl JOIN accounts a ON jl.account_code = a.account_code JOIN journal_entries je ON jl.entry_id = je.id WHERE je.user_id = ? AND je.entry_date BETWEEN ? AND ? GROUP BY a.account_code, a.account_name, a.account_type ORDER BY a.account_code'
-    ).bind(user.id, start, end).all();
+    ).bind(tenantId, start, end).all();
     if (rows.results.length > 0) return c.json({ data: rows.results });
   } catch {}
   // Fallback: bank transactions
   try {
-    const deposits = await c.env.DB.prepare('SELECT COALESCE(SUM(deposit_amount),0) as total FROM bank_transactions WHERE user_id = ? AND transaction_date >= ? AND transaction_date <= ?').bind(user.id, start, end).first<{ total: number }>();
-    const withdrawals = await c.env.DB.prepare('SELECT COALESCE(SUM(withdrawal_amount),0) as total FROM bank_transactions WHERE user_id = ? AND transaction_date >= ? AND transaction_date <= ?').bind(user.id, start, end).first<{ total: number }>();
+    const deposits = await c.env.DB.prepare('SELECT COALESCE(SUM(deposit_amount),0) as total FROM bank_transactions WHERE user_id = ? AND transaction_date >= ? AND transaction_date <= ?').bind(tenantId, start, end).first<{ total: number }>();
+    const withdrawals = await c.env.DB.prepare('SELECT COALESCE(SUM(withdrawal_amount),0) as total FROM bank_transactions WHERE user_id = ? AND transaction_date >= ? AND transaction_date <= ?').bind(tenantId, start, end).first<{ total: number }>();
     return c.json({ data: [
       { code: 'REV', name: 'Revenue (Bank Deposits)', type: 'revenue', total_credit: deposits?.total || 0 },
       { code: 'EXP', name: 'Expenses (Bank Withdrawals)', type: 'expense', total_debit: withdrawals?.total || 0 },
@@ -614,51 +661,57 @@ workbuddy.get('/bookkeeping', tokenAuth, async (c) => {
 
 workbuddy.get('/activity', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const limit = parseInt(c.req.query('limit') || '20');
-  const rows = await c.env.DB.prepare('SELECT action, entity_type, entity_id, created_at FROM audit_log WHERE user_id = ? ORDER BY created_at DESC LIMIT ?').bind(user.id, limit).all();
+  const rows = await c.env.DB.prepare('SELECT action, entity_type, entity_id, created_at FROM audit_log WHERE user_id = ? ORDER BY created_at DESC LIMIT ?').bind(tenantId, limit).all();
   return c.json({ data: rows.results });
 });
 
 // ── Search endpoints ──
 workbuddy.get('/customers/search', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const q = c.req.query('q') || '';
   const rows = await c.env.DB.prepare(
     'SELECT id, name, company_name, email, phone, address FROM customers WHERE user_id = ? AND is_active = 1 AND (name LIKE ? OR email LIKE ? OR company_name LIKE ?) ORDER BY name LIMIT ?'
-  ).bind(user.id, `%${q}%`, `%${q}%`, `%${q}%`, 20).all();
+  ).bind(tenantId, `%${q}%`, `%${q}%`, `%${q}%`, 20).all();
   return c.json({ data: rows.results });
 });
 
 workbuddy.get('/suppliers/search', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const q = c.req.query('q') || '';
   const rows = await c.env.DB.prepare(
     'SELECT id, name, company_name, email, phone FROM suppliers WHERE user_id = ? AND is_active = 1 AND (name LIKE ? OR company_name LIKE ?) ORDER BY name LIMIT ?'
-  ).bind(user.id, `%${q}%`, `%${q}%`, 20).all();
+  ).bind(tenantId, `%${q}%`, `%${q}%`, 20).all();
   return c.json({ data: rows.results });
 });
 
 workbuddy.get('/products/search', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const q = c.req.query('q') || '';
   const rows = await c.env.DB.prepare(
     'SELECT id, name, category, unit_price, currency FROM products WHERE user_id = ? AND is_active = 1 AND (name LIKE ? OR category LIKE ?) ORDER BY name LIMIT ?'
-  ).bind(user.id, `%${q}%`, `%${q}%`, 20).all();
+  ).bind(tenantId, `%${q}%`, `%${q}%`, 20).all();
   return c.json({ data: rows.results });
 });
 
 workbuddy.get('/invoices/search', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const q = c.req.query('q') || '';
   const rows = await c.env.DB.prepare(
     `SELECT i.id, i.invoice_number, i.status, i.total, i.currency, i.issue_date, c.name as customer_name FROM invoices i LEFT JOIN customers c ON i.customer_id = c.id WHERE i.user_id = ? AND (i.invoice_number LIKE ? OR c.name LIKE ?) ORDER BY i.created_at DESC LIMIT ?`
-  ).bind(user.id, `%${q}%`, `%${q}%`, 20).all();
+  ).bind(tenantId, `%${q}%`, `%${q}%`, 20).all();
   return c.json({ data: rows.results });
 });
 
 // ── Services Update / Delete ──
 workbuddy.put('/services/:id', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const body = await c.req.json();
   const fields = ['name', 'price', 'duration_minutes', 'category', 'description'];
   const sets: string[] = [];
@@ -668,7 +721,7 @@ workbuddy.put('/services/:id', tokenAuth, async (c) => {
   }
   if (sets.length === 0) return c.json({ error: 'No fields to update' }, 400);
   sets.push("updated_at = datetime('now')");
-  params.push(c.req.param('id'), user.id);
+  params.push(c.req.param('id'), tenantId);
   await c.env.DB.prepare(`UPDATE services SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).bind(...params).run();
   const row = await c.env.DB.prepare('SELECT * FROM services WHERE id = ?').bind(c.req.param('id')).first();
   return c.json(row);
@@ -676,13 +729,15 @@ workbuddy.put('/services/:id', tokenAuth, async (c) => {
 
 workbuddy.delete('/services/:id', tokenAuth, async (c) => {
   const user = c.get('user');
-  await c.env.DB.prepare("UPDATE services SET is_active = 0, updated_at = datetime('now') WHERE id = ? AND user_id = ?").bind(c.req.param('id'), user.id).run();
+  const tenantId = c.get('client_user_id') || user.id;
+  await c.env.DB.prepare("UPDATE services SET is_active = 0, updated_at = datetime('now') WHERE id = ? AND user_id = ?").bind(c.req.param('id'), tenantId).run();
   return c.json({ success: true });
 });
 
 // ── Calendar Event Update ──
 workbuddy.put('/calendar/events/:id', tokenAuth, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const body = await c.req.json();
   const fields = ['title', 'start_time', 'end_time', 'description', 'location', 'status'];
   const sets: string[] = [];
@@ -692,7 +747,7 @@ workbuddy.put('/calendar/events/:id', tokenAuth, async (c) => {
   }
   if (sets.length === 0) return c.json({ error: 'No fields to update' }, 400);
   sets.push("updated_at = datetime('now')");
-  params.push(c.req.param('id'), user.id);
+  params.push(c.req.param('id'), tenantId);
   await c.env.DB.prepare(`UPDATE calendar_events SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).bind(...params).run();
   const row = await c.env.DB.prepare('SELECT * FROM calendar_events WHERE id = ?').bind(c.req.param('id')).first();
   return c.json(row);

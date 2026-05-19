@@ -31,7 +31,8 @@
     "communication": "通讯",
     "fileStorage": "文件存储",
     "purchaseOrders": "采购单",
-    "serviceOrders": "服务合约"
+    "serviceOrders": "服务合约",
+    "firmManagement": "会计师行管理"
   },
   "auth": {
     "login": "登录",

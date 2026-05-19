@@ -6,15 +6,25 @@ interface ApiOptions {
   headers?: Record<string, string>;
 }
 
-export async function api(path: string, options: ApiOptions = {}) {
+function getHeaders(extra?: Record<string, string>): Record<string, string> {
   const token = localStorage.getItem('token');
+  const activeClientJson = localStorage.getItem('activeClient');
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...options.headers,
+    ...extra,
   };
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  if (activeClientJson) {
+    try {
+      const client = JSON.parse(activeClientJson);
+      if (client?.id) headers['X-Active-Client'] = client.id;
+    } catch {}
   }
+  return headers;
+}
+
+export async function api(path: string, options: ApiOptions = {}) {
+  const headers = getHeaders(options.headers);
 
   const res = await fetch(`${API_BASE}${path}`, {
     method: options.method || 'GET',
@@ -39,4 +49,57 @@ export async function api(path: string, options: ApiOptions = {}) {
     return res.text();
   }
   return res.json();
+}
+
+// Streaming chat: returns body reader + session_id
+export async function streamChat(
+  body: any,
+  onChunk: (text: string) => void,
+  onDone: (sessionId?: string) => void,
+  onError: (err: string) => void,
+) {
+  try {
+    const headers = getHeaders();
+    const res = await fetch(`${API_BASE}/chat`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ ...body, stream: true }),
+    });
+
+    if (res.status === 401) {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      window.location.href = '/login';
+      return;
+    }
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      onError(err.error || 'Request failed');
+      return;
+    }
+
+    const sessionId = res.headers.get('X-Session-Id');
+
+    // Read stream
+    const reader = res.body?.getReader();
+    if (!reader) { onDone(sessionId || undefined); return; }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      // Flush buffer in chunks
+      onChunk(buffer);
+      buffer = '';
+    }
+
+    onDone(sessionId || undefined);
+  } catch (e: any) {
+    onError(e.message || 'Connection error');
+  }
 }

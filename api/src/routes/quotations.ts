@@ -11,6 +11,7 @@ quotations.use('*', authMiddleware);
 
 quotations.get('/', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const status = c.req.query('status') || '';
   const search = c.req.query('q') || '';
@@ -19,7 +20,7 @@ quotations.get('/', async (c) => {
   const offset = (page - 1) * limit;
 
   let query = `SELECT q.*, c.name as customer_name, c.company_name as customer_company FROM quotations q LEFT JOIN customers c ON q.customer_id = c.id WHERE q.user_id = ?`;
-  const params: any[] = [user.id];
+  const params: any[] = [tenantId];
   if (status) { query += ' AND q.status = ?'; params.push(status); }
   if (search) { query += ' AND (q.quotation_number LIKE ? OR c.name LIKE ?)'; params.push(`%${search}%`, `%${search}%`); }
   query += ' ORDER BY q.created_at DESC LIMIT ? OFFSET ?';
@@ -35,11 +36,12 @@ quotations.get('/', async (c) => {
 
 quotations.get('/:id', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const id = c.req.param('id');
   const quotation = await db.prepare(
     'SELECT q.*, c.name as customer_name, c.email as customer_email, c.address as customer_address FROM quotations q LEFT JOIN customers c ON q.customer_id = c.id WHERE q.id = ? AND q.user_id = ?'
-  ).bind(id, user.id).first();
+  ).bind(id, tenantId).first();
   if (!quotation) return c.json({ error: 'Quotation not found' }, 404);
   const items = await db.prepare('SELECT * FROM quotation_items WHERE quotation_id = ? ORDER BY sort_order').bind(id).all();
   return c.json({ ...quotation, items: items.results });
@@ -58,6 +60,7 @@ const createSchema = z.object({
 
 quotations.post('/', zValidator('json', createSchema), async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const data = c.req.valid('json');
   const id = `q-${uuidv4().slice(0, 8)}`;
@@ -91,9 +94,10 @@ quotations.post('/', zValidator('json', createSchema), async (c) => {
 
 quotations.post('/:id/convert', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const id = c.req.param('id');
-  const quotation = await db.prepare('SELECT * FROM quotations WHERE id = ? AND user_id = ?').bind(id, user.id).first<Record<string, any>>();
+  const quotation = await db.prepare('SELECT * FROM quotations WHERE id = ? AND user_id = ?').bind(id, tenantId).first<Record<string, any>>();
   if (!quotation) return c.json({ error: 'Quotation not found' }, 404);
   if (quotation.status === 'converted') return c.json({ error: 'Already converted' }, 400);
 
@@ -119,10 +123,11 @@ quotations.post('/:id/convert', async (c) => {
 
 quotations.delete('/:id', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const id = c.req.param('id');
-  const existing = await c.env.DB.prepare('SELECT id FROM quotations WHERE id = ? AND user_id = ?').bind(id, user.id).first();
+  const existing = await c.env.DB.prepare('SELECT id FROM quotations WHERE id = ? AND user_id = ?').bind(id, tenantId).first();
   if (!existing) return c.json({ error: 'Quotation not found' }, 404);
-  await c.env.DB.prepare('DELETE FROM quotations WHERE id = ? AND user_id = ?').bind(id, user.id).run();
+  await c.env.DB.prepare('DELETE FROM quotations WHERE id = ? AND user_id = ?').bind(id, tenantId).run();
   return c.json({ success: true });
 });
 

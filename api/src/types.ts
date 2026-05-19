@@ -15,6 +15,7 @@ export type Bindings = {
 
 export type Variables = {
   user: AuthUser;
+  client_user_id?: string;
 };
 
 export interface AuthUser {
@@ -24,6 +25,8 @@ export interface AuthUser {
   role: string;
   company_name?: string;
   scopes?: string;
+  firm_id?: string;
+  firm_role?: string;
 }
 
 export type AppContext = Context<{ Bindings: Bindings; Variables: Variables }>;

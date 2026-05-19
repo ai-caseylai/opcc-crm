@@ -10,6 +10,7 @@ bookkeeping.use('*', authMiddleware);
 
 bookkeeping.get('/entries', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const page = parseInt(c.req.query('page') || '1');
   const limit = parseInt(c.req.query('limit') || '50');
@@ -18,7 +19,7 @@ bookkeeping.get('/entries', async (c) => {
   const endDate = c.req.query('end_date');
 
   let query = 'SELECT * FROM journal_entries WHERE user_id = ?';
-  const params: any[] = [user.id];
+  const params: any[] = [tenantId];
   if (startDate) { query += ' AND entry_date >= ?'; params.push(startDate); }
   if (endDate) { query += ' AND entry_date <= ?'; params.push(endDate); }
   query += ' ORDER BY entry_date DESC, created_at DESC LIMIT ? OFFSET ?';
@@ -30,8 +31,9 @@ bookkeeping.get('/entries', async (c) => {
 
 bookkeeping.get('/entries/:id', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
-  const entry = await db.prepare('SELECT * FROM journal_entries WHERE id = ? AND user_id = ?').bind(c.req.param('id'), user.id).first();
+  const entry = await db.prepare('SELECT * FROM journal_entries WHERE id = ? AND user_id = ?').bind(c.req.param('id'), tenantId).first();
   if (!entry) return c.json({ error: 'Entry not found' }, 404);
   const lines = await db.prepare('SELECT * FROM journal_lines WHERE entry_id = ? ORDER BY sort_order').bind(c.req.param('id')).all();
   return c.json({ ...entry, lines: lines.results });
@@ -49,6 +51,7 @@ const entrySchema = z.object({
 
 bookkeeping.post('/entries', zValidator('json', entrySchema), async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const data = c.req.valid('json');
   const id = `je-${uuidv4().slice(0, 8)}`;
@@ -75,12 +78,14 @@ bookkeeping.post('/entries', zValidator('json', entrySchema), async (c) => {
 
 bookkeeping.get('/accounts', async (c) => {
   const user = c.get('user');
-  const rows = await c.env.DB.prepare('SELECT * FROM accounts WHERE user_id = ? AND is_active = 1 ORDER BY account_code').bind(user.id).all();
+  const tenantId = c.get('client_user_id') || user.id;
+  const rows = await c.env.DB.prepare('SELECT * FROM accounts WHERE user_id = ? AND is_active = 1 ORDER BY account_code').bind(tenantId).all();
   return c.json({ data: rows.results });
 });
 
 bookkeeping.get('/trial-balance', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const asOf = c.req.query('as_of') || new Date().toISOString().split('T')[0];
   const rows = await db.prepare(
@@ -88,12 +93,13 @@ bookkeeping.get('/trial-balance', async (c) => {
      FROM journal_lines jl JOIN journal_entries je ON jl.entry_id = je.id
      LEFT JOIN accounts a ON jl.account_code = a.account_code AND je.user_id = a.user_id
      WHERE je.user_id = ? AND je.entry_date <= ? GROUP BY jl.account_code, jl.account_name ORDER BY jl.account_code`
-  ).bind(user.id, asOf).all();
+  ).bind(tenantId, asOf).all();
   return c.json({ data: rows.results, as_of: asOf });
 });
 
 bookkeeping.get('/export', auditorMiddleware, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const startDate = c.req.query('start_date') || '2000-01-01';
   const endDate = c.req.query('end_date') || '2099-12-31';
@@ -104,7 +110,7 @@ bookkeeping.get('/export', auditorMiddleware, async (c) => {
      FROM journal_entries je JOIN journal_lines jl ON je.id = jl.entry_id
      WHERE je.user_id = ? AND je.entry_date >= ? AND je.entry_date <= ?
      ORDER BY je.entry_date, je.entry_number, jl.sort_order`
-  ).bind(user.id, startDate, endDate).all();
+  ).bind(tenantId, startDate, endDate).all();
 
   if (format === 'csv') {
     let csv = 'Entry Date,Entry Number,Description,Account Code,Account Name,Line Description,Debit,Credit\n';
@@ -118,6 +124,7 @@ bookkeeping.get('/export', auditorMiddleware, async (c) => {
 
 bookkeeping.get('/income-statement', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const startDate = c.req.query('start_date') || '2000-01-01';
   const endDate = c.req.query('end_date') || new Date().toISOString().split('T')[0];
@@ -126,12 +133,12 @@ bookkeeping.get('/income-statement', async (c) => {
   const revenue = await db.prepare(
     `SELECT COALESCE(SUM(jl.credit) - SUM(jl.debit), 0) as amount FROM journal_lines jl JOIN journal_entries je ON jl.entry_id = je.id
      WHERE je.user_id = ? AND je.entry_date >= ? AND je.entry_date <= ? AND jl.account_code LIKE '4%'`
-  ).bind(user.id, startDate, endDate).first<{ amount: number }>();
+  ).bind(tenantId, startDate, endDate).first<{ amount: number }>();
 
   const expenses = await db.prepare(
     `SELECT COALESCE(SUM(jl.debit) - SUM(jl.credit), 0) as amount FROM journal_lines jl JOIN journal_entries je ON jl.entry_id = je.id
      WHERE je.user_id = ? AND je.entry_date >= ? AND je.entry_date <= ? AND jl.account_code LIKE '5%'`
-  ).bind(user.id, startDate, endDate).first<{ amount: number }>();
+  ).bind(tenantId, startDate, endDate).first<{ amount: number }>();
 
   // If journal entries exist, use them
   if ((revenue?.amount || 0) > 0 || (expenses?.amount || 0) > 0) {
@@ -139,14 +146,24 @@ bookkeeping.get('/income-statement', async (c) => {
     return c.json({ revenue: revenue?.amount || 0, expenses: expenses?.amount || 0, net_income: netIncome, source: 'journal', period: { start: startDate, end: endDate } });
   }
 
-  // Fallback: use bank transactions (deposits ≈ income, withdrawals ≈ expenses)
+  // Fallback: use bank transactions, excluding summary lines and capital injections
   const bankRevenue = await db.prepare(
-    `SELECT COALESCE(SUM(deposit_amount), 0) as amount FROM bank_transactions WHERE user_id = ? AND transaction_date >= ? AND transaction_date <= ?`
-  ).bind(user.id, startDate, endDate).first<{ amount: number }>();
+    `SELECT COALESCE(SUM(deposit_amount), 0) as amount FROM bank_transactions
+     WHERE user_id = ? AND transaction_date >= ? AND transaction_date <= ?
+     AND description NOT LIKE '%TRANSACTION SUMMARY%'
+     AND description NOT LIKE '%CARRIED FORWARD%'
+     AND description NOT LIKE '%今期結餘%'
+     AND description NOT LIKE '%進支摘要%'`
+  ).bind(tenantId, startDate, endDate).first<{ amount: number }>();
 
   const bankExpenses = await db.prepare(
-    `SELECT COALESCE(SUM(withdrawal_amount), 0) as amount FROM bank_transactions WHERE user_id = ? AND transaction_date >= ? AND transaction_date <= ?`
-  ).bind(user.id, startDate, endDate).first<{ amount: number }>();
+    `SELECT COALESCE(SUM(withdrawal_amount), 0) as amount FROM bank_transactions
+     WHERE user_id = ? AND transaction_date >= ? AND transaction_date <= ?
+     AND description NOT LIKE '%TRANSACTION SUMMARY%'
+     AND description NOT LIKE '%CARRIED FORWARD%'
+     AND description NOT LIKE '%今期結餘%'
+     AND description NOT LIKE '%進支摘要%'`
+  ).bind(tenantId, startDate, endDate).first<{ amount: number }>();
 
   const netIncome = (bankRevenue?.amount || 0) - (bankExpenses?.amount || 0);
   return c.json({ revenue: bankRevenue?.amount || 0, expenses: bankExpenses?.amount || 0, net_income: netIncome, source: 'bank', period: { start: startDate, end: endDate } });
@@ -155,6 +172,7 @@ bookkeeping.get('/income-statement', async (c) => {
 // Balance Sheet — Assets, Liabilities, and Equity as of a date
 bookkeeping.get('/balance-sheet', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const asOf = c.req.query('as_of') || new Date().toISOString().split('T')[0];
 
@@ -166,18 +184,22 @@ bookkeeping.get('/balance-sheet', async (c) => {
      WHERE je.user_id = ? AND je.entry_date <= ?
      GROUP BY jl.account_code, jl.account_name
      ORDER BY jl.account_code`
-  ).bind(user.id, asOf).all();
+  ).bind(tenantId, asOf).all();
 
   const jeCount = await db.prepare(
     'SELECT COUNT(*) as cnt FROM journal_entries WHERE user_id = ? AND entry_date <= ?'
-  ).bind(user.id, asOf).first<{ cnt: number }>();
+  ).bind(tenantId, asOf).first<{ cnt: number }>();
 
   if ((jeCount?.cnt || 0) > 0 && (rows.results || []).length > 0) {
     // Calculate balances: Assets/Expenses = debit - credit, Liabilities/Equity/Revenue = credit - debit
     const calcBalance = (row: any) => {
-      if (row.account_type === 'asset' || row.account_type === 'expense') {
+      const type = (row.account_type || '').toLowerCase();
+      const code = (row.account_code || '');
+      // Assets (1xxx) and Expenses (5xxx): debit balance
+      if (type === 'asset' || type === 'expense' || code.startsWith('1') || code.startsWith('5')) {
         return row.total_debit - row.total_credit;
       }
+      // Liabilities (2xxx), Equity (3xxx), Revenue (4xxx): credit balance
       return row.total_credit - row.total_debit;
     };
 
@@ -229,10 +251,10 @@ bookkeeping.get('/balance-sheet', async (c) => {
   // Fallback: estimate from bank transactions
   const bankDeposits = await db.prepare(
     `SELECT COALESCE(SUM(deposit_amount), 0) as amount FROM bank_transactions WHERE user_id = ? AND transaction_date <= ?`
-  ).bind(user.id, asOf).first<{ amount: number }>();
+  ).bind(tenantId, asOf).first<{ amount: number }>();
   const bankWithdrawals = await db.prepare(
     `SELECT COALESCE(SUM(withdrawal_amount), 0) as amount FROM bank_transactions WHERE user_id = ? AND transaction_date <= ?`
-  ).bind(user.id, asOf).first<{ amount: number }>();
+  ).bind(tenantId, asOf).first<{ amount: number }>();
 
   const cashBalance = (bankDeposits?.amount || 0) - (bankWithdrawals?.amount || 0);
   const netCash = Math.max(cashBalance, 0);
@@ -263,6 +285,7 @@ bookkeeping.get('/balance-sheet', async (c) => {
 // General Ledger — grouped by account with running balances
 bookkeeping.get('/ledger', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const startDate = c.req.query('start_date') || '2000-01-01';
   const endDate = c.req.query('end_date') || '2099-12-31';
@@ -271,7 +294,7 @@ bookkeeping.get('/ledger', async (c) => {
   // Check if journal entries exist
   const jeCount = await db.prepare(
     'SELECT COUNT(*) as cnt FROM journal_entries WHERE user_id = ? AND entry_date >= ? AND entry_date <= ?'
-  ).bind(user.id, startDate, endDate).first<{ cnt: number }>();
+  ).bind(tenantId, startDate, endDate).first<{ cnt: number }>();
 
   if ((jeCount?.cnt || 0) > 0) {
     // Use journal entries
@@ -279,7 +302,7 @@ bookkeeping.get('/ledger', async (c) => {
       FROM journal_lines jl JOIN journal_entries je ON jl.entry_id = je.id
       LEFT JOIN accounts a ON jl.account_code = a.account_code AND je.user_id = a.user_id
       WHERE je.user_id = ? AND je.entry_date >= ? AND je.entry_date <= ?`;
-    const params: any[] = [user.id, startDate, endDate];
+    const params: any[] = [tenantId, startDate, endDate];
     if (filterAccount) { query += ' AND jl.account_code LIKE ?'; params.push(`${filterAccount}%`); }
     query += ' ORDER BY jl.account_code, je.entry_date, jl.sort_order';
     const rows = await db.prepare(query).bind(...params).all();
@@ -308,7 +331,7 @@ bookkeeping.get('/ledger', async (c) => {
      FROM bank_transactions bt LEFT JOIN invoices i ON bt.invoice_id = i.id
      WHERE bt.user_id = ? AND bt.transaction_date >= ? AND bt.transaction_date <= ?
      ORDER BY bt.transaction_date`
-  ).bind(user.id, startDate, endDate).all();
+  ).bind(tenantId, startDate, endDate).all();
 
   const isDirector = (desc: string) => /JOSEPH|LIN|RAYMOND|SZETO/i.test(desc);
 
@@ -356,21 +379,45 @@ bookkeeping.get('/ledger', async (c) => {
 // Auto-generate journal entries from bank transactions
 bookkeeping.post('/auto-generate-entries', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
 
   // Get bank transactions not yet converted to journal entries
   const existingRefs = await db.prepare(
     "SELECT reference_id FROM journal_entries WHERE user_id = ? AND reference_type = 'bank_transaction'"
-  ).bind(user.id).all();
+  ).bind(tenantId).all();
   const refSet = new Set((existingRefs.results as any[]).map(r => r.reference_id));
 
   const txRows = await db.prepare(
     `SELECT bt.*, i.invoice_number, i.supplier_id
      FROM bank_transactions bt LEFT JOIN invoices i ON bt.invoice_id = i.id
-     WHERE bt.user_id = ? ORDER BY bt.transaction_date`
-  ).bind(user.id).all();
+     WHERE bt.user_id = ?
+     AND bt.description NOT LIKE '%TRANSACTION SUMMARY%'
+     AND bt.description NOT LIKE '%CARRIED FORWARD%'
+     AND bt.description NOT LIKE '%今期結餘%'
+     AND bt.description NOT LIKE '%進支摘要%'
+     ORDER BY bt.transaction_date`
+  ).bind(tenantId).all();
 
-  const isDirector = (desc: string) => /JOSEPH|LIN|RAYMOND|SZETO/i.test(desc);
+  // Ensure chart of accounts exists for this user
+  const ensureAccount = async (code: string, name: string, type: string) => {
+    const existing = await db.prepare(
+      'SELECT id FROM accounts WHERE user_id = ? AND account_code = ?'
+    ).bind(tenantId, code).first();
+    if (!existing) {
+      await db.prepare(
+        'INSERT INTO accounts (id, user_id, account_code, account_name, account_type) VALUES (?, ?, ?, ?, ?)'
+      ).bind(`acc-${uuidv4().slice(0, 8)}`, tenantId, code, name, type).run();
+    }
+  };
+  await ensureAccount('11012', 'Bank Deposits 銀行存款', 'asset');
+  await ensureAccount('22020', 'Director Loan 董事貸款', 'liability');
+  await ensureAccount('41020', 'Service Revenue 服務收入', 'revenue');
+  await ensureAccount('42010', 'Bank Interest 銀行利息', 'revenue');
+  await ensureAccount('51010', 'Purchase Cost 採購成本', 'expense');
+  await ensureAccount('52070', 'IT Expenses 資訊科技費用', 'expense');
+
+  const isDirector = (desc: string) => /JOSEPH|LIN PUI|LAI KIN|RAYMOND|SZETO/i.test(desc);
   let created = 0;
 
   for (const tx of txRows.results as any[]) {
@@ -383,18 +430,35 @@ bookkeeping.post('/auto-generate-entries', async (c) => {
     const lines: { code: string; name: string; debit: number; credit: number }[] = [];
 
     if (tx.deposit_amount > 0) {
-      lines.push({ code: '1101', name: 'Cash', debit: tx.deposit_amount, credit: 0 });
+      lines.push({ code: '11012', name: 'Bank Deposits', debit: tx.deposit_amount, credit: 0 });
       if (isDirector(desc)) {
-        lines.push({ code: '2102', name: 'Director Loan', debit: 0, credit: tx.deposit_amount });
+        lines.push({ code: '22020', name: 'Director Loan', debit: 0, credit: tx.deposit_amount });
+      } else if (desc.includes('OUTCLEARING') || desc.includes('RETURN') || desc.includes('退票')) {
+        lines.push({ code: '11012', name: 'Bank Deposits', debit: tx.deposit_amount, credit: 0 });
+        lines.push({ code: '22020', name: 'Director Loan', debit: 0, credit: tx.deposit_amount });
+      } else if (/VISA DEBIT.*- *CR|CREDIT.*VISA/i.test(desc)) {
+        lines.push({ code: '52070', name: 'IT Expenses', debit: 0, credit: tx.deposit_amount });
+      } else if (desc.includes('INTEREST PAYMENT') || desc.includes('利息收入')) {
+        lines.push({ code: '42010', name: 'Bank Interest', debit: 0, credit: tx.deposit_amount });
+      } else if (tx.deposit_amount >= 5000 && /DIRECT CREDIT|FPS|TRANSFER|CHEQUE/i.test(desc)) {
+        lines.push({ code: '22020', name: 'Director Loan', debit: 0, credit: tx.deposit_amount });
       } else {
-        lines.push({ code: '4100', name: 'Sales Revenue', debit: 0, credit: tx.deposit_amount });
+        lines.push({ code: '41020', name: 'Service Revenue', debit: 0, credit: tx.deposit_amount });
       }
     }
     if (tx.withdrawal_amount > 0) {
-      const expCode = tx.supplier_id ? '5100' : '5200';
-      const expName = tx.supplier_id ? 'Cost of Goods Sold' : 'Operating Expenses';
-      lines.push({ code: expCode, name: expName, debit: tx.withdrawal_amount, credit: 0 });
-      lines.push({ code: '1101', name: 'Cash', debit: 0, credit: tx.withdrawal_amount });
+      if (desc.includes('OUTCLEARING') || desc.includes('RETURN') || desc.includes('退票')) {
+        lines.push({ code: '22020', name: 'Director Loan', debit: tx.withdrawal_amount, credit: 0 });
+        lines.push({ code: '11012', name: 'Bank Deposits', debit: 0, credit: tx.withdrawal_amount });
+      } else if (isDirector(desc) && /TRANSFER-DEBIT|FPS/i.test(desc)) {
+        lines.push({ code: '22020', name: 'Director Loan', debit: tx.withdrawal_amount, credit: 0 });
+        lines.push({ code: '11012', name: 'Bank Deposits', debit: 0, credit: tx.withdrawal_amount });
+      } else {
+        const expCode = tx.supplier_id ? '51010' : '52070';
+        const expName = tx.supplier_id ? 'Purchase Cost' : 'IT Expenses';
+        lines.push({ code: expCode, name: expName, debit: tx.withdrawal_amount, credit: 0 });
+        lines.push({ code: '11012', name: 'Bank Deposits', debit: 0, credit: tx.withdrawal_amount });
+      }
     }
 
     if (lines.length === 0) continue;

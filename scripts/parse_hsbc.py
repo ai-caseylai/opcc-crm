@@ -38,35 +38,61 @@ def parse_statement_date(text):
 
 
 def classify_amounts(line, deposit_ref, withdrawal_ref, balance_ref):
-    """Find all amounts on a line and classify by nearest column.
-    Returns (deposit, withdrawal, balance, has_explicit_balance, all_positions).
+    """Classify amounts by column order (left-to-right).
+    On HSBC statements, columns are always: Withdrawal, Deposit, Balance (left to right).
+    We use the header reference positions to determine which column is which,
+    then assign amounts in left-to-right order.
     """
     deposit = 0.0
     withdrawal = 0.0
     balance = 0.0
     has_explicit_balance = False
-    positions = []
 
-    for m in re.finditer(r'([\d,]+\.\d{2})(?:DR)?', line):
-        val = parse_amount(m.group(1))
-        is_dr = m.group(0).endswith('DR')
-        pos = m.start()
-        positions.append((pos, val, m.group(), is_dr))
+    # Find all amounts with positions
+    amount_matches = [(m.start(), parse_amount(m.group(1)), m.group(0).endswith('DR'))
+                      for m in re.finditer(r'([\d,]+\.\d{2})(?:DR)?', line)]
+    if not amount_matches:
+        return deposit, withdrawal, balance, has_explicit_balance, []
 
-        # Find nearest column reference
-        dist_bal = abs(pos - balance_ref)
-        dist_wit = abs(pos - withdrawal_ref)
-        dist_dep = abs(pos - deposit_ref)
-        min_dist = min(dist_bal, dist_wit, dist_dep)
+    positions = [(p, v, g, d) for p, v, g, d in [(m[0], m[1], '', m[2]) for m in amount_matches]]
 
-        if min_dist == dist_bal and dist_bal < 30:
-            balance = -val if is_dr else val
-            has_explicit_balance = True
-        elif min_dist == dist_wit and dist_wit < 30:
-            withdrawal = val
-        elif min_dist == dist_dep and dist_dep < 30:
-            deposit = val
-        # else: amount in description area → ignore
+    # Determine column order from header references
+    # Columns: leftmost = withdrawal, middle = deposit, rightmost = balance
+    cols = sorted([(withdrawal_ref, 'wit'), (deposit_ref, 'dep'), (balance_ref, 'bal')])
+    col_order = [c[1] for c in cols]  # e.g. ['wit', 'dep', 'bal']
+
+    # Sort amounts left-to-right
+    sorted_amounts = sorted(amount_matches, key=lambda x: x[0])
+
+    # Assign amounts to columns based on order
+    # Use position-based verification: each amount should be within 35 chars of its expected column
+    for i, (pos, val, is_dr) in enumerate(sorted_amounts):
+        if i < len(col_order):
+            col = col_order[i]
+            # Verify: distance to assigned column should be reasonable
+            if col == 'wit':
+                if abs(pos - withdrawal_ref) < 40:
+                    withdrawal = val
+            elif col == 'dep':
+                if abs(pos - deposit_ref) < 40:
+                    deposit = val
+            elif col == 'bal':
+                if abs(pos - balance_ref) < 40:
+                    balance = -val if is_dr else val
+                    has_explicit_balance = True
+
+    # Fallback: if order-based failed, use nearest-column within 25 chars
+    if not has_explicit_balance and sorted_amounts:
+        for pos, val, is_dr in sorted_amounts:
+            dw, dd, db = abs(pos - withdrawal_ref), abs(pos - deposit_ref), abs(pos - balance_ref)
+            best = min(dw, dd, db)
+            if best == db and db < 25:
+                balance = -val if is_dr else val
+                has_explicit_balance = True
+            elif best == dw and dw < 25:
+                withdrawal = val
+            elif best == dd and dd < 25:
+                deposit = val
 
     return deposit, withdrawal, balance, has_explicit_balance, positions
 
@@ -109,7 +135,7 @@ def parse_account_section(section_text, account_type, year):
 
     transactions = []
     current_date = None
-    pending_desc = []  # description lines accumulated before an amount line
+    pending_desc = []
     sort_order = 0
 
     for line in lines[header_idx + 1:]:
@@ -157,6 +183,22 @@ def parse_account_section(section_text, account_type, year):
             continue
         if re.match(r'\(DR=DEBIT\)', stripped) or re.match(r'DR=結欠', stripped):
             continue
+        # Skip page header text that appears mid-transaction
+        if re.search(r'\(E/EY\)|\(E\)\s*$', stripped):
+            continue
+        if re.match(r'.*\bBRANCH\s+(?:HEAD|MAIN|CENTRAL)\b', stripped):
+            continue
+        if re.match(r'.*\bHEAD OFFICE\b', stripped):
+            continue
+        if re.match(r'.*\b總行\b', stripped):
+            continue
+        if 'ACCOUNT ACTIVITIES' in stripped and 'CON' in stripped:
+            continue
+        if re.match(r'^_{3,}', stripped):
+            continue
+        # Company name line: appears as "COMPANY NAME                BRANCH           HEAD OFFICE"
+        if re.search(r'\bBRANCH\s{2,}(?:HEAD|MAIN)\b', stripped):
+            continue
 
         # Check for date at line start (supports "27 JAN 26", "27JAN26", "27 Jan 2026")
         date_match = re.match(r'^(\d{1,2})\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s*(\d{2,4})?\b', stripped, re.IGNORECASE)
@@ -187,16 +229,34 @@ def parse_account_section(section_text, account_type, year):
             )
 
             if pending_desc:
-                full_desc = ' '.join(pending_desc)
+                # Clean page header garbage from accumulated descriptions
+                clean_pending = [d for d in pending_desc
+                    if not re.search(r'\(E/EY\)|\(E\)\s*$', d)
+                    and not re.match(r'.*\bBRANCH\s+(?:HEAD|MAIN|CENTRAL)\b', d)
+                    and not re.match(r'.*\bHEAD OFFICE\b', d)
+                    and not re.match(r'.*\b總行\b', d)
+                    and not 'ACCOUNT ACTIVITIES' in d
+                    and not re.match(r'^_{3,}', d)
+                    and not re.search(r'\bBRANCH\s{2,}(?:HEAD|MAIN)\b', d)]
+                full_desc = ' '.join(clean_pending)
                 if line_desc:
-                    full_desc += ' ' + line_desc
+                    full_desc += ' ' + line_desc if full_desc else line_desc
                 pending_desc = []
             else:
                 full_desc = line_desc
 
+            # Final cleanup: strip residual header text
+            clean_desc = full_desc
+            clean_desc = re.sub(r'\s*\(E/EY\)\s*', '', clean_desc)
+            clean_desc = re.sub(r'\s*PAGE\s+\d+\s*/\s*\d+\s*', ' ', clean_desc)
+            clean_desc = re.sub(r'\s*TECH FOR LIVING LIMITED\s+BRANCH\s+HEAD\s+OFFICE\s*', ' ', clean_desc)
+            clean_desc = re.sub(r'\s*ACCOUNT ACTIVITIES\s*\(?CON\'?T\)?\s*', ' ', clean_desc)
+            clean_desc = re.sub(r'\s*賬戶進支紀錄\s*\(續\)\s*', ' ', clean_desc)
+            clean_desc = re.sub(r'\s+', ' ', clean_desc).strip()
+
             transactions.append({
                 'transaction_date': current_date,
-                'description': full_desc,
+                'description': clean_desc,
                 'deposit_amount': deposit,
                 'withdrawal_amount': withdrawal,
                 'balance': balance,

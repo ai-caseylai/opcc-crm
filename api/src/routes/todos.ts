@@ -11,6 +11,7 @@ todos.use('*', authMiddleware);
 // ── List ──
 todos.get('/', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const status = c.req.query('status') || '';
   let q = 'SELECT * FROM todos WHERE user_id = ?';
   const p: any[] = [user.id];
@@ -31,11 +32,12 @@ const createSchema = z.object({
 
 todos.post('/', zValidator('json', createSchema), async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const data = c.req.valid('json');
   const id = `td-${uuidv4().slice(0, 8)}`;
 
-  const maxRow = await db.prepare('SELECT COALESCE(MAX(sort_order),0)+1 as next FROM todos WHERE user_id = ?').bind(user.id).first<{next:number}>();
+  const maxRow = await db.prepare('SELECT COALESCE(MAX(sort_order),0)+1 as next FROM todos WHERE user_id = ?').bind(tenantId).first<{next:number}>();
   const sort = maxRow?.next || 1;
 
   await db.prepare(
@@ -49,11 +51,12 @@ todos.post('/', zValidator('json', createSchema), async (c) => {
 // ── Update ──
 todos.patch('/:id', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const id = c.req.param('id');
   const body = await c.req.json();
 
-  const existing = await db.prepare('SELECT id FROM todos WHERE id = ? AND user_id = ?').bind(id, user.id).first();
+  const existing = await db.prepare('SELECT id FROM todos WHERE id = ? AND user_id = ?').bind(id, tenantId).first();
   if (!existing) return c.json({ error: 'Not found' }, 404);
 
   const sets: string[] = []; const params: any[] = [];
@@ -64,7 +67,7 @@ todos.patch('/:id', async (c) => {
   }
   if (sets.length === 0) return c.json({ error: 'No valid fields' }, 400);
   sets.push("updated_at = datetime('now')");
-  params.push(id, user.id);
+  params.push(id, tenantId);
 
   await db.prepare(`UPDATE todos SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).bind(...params).run();
   const row = await db.prepare('SELECT * FROM todos WHERE id = ?').bind(id).first();
@@ -74,11 +77,12 @@ todos.patch('/:id', async (c) => {
 // ── Delete ──
 todos.delete('/:id', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const existing = await c.env.DB.prepare('SELECT id FROM todos WHERE id = ? AND user_id = ?')
-    .bind(c.req.param('id'), user.id).first();
+    .bind(c.req.param('id'), tenantId).first();
   if (!existing) return c.json({ error: 'Not found' }, 404);
   await c.env.DB.prepare('DELETE FROM todos WHERE id = ? AND user_id = ?')
-    .bind(c.req.param('id'), user.id).run();
+    .bind(c.req.param('id'), tenantId).run();
   return c.json({ success: true });
 });
 

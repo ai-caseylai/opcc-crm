@@ -19,6 +19,7 @@ const importCustomersSchema = z.object({
 
 imports.post('/customers', zValidator('json', importCustomersSchema), async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const { data } = c.req.valid('json');
   let imported = 0, skipped = 0;
@@ -45,6 +46,7 @@ imports.post('/suppliers', zValidator('json', z.object({
   })),
 })), async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const { data } = c.req.valid('json');
   let imported = 0;
@@ -65,6 +67,7 @@ imports.post('/products', zValidator('json', z.object({
   })),
 })), async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const { data } = c.req.valid('json');
   let imported = 0;
@@ -116,6 +119,7 @@ imports.post('/invoices', zValidator('json', z.object({
   })),
 })), async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const { data } = c.req.valid('json');
   let created = 0, skipped = 0;
@@ -136,12 +140,12 @@ imports.post('/invoices', zValidator('json', z.object({
       let customerId: string | null = null;
       if (first.customer_email) {
         const c = await db.prepare('SELECT id FROM customers WHERE user_id = ? AND email = ?')
-          .bind(user.id, first.customer_email.trim()).first<{ id: string }>();
+          .bind(tenantId, first.customer_email.trim()).first<{ id: string }>();
         if (c) customerId = c.id;
       }
       if (!customerId && first.customer_name) {
         const c = await db.prepare('SELECT id FROM customers WHERE user_id = ? AND name LIKE ?')
-          .bind(user.id, `%${first.customer_name.trim()}%`).first<{ id: string }>();
+          .bind(tenantId, `%${first.customer_name.trim()}%`).first<{ id: string }>();
         if (c) customerId = c.id;
       }
       // Create customer if not found
@@ -208,6 +212,7 @@ imports.post('/quotations', zValidator('json', z.object({
   })),
 })), async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const { data } = c.req.valid('json');
   let created = 0, skipped = 0;
@@ -226,12 +231,12 @@ imports.post('/quotations', zValidator('json', z.object({
       let customerId: string | null = null;
       if (first.customer_email) {
         const c = await db.prepare('SELECT id FROM customers WHERE user_id = ? AND email = ?')
-          .bind(user.id, first.customer_email.trim()).first<{ id: string }>();
+          .bind(tenantId, first.customer_email.trim()).first<{ id: string }>();
         if (c) customerId = c.id;
       }
       if (!customerId && first.customer_name) {
         const c = await db.prepare('SELECT id FROM customers WHERE user_id = ? AND name LIKE ?')
-          .bind(user.id, `%${first.customer_name.trim()}%`).first<{ id: string }>();
+          .bind(tenantId, `%${first.customer_name.trim()}%`).first<{ id: string }>();
         if (c) customerId = c.id;
       }
       if (!customerId && first.customer_name) {
@@ -296,6 +301,7 @@ imports.post('/purchase-orders', zValidator('json', z.object({
   })),
 })), async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const { data } = c.req.valid('json');
   let created = 0, skipped = 0;
@@ -314,7 +320,7 @@ imports.post('/purchase-orders', zValidator('json', z.object({
       let supplierId: string | null = null;
       if (first.supplier_name) {
         const s = await db.prepare('SELECT id FROM suppliers WHERE user_id = ? AND name LIKE ?')
-          .bind(user.id, `%${first.supplier_name.trim()}%`).first<{ id: string }>();
+          .bind(tenantId, `%${first.supplier_name.trim()}%`).first<{ id: string }>();
         if (s) supplierId = s.id;
       }
       if (!supplierId && first.supplier_name) {
@@ -373,6 +379,7 @@ imports.post('/service-orders', zValidator('json', z.object({
   })),
 })), async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const { data } = c.req.valid('json');
   let created = 0, skipped = 0;
@@ -391,12 +398,12 @@ imports.post('/service-orders', zValidator('json', z.object({
       let customerId: string | null = null;
       if (first.customer_email) {
         const c = await db.prepare('SELECT id FROM customers WHERE user_id = ? AND email = ?')
-          .bind(user.id, first.customer_email.trim()).first<{ id: string }>();
+          .bind(tenantId, first.customer_email.trim()).first<{ id: string }>();
         if (c) customerId = c.id;
       }
       if (!customerId && first.customer_name) {
         const c = await db.prepare('SELECT id FROM customers WHERE user_id = ? AND name LIKE ?')
-          .bind(user.id, `%${first.customer_name.trim()}%`).first<{ id: string }>();
+          .bind(tenantId, `%${first.customer_name.trim()}%`).first<{ id: string }>();
         if (c) customerId = c.id;
       }
       if (!customerId && first.customer_name) {

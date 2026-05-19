@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { Bindings, Variables } from '../types';
 import { authMiddleware } from '../middleware/auth';
 import { wsBroadcast } from './ws';
+import { processBankStatement, extractCompanyInfo, extractBankInfo } from '../lib/bank-ocr';
 
 // Shared import: file_record → bank_statement + bank_transactions
 async function importStatementFromFile(
@@ -115,6 +116,92 @@ ${ocrText.slice(0, 8000)}` }],
   await db.prepare(
     "UPDATE file_records SET category = 'bank_statement', folder = 'Bank Statements', updated_at = datetime('now') WHERE id = ?"
   ).bind(fileId).run();
+
+  // Auto-categorize transactions
+  try {
+    const rules: [RegExp, string][] = [
+      [/B\/F\s+BALANCE|承上結餘/i, ''],
+      [/INTEREST\s*(PAYMENT|收入)|利息/i, '42010'],
+      [/VISA\s+DEBIT.*-.*CR|CREDIT.*VISA/i, '52070'],
+      [/VISA\s+DEBIT|扣賬卡交易/i, '52070'],
+      [/TRANSFER-DEBIT|轉賬支出/i, '52070'],
+      [/FPS\s+FEE|FPSPAYMENT/i, '52100'],
+      [/OUTCLEARING|RETURN|退票/i, '22020'],
+      [/SALARY|薪金|薪資|工資/i, '52020'],
+      [/RENT|租金/i, '52030'],
+      [/UTILITIES|水電|電費|水費/i, '52040'],
+      [/INSURANCE|保險/i, '52090'],
+      [/TAX|稅|IRD/i, '57010'],
+      [/SOFTWARE|SUBSCRIPTION|CLOUD|API|\.AI\b|\.COM/i, '52070'],
+      [/MPF|強積金/i, '52021'],
+      [/AUDIT|審計/i, '52081'],
+      [/SECRETARY|秘書/i, '52084'],
+      [/TRAVEL|交通|機票|HOTEL/i, '54000'],
+      [/BANK\s+CHARGE|手續費/i, '52100'],
+    ];
+    const directorPattern = /JOSEPH|LIN\s*PUI|LAI\s*KIN|RAYMOND|SZETO/i;
+
+    const txs = await db.prepare(
+      'SELECT id, description, deposit_amount FROM bank_transactions WHERE bank_statement_id = ? AND account_code IS NULL'
+    ).bind(stmtId).all();
+
+    for (const tx of txs.results as any[]) {
+      const desc = tx.description || '';
+      const isDirector = directorPattern.test(desc);
+      let code = '';
+      for (const [pattern, acctCode] of rules) {
+        if (pattern.test(desc)) { code = acctCode; break; }
+      }
+      if (isDirector && /DIRECT\s+CREDIT|TRANSFER-DEBIT|FPS|自動轉賬|轉賬/.test(desc)) code = '22020';
+      if (!code && tx.deposit_amount > 0 && /DIRECT\s+CREDIT|自動轉賬存入/i.test(desc)) code = isDirector ? '22020' : '41020';
+      if (code) {
+        await db.prepare('UPDATE bank_transactions SET account_code = ? WHERE id = ?').bind(code, tx.id).run();
+      }
+    }
+  } catch { /* non-critical */ }
+
+  // Auto-fill company & bank profile from first bank statement if empty
+  try {
+    const text = fileRow.ocr_text || ocrText || '';
+    if (text.length > 100) {
+      const company = extractCompanyInfo(text);
+      const bank = extractBankInfo(text);
+
+      const existing = await db.prepare(
+        'SELECT name, address, bank_name, bank_account FROM company_settings WHERE user_id = ?'
+      ).bind(userId).first<{ name: string; address: string | null; bank_name: string; bank_account: string }>();
+
+      const sets: string[] = [];
+      const params: any[] = [];
+
+      if (company.name && (!existing?.name || existing.name === 'OPCC CRM' || !existing?.name)) {
+        sets.push('name = ?, legal_name = ?');
+        params.push(company.name, company.name);
+      }
+      if (company.address && (!existing?.address || !existing.address?.trim() || existing.address === 'Hong Kong')) {
+        sets.push('address = ?');
+        params.push(company.address);
+      }
+      if (company.address2) {
+        sets.push('address2 = ?');
+        params.push(company.address2);
+      }
+      if (bank.bank_name && !existing?.bank_name) {
+        sets.push('bank_name = ?');
+        params.push(bank.bank_name);
+      }
+      if (bank.account_number && !existing?.bank_account) {
+        sets.push('bank_account = ?');
+        params.push(bank.account_number);
+      }
+
+      if (sets.length > 0) {
+        sets.push("updated_at = datetime('now')");
+        params.push(userId);
+        await db.prepare(`UPDATE company_settings SET ${sets.join(', ')} WHERE user_id = ?`).bind(...params).run();
+      }
+    }
+  } catch { /* non-critical */ }
 
   return {
     success: true,
@@ -237,7 +324,7 @@ ${ocrText.slice(0, 8000)}` }],
   const direction = fileRow.direction || (parsed?.customer_name ? 'outgoing' : 'incoming');
 
   // Check for duplicate invoice number
-  const existing = await db.prepare('SELECT id FROM invoices WHERE user_id = ? AND invoice_number = ?').bind(userId, invNumber).first();
+  const existing = await db.prepare('SELECT id FROM invoices WHERE user_id = ? AND invoice_number = ?').bind(userId, invNumber).first<{ id: string }>();
   if (existing) return { success: false, error: `Invoice ${invNumber} already exists`, invoice_id: existing.id };
 
   const invId = `i-${uuidv4().slice(0, 8)}`;
@@ -373,6 +460,7 @@ async function runOcr(fileData: string, fileType: string, ai: any): Promise<{ te
 // List files with optional folder filter and search
 files.get('/', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const folder = c.req.query('folder') || '';
   const q = c.req.query('q') || '';
 
@@ -396,24 +484,27 @@ files.get('/', async (c) => {
 // List distinct folder names
 files.get('/folders', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const rows = await c.env.DB.prepare(
     'SELECT DISTINCT folder FROM file_records WHERE user_id = ? ORDER BY folder'
-  ).bind(user.id).all();
+  ).bind(tenantId).all();
   return c.json({ data: rows.results.map(r => r.folder) });
 });
 
 // Get files with issues (for nav badge)
 files.get('/issues', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const row = await c.env.DB.prepare(
     "SELECT COUNT(*) as count FROM file_records WHERE user_id = ? AND ocr_status IN ('failed', 'unclear')"
-  ).bind(user.id).first<{ count: number }>();
+  ).bind(tenantId).first<{ count: number }>();
   return c.json({ issues: row?.count || 0 });
 });
 
 // Upload file to R2 + store metadata in D1
 files.post('/upload', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const body = await c.req.json();
   const { filename, original_name, file_type, file_size, file_data, folder: reqFolder, description } = body;
 
@@ -421,7 +512,7 @@ files.post('/upload', async (c) => {
 
   const id = `fs-${uuidv4().slice(0, 8)}`;
   const safeName = original_name || filename || 'untitled';
-  const r2Key = `${user.id}/${id}-${safeName}`;
+  const r2Key = `${tenantId}/${id}-${safeName}`;
   const displayName = filename || safeName;
 
   // Auto-classify
@@ -458,18 +549,113 @@ files.post('/upload', async (c) => {
     wsBroadcast(user.id, { type: 'ocr_request', file_id: id, filename: displayName, file_type: file_type || 'application/octet-stream', folder: folder, category: classification.category });
   } catch { /* WebSocket not available */ }
 
-  // Auto-import bank statements
-  if (classification.category === 'bank_statement' && ocrResult.status === 'completed') {
-    c.executionCtx.waitUntil(
-      importStatementFromFile(id, user.id, c.env.DB, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY)
-    );
+  // Auto-import bank statements with dual OCR
+  if (classification.category === 'bank_statement') {
+    c.executionCtx.waitUntil((async () => {
+      try {
+        // Mark as processing
+        await c.env.DB.prepare("UPDATE file_records SET ocr_status = 'processing', updated_at = datetime('now') WHERE id = ?")
+          .bind(id).run();
+
+        // Path A: Import using pdftotext OCR
+        const importResult = await importStatementFromFile(id, user.id, c.env.DB, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY);
+
+        // Path B: Run GLM-OCR in background for cross-validation
+        if (importResult.success && c.env.DEEPSEEK_API_KEY) {
+          try {
+            const obj = await c.env.FILE_BUCKET.get(r2Key);
+            if (obj) {
+              const buffer = await obj.arrayBuffer();
+              const bytes = new Uint8Array(buffer);
+              let binary = '';
+              for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+              const base64 = btoa(binary);
+
+              const glmResp = await fetch('https://api.z.ai/api/paas/v4/layout_parsing', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': 'Bearer bc604bbc774c49528e8615564aa51ea3.f0Hzibmlxdd5bKGZ',
+                },
+                body: JSON.stringify({ model: 'glm-ocr', file: `data:${file_type || 'application/pdf'};base64,${base64}` }),
+              });
+
+              if (glmResp.ok) {
+                const glmData = await glmResp.json() as any;
+                const glmText = JSON.stringify(glmData);
+                // Store full GLM-OCR in file_records
+                await c.env.DB.prepare(
+                  "UPDATE file_records SET ocr_text = ?, ocr_status = 'completed' WHERE id = ?"
+                ).bind(glmText.slice(0, 50000), id).run();
+                // Also update linked bank_statement
+                await c.env.DB.prepare(
+                  "UPDATE bank_statements SET ocr_text = ? WHERE r2_key = ?"
+                ).bind(glmText.slice(0, 50000), r2Key).run();
+              }
+            }
+          } catch { /* GLM-OCR is supplementary */ }
+        }
+
+        // Mark as completed
+        await c.env.DB.prepare("UPDATE file_records SET ocr_status = 'completed', updated_at = datetime('now') WHERE id = ?")
+          .bind(id).run();
+      } catch (e) {
+        await c.env.DB.prepare("UPDATE file_records SET ocr_status = 'failed', updated_at = datetime('now') WHERE id = ?")
+          .bind(id).run();
+      }
+    })());
   }
 
-  // Auto-import invoices
-  if (classification.category === 'invoice' && ocrResult.status === 'completed') {
-    c.executionCtx.waitUntil(
-      importInvoiceFromFile(id, user.id, c.env.DB, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY)
-    );
+  // Auto-import invoices with dual OCR
+  if (classification.category === 'invoice') {
+    c.executionCtx.waitUntil((async () => {
+      try {
+        await c.env.DB.prepare("UPDATE file_records SET ocr_status = 'processing', updated_at = datetime('now') WHERE id = ?")
+          .bind(id).run();
+
+        // Try GLM-OCR first for better invoice recognition
+        let ocrText = ocrResult.text || '';
+        if (c.env.DEEPSEEK_API_KEY) {
+          try {
+            const obj = await c.env.FILE_BUCKET.get(r2Key);
+            if (obj) {
+              const buffer = await obj.arrayBuffer();
+              const bytes = new Uint8Array(buffer);
+              let binary = '';
+              for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+              const base64 = btoa(binary);
+
+              const glmResp = await fetch('https://api.z.ai/api/paas/v4/layout_parsing', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': 'Bearer bc604bbc774c49528e8615564aa51ea3.f0Hzibmlxdd5bKGZ',
+                },
+                body: JSON.stringify({ model: 'glm-ocr', file: `data:${file_type || 'application/pdf'};base64,${base64}` }),
+              });
+              if (glmResp.ok) {
+                const glmData = await glmResp.json() as any;
+                ocrText = JSON.stringify(glmData);
+                await c.env.DB.prepare(
+                  "UPDATE file_records SET ocr_text = ?, ocr_status = 'completed' WHERE id = ?"
+                ).bind(ocrText.slice(0, 10000), id).run();
+              }
+            }
+          } catch { /* GLM-OCR fallback */ }
+        }
+
+        // If we have OCR text, try to import
+        if (ocrText && ocrText.length > 20) {
+          await importInvoiceFromFile(id, user.id, c.env.DB, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY);
+        }
+
+        await c.env.DB.prepare("UPDATE file_records SET ocr_status = 'completed', updated_at = datetime('now') WHERE id = ?")
+          .bind(id).run();
+      } catch (e) {
+        await c.env.DB.prepare("UPDATE file_records SET ocr_status = 'failed', updated_at = datetime('now') WHERE id = ?")
+          .bind(id).run();
+      }
+    })());
   }
 
   return c.json(row, 201);
@@ -478,6 +664,7 @@ files.post('/upload', async (c) => {
 // Batch upload multiple files
 files.post('/upload-batch', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const body = await c.req.json();
   const { files: fileList, folder: batchFolder, description: batchDesc } = body as {
     files: { filename: string; original_name?: string; file_type?: string; file_size?: number; file_data: string }[];
@@ -495,7 +682,7 @@ files.post('/upload-batch', async (c) => {
 
     const id = `fs-${uuidv4().slice(0, 8)}`;
     const safeName = f.original_name || f.filename || 'untitled';
-    const r2Key = `${user.id}/${id}-${safeName}`;
+    const r2Key = `${tenantId}/${id}-${safeName}`;
     const displayName = f.filename || safeName;
 
     const classification = classifyFile(safeName, f.file_type || '');
@@ -528,10 +715,35 @@ files.post('/upload-batch', async (c) => {
     }
 
     // Auto-import invoices
-    if (classification.category === 'invoice' && ocrResult.status === 'completed') {
-      c.executionCtx.waitUntil(
-        importInvoiceFromFile(id, user.id, c.env.DB, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY)
-      );
+    if (classification.category === 'invoice') {
+      c.executionCtx.waitUntil((async () => {
+        try {
+          const obj = await c.env.FILE_BUCKET.get(r2Key);
+          if (obj) {
+            const buffer = await obj.arrayBuffer();
+            const bytes = new Uint8Array(buffer);
+            let binary = '';
+            for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+            const base64 = btoa(binary);
+
+            const glmResp = await fetch('https://api.z.ai/api/paas/v4/layout_parsing', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer bc604bbc774c49528e8615564aa51ea3.f0Hzibmlxdd5bKGZ',
+              },
+              body: JSON.stringify({ model: 'glm-ocr', file: `data:${f.file_type || 'application/pdf'};base64,${base64}` }),
+            });
+            if (glmResp.ok) {
+              const glmData = await glmResp.json() as any;
+              await c.env.DB.prepare(
+                "UPDATE file_records SET ocr_text = ?, ocr_status = 'completed' WHERE id = ?"
+              ).bind(JSON.stringify(glmData).slice(0, 10000), id).run();
+            }
+          }
+        } catch {}
+        await importInvoiceFromFile(id, user.id, c.env.DB, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY);
+      })());
     }
   }
 
@@ -541,9 +753,10 @@ files.post('/upload-batch', async (c) => {
 // Get file metadata
 files.get('/:id', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const row = await c.env.DB.prepare(
     'SELECT id, folder, filename, original_name, file_type, file_size, description, ocr_text, ocr_status, category, direction, payment_status, amount, created_at, updated_at FROM file_records WHERE id = ? AND user_id = ?'
-  ).bind(c.req.param('id'), user.id).first();
+  ).bind(c.req.param('id'), tenantId).first();
   if (!row) return c.json({ error: 'Not found' }, 404);
   return c.json(row);
 });
@@ -551,9 +764,10 @@ files.get('/:id', async (c) => {
 // Download from R2
 files.get('/:id/download', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const row = await c.env.DB.prepare(
     'SELECT r2_key, file_type, original_name, filename FROM file_records WHERE id = ? AND user_id = ?'
-  ).bind(c.req.param('id'), user.id).first();
+  ).bind(c.req.param('id'), tenantId).first();
   if (!row) return c.json({ error: 'Not found' }, 404);
 
   const obj = await c.env.FILE_BUCKET.get(row.r2_key as string);
@@ -572,11 +786,12 @@ files.get('/:id/download', async (c) => {
 // Update metadata (rename, move folder, change description)
 files.patch('/:id', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const id = c.req.param('id');
   const body = await c.req.json();
 
   const existing = await c.env.DB.prepare('SELECT id FROM file_records WHERE id = ? AND user_id = ?')
-    .bind(id, user.id).first();
+    .bind(id, tenantId).first();
   if (!existing) return c.json({ error: 'Not found' }, 404);
 
   const allowedFields = ['filename', 'folder', 'description'];
@@ -590,7 +805,7 @@ files.patch('/:id', async (c) => {
   }
   if (sets.length === 0) return c.json({ error: 'No valid fields' }, 400);
   sets.push("updated_at = datetime('now')");
-  params.push(id, user.id);
+  params.push(id, tenantId);
 
   await c.env.DB.prepare(`UPDATE file_records SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`)
     .bind(...params).run();
@@ -604,14 +819,15 @@ files.patch('/:id', async (c) => {
 // Delete from R2 + D1
 files.delete('/:id', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const existing = await c.env.DB.prepare(
     'SELECT id, r2_key FROM file_records WHERE id = ? AND user_id = ?'
-  ).bind(c.req.param('id'), user.id).first();
+  ).bind(c.req.param('id'), tenantId).first();
   if (!existing) return c.json({ error: 'Not found' }, 404);
 
   await c.env.FILE_BUCKET.delete(existing.r2_key as string);
   await c.env.DB.prepare('DELETE FROM file_records WHERE id = ? AND user_id = ?')
-    .bind(c.req.param('id'), user.id).run();
+    .bind(c.req.param('id'), tenantId).run();
   return c.json({ success: true });
 });
 
@@ -646,11 +862,12 @@ async function runDeepseekOcr(base64: string, mimeType: string, apiKey: string):
 // Reprocess files with pending/missing OCR or classification
 files.post('/reprocess', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
 
   const rows = await db.prepare(
     "SELECT id, r2_key, filename, original_name, file_type FROM file_records WHERE user_id = ? AND (ocr_status IN ('pending','skipped','failed') OR category = '' OR category IS NULL) LIMIT 50"
-  ).bind(user.id).all();
+  ).bind(tenantId).all();
 
   let processed = 0;
   let failed = 0;
@@ -695,7 +912,7 @@ files.post('/reprocess', async (c) => {
 
       await db.prepare(
         "UPDATE file_records SET ocr_text = ?, ocr_status = ?, category = ?, folder = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?"
-      ).bind(ocrText, ocrStatus, classification.category, classification.folder, row.id, user.id).run();
+      ).bind(ocrText, ocrStatus, classification.category, classification.folder, row.id, tenantId).run();
 
       processed++;
     } catch {
@@ -709,13 +926,14 @@ files.post('/reprocess', async (c) => {
 // Docker OCR worker updates OCR results for a file
 files.post('/:id/ocr-result', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const id = c.req.param('id');
   const body = await c.req.json();
   const { ocr_text, ocr_status, category, folder } = body as { ocr_text?: string; ocr_status?: string; category?: string; folder?: string };
 
   const existing = await db.prepare('SELECT id FROM file_records WHERE id = ? AND user_id = ?')
-    .bind(id, user.id).first();
+    .bind(id, tenantId).first();
   if (!existing) return c.json({ error: 'Not found' }, 404);
 
   const sets: string[] = [];
@@ -726,7 +944,7 @@ files.post('/:id/ocr-result', async (c) => {
   if (folder !== undefined) { sets.push('folder = ?'); params.push(folder); }
   if (sets.length === 0) return c.json({ error: 'No fields' }, 400);
   sets.push("updated_at = datetime('now')");
-  params.push(id, user.id);
+  params.push(id, tenantId);
 
   await db.prepare(`UPDATE file_records SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).bind(...params).run();
   const row = await db.prepare('SELECT id, filename, ocr_status, ocr_text, category, folder FROM file_records WHERE id = ?').bind(id).first();
@@ -751,6 +969,7 @@ files.post('/:id/ocr-result', async (c) => {
 // Import a file as a bank statement (OCR + AI parse → bank_statement + bank_transactions)
 files.post('/:id/import-statement', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const result = await importStatementFromFile(
     c.req.param('id'), user.id, c.env.DB, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY
   );
@@ -764,6 +983,7 @@ files.post('/:id/import-statement', async (c) => {
 // Import a file as an invoice (OCR + AI parse → invoice + invoice_items)
 files.post('/:id/import-invoice', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const result = await importInvoiceFromFile(
     c.req.param('id'), user.id, c.env.DB, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY
   );
@@ -777,6 +997,7 @@ files.post('/:id/import-invoice', async (c) => {
 // ── Auto-match invoice files with bank transactions ──
 files.post('/auto-match-invoices', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
 
   // Get unmatched invoice files with amounts
@@ -784,18 +1005,18 @@ files.post('/auto-match-invoices', async (c) => {
     `SELECT id, filename, original_name, ocr_text, direction, amount, category
      FROM file_records
      WHERE user_id = ? AND category = 'invoice' AND payment_status = 'unmatched' AND amount IS NOT NULL AND amount > 0`
-  ).bind(user.id).all();
+  ).bind(tenantId).all();
 
   // Get unmatched bank transactions
   const deposits = await db.prepare(
     `SELECT id, transaction_date, description, deposit_amount
      FROM bank_transactions WHERE user_id = ? AND deposit_amount > 0 AND match_status = 'unmatched'`
-  ).bind(user.id).all();
+  ).bind(tenantId).all();
 
   const withdrawals = await db.prepare(
     `SELECT id, transaction_date, description, withdrawal_amount
      FROM bank_transactions WHERE user_id = ? AND withdrawal_amount > 0 AND match_status = 'unmatched'`
-  ).bind(user.id).all();
+  ).bind(tenantId).all();
 
   const matched: any[] = [];
 
@@ -831,6 +1052,7 @@ files.post('/auto-match-invoices', async (c) => {
 // ── Update file direction manually ──
 files.patch('/:id/direction', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const id = c.req.param('id');
   const { direction } = await c.req.json();
   if (!['outgoing', 'incoming'].includes(direction)) {
@@ -838,8 +1060,141 @@ files.patch('/:id/direction', async (c) => {
   }
   await c.env.DB.prepare(
     'UPDATE file_records SET direction = ? WHERE id = ? AND user_id = ?'
-  ).bind(direction, id, user.id).run();
+  ).bind(direction, id, tenantId).run();
   return c.json({ success: true });
+});
+
+// DeepSeek Vision OCR — send images to DeepSeek Chat (supports vision)
+files.post('/deepseek-vision', async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json();
+  const { images, prompt } = body as { images: string[]; prompt?: string };
+
+  if (!images || images.length === 0) return c.json({ error: 'images array required (base64 data URIs)' }, 400);
+
+  const defaultPrompt = `Extract all visible text from this bank statement. Return the data as JSON with:
+- bank_name, account_number, statement_period (YYY-MM-DD to YYY-MM-DD)
+- opening_balance (number), closing_balance (number)
+- transactions: array of { transaction_date (YYY-MM-DD), description, deposit_amount (number, 0 if withdrawal), withdrawal_amount (number, 0 if deposit), balance (number or null) }
+Return ONLY the JSON object, no other text.`;
+
+  const content: any[] = [{ type: 'text', text: prompt || defaultPrompt }];
+  for (const img of images) {
+    content.push({ type: 'image_url', image_url: { url: img } });
+  }
+
+  try {
+    const resp = await fetch('https://api.deepseek.com/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${c.env.DEEPSEEK_API_KEY}` },
+      body: JSON.stringify({ model: 'deepseek-chat', messages: [{ role: 'user', content }], max_tokens: 4000 }),
+    });
+    const respText = await resp.text();
+    let data: any;
+    try { data = JSON.parse(respText); } catch { data = { parse_error: true, raw: respText.slice(0, 1000) }; }
+
+    if (!resp.ok) {
+      return c.json({ error: 'DeepSeek API error', status: resp.status, detail: data }, 502);
+    }
+
+    const raw = data.choices?.[0]?.message?.content || '';
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : { raw };
+    return c.json({ success: true, data: parsed, raw, usage: data.usage });
+  } catch (e: any) {
+    return c.json({ error: 'DeepSeek Vision failed: ' + (e.message || 'unknown') }, 500);
+  }
+});
+
+// Z.AI GLM-OCR proxy — dedicated OCR model, supports PDF and images
+files.post('/glm-ocr', async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json();
+  const { file_data, file_url } = body as { file_data?: string; file_url?: string };
+
+  if (!file_data && !file_url) return c.json({ error: 'file_data (base64) or file_url required' }, 400);
+
+  try {
+    const requestBody: any = { model: 'glm-ocr' };
+    if (file_url) {
+      requestBody.file = file_url;
+    } else {
+      requestBody.file = file_data;
+    }
+
+    const resp = await fetch('https://api.z.ai/api/paas/v4/layout_parsing', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer bc604bbc774c49528e8615564aa51ea3.f0Hzibmlxdd5bKGZ',
+      },
+      body: JSON.stringify(requestBody),
+    });
+    const respText = await resp.text();
+    let data: any;
+    try { data = JSON.parse(respText); } catch { data = { raw: respText }; }
+
+    if (!resp.ok) {
+      return c.json({ error: 'GLM-OCR API error', status: resp.status, detail: data }, 502);
+    }
+
+    return c.json({ success: true, data });
+  } catch (e: any) {
+    return c.json({ error: 'GLM-OCR failed: ' + (e.message || 'unknown') }, 500);
+  }
+});
+
+// Run GLM-OCR on an uploaded file (downloads from R2, sends to Z.AI)
+files.post('/:id/glm-ocr', async (c) => {
+  const user = c.get('user');
+  const id = c.req.param('id');
+
+  const fileRow = await c.env.DB.prepare(
+    'SELECT id, r2_key, filename, original_name, file_type, ocr_text FROM file_records WHERE id = ? AND user_id = ?'
+  ).bind(id, user.id).first<{ id: string; r2_key: string; filename: string; original_name: string; file_type: string; ocr_text: string }>();
+  if (!fileRow) return c.json({ error: 'File not found' }, 404);
+
+  const obj = await c.env.FILE_BUCKET.get(fileRow.r2_key);
+  if (!obj) return c.json({ error: 'File not found in storage' }, 404);
+
+  const buffer = await obj.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  const base64 = btoa(binary);
+
+  try {
+    const resp = await fetch('https://api.z.ai/api/paas/v4/layout_parsing', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer bc604bbc774c49528e8615564aa51ea3.f0Hzibmlxdd5bKGZ',
+      },
+      body: JSON.stringify({ model: 'glm-ocr', file: `data:${fileRow.file_type || 'application/pdf'};base64,${base64}` }),
+    });
+    const respText = await resp.text();
+    let data: any;
+    try { data = JSON.parse(respText); } catch { data = { raw: respText }; }
+
+    if (!resp.ok) {
+      return c.json({ error: 'GLM-OCR API error', status: resp.status, detail: data }, 502);
+    }
+
+    // Save OCR result to file_records (full GLM-OCR JSON)
+    const ocrText = typeof data === 'string' ? data : JSON.stringify(data);
+    await c.env.DB.prepare(
+      "UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ?"
+    ).bind(ocrText.slice(0, 50000), id).run();
+
+    // Also update linked bank_statement ocr_text
+    await c.env.DB.prepare(
+      "UPDATE bank_statements SET ocr_text = ?, updated_at = datetime('now') WHERE r2_key = (SELECT r2_key FROM file_records WHERE id = ?)"
+    ).bind(ocrText.slice(0, 50000), id).run();
+
+    return c.json({ success: true, file_id: id, ocr_result: data });
+  } catch (e: any) {
+    return c.json({ error: 'GLM-OCR failed: ' + (e.message || 'unknown') }, 500);
+  }
 });
 
 export { files as fileStorageRoutes };

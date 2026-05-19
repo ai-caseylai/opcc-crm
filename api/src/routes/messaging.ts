@@ -14,16 +14,18 @@ const messaging = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 messaging.get('/channels', authMiddleware, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const rows = await c.env.DB.prepare(
     'SELECT id, channel_type, name, phone_number, is_active, wuzapi_url, wuzapi_key, created_at FROM channels WHERE user_id = ? ORDER BY channel_type, name'
-  ).bind(user.id).all();
+  ).bind(tenantId).all();
   return c.json({ data: rows.results });
 });
 
 messaging.get('/channels/:id', authMiddleware, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const row = await c.env.DB.prepare('SELECT * FROM channels WHERE id = ? AND user_id = ?')
-    .bind(c.req.param('id'), user.id).first();
+    .bind(c.req.param('id'), tenantId).first();
   if (!row) return c.json({ error: 'Not found' }, 404);
   return c.json(row);
 });
@@ -40,6 +42,7 @@ const channelSchema = z.object({
 
 messaging.post('/channels', authMiddleware, zValidator('json', channelSchema), async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const data = c.req.valid('json');
   const id = `ch-${uuidv4().slice(0, 8)}`;
@@ -54,11 +57,12 @@ messaging.post('/channels', authMiddleware, zValidator('json', channelSchema), a
 
 messaging.put('/channels/:id', authMiddleware, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const id = c.req.param('id');
   const body = await c.req.json();
 
-  const existing = await db.prepare('SELECT id FROM channels WHERE id = ? AND user_id = ?').bind(id, user.id).first();
+  const existing = await db.prepare('SELECT id FROM channels WHERE id = ? AND user_id = ?').bind(id, tenantId).first();
   if (!existing) return c.json({ error: 'Not found' }, 404);
 
   const sets: string[] = []; const params: any[] = [];
@@ -67,7 +71,7 @@ messaging.put('/channels/:id', authMiddleware, async (c) => {
   }
   if (sets.length === 0) return c.json({ error: 'No fields' }, 400);
   sets.push("updated_at = datetime('now')");
-  params.push(id, user.id);
+  params.push(id, tenantId);
   await db.prepare(`UPDATE channels SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).bind(...params).run();
 
   const row = await db.prepare('SELECT * FROM channels WHERE id = ?').bind(id).first();
@@ -76,8 +80,9 @@ messaging.put('/channels/:id', authMiddleware, async (c) => {
 
 messaging.delete('/channels/:id', authMiddleware, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   await c.env.DB.prepare('UPDATE channels SET is_active = 0 WHERE id = ? AND user_id = ?')
-    .bind(c.req.param('id'), user.id).run();
+    .bind(c.req.param('id'), tenantId).run();
   return c.json({ success: true });
 });
 
@@ -224,6 +229,7 @@ messaging.post('/wuzapi/sessions', authMiddleware, zValidator('json', z.object({
   phone_number: z.string().optional(),
 })), async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const { device_name, phone_number } = c.req.valid('json');
   const id = `ws-${uuidv4().slice(0, 8)}`;
@@ -238,9 +244,10 @@ messaging.post('/wuzapi/sessions', authMiddleware, zValidator('json', z.object({
 
 messaging.get('/wuzapi/sessions', authMiddleware, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const rows = await c.env.DB.prepare(
     'SELECT id, device_name, phone_number, jid, pair_status, last_connected_at, created_at FROM wuzapi_sessions WHERE user_id = ? ORDER BY created_at DESC'
-  ).bind(user.id).all();
+  ).bind(tenantId).all();
   return c.json({ data: rows.results });
 });
 
@@ -250,6 +257,7 @@ messaging.patch('/wuzapi/sessions/:id', authMiddleware, zValidator('json', z.obj
   jid: z.string().optional(),
 })), async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const id = c.req.param('id');
   const data = c.req.valid('json');
@@ -260,7 +268,7 @@ messaging.patch('/wuzapi/sessions/:id', authMiddleware, zValidator('json', z.obj
   if (data.jid) { sets.push('jid = ?'); params.push(data.jid); }
   sets.push("updated_at = datetime('now')");
   if (data.pair_status === 'paired') sets.push("last_connected_at = datetime('now')");
-  params.push(id, user.id);
+  params.push(id, tenantId);
 
   await db.prepare(`UPDATE wuzapi_sessions SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).bind(...params).run();
   const row = await db.prepare('SELECT * FROM wuzapi_sessions WHERE id = ?').bind(id).first();
@@ -273,11 +281,12 @@ messaging.patch('/wuzapi/sessions/:id', authMiddleware, zValidator('json', z.obj
 
 messaging.get('/conversations', authMiddleware, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const channelType = c.req.query('channel') || '';
   const status = c.req.query('status') || '';
 
   let query = 'SELECT * FROM conversations WHERE user_id = ?';
-  const params: any[] = [user.id];
+  const params: any[] = [tenantId];
   if (channelType) { query += ' AND channel_type = ?'; params.push(channelType); }
   if (status) { query += ' AND status = ?'; params.push(status); }
   query += ' ORDER BY last_message_at DESC NULLS LAST';
@@ -288,10 +297,11 @@ messaging.get('/conversations', authMiddleware, async (c) => {
 
 messaging.get('/conversations/:id', authMiddleware, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
 
   const conv = await db.prepare('SELECT * FROM conversations WHERE id = ? AND user_id = ?')
-    .bind(c.req.param('id'), user.id).first();
+    .bind(c.req.param('id'), tenantId).first();
   if (!conv) return c.json({ error: 'Not found' }, 404);
 
   const messages = await db.prepare(
@@ -315,12 +325,13 @@ messaging.post('/send', authMiddleware, zValidator('json', z.object({
   message_type: z.string().optional(),
 })), async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const { conversation_id, content, message_type } = c.req.valid('json');
 
   const conv = await db.prepare(
     'SELECT * FROM conversations WHERE id = ? AND user_id = ?'
-  ).bind(conversation_id, user.id).first<{ channel_type: string; external_id: string; channel_id: string }>();
+  ).bind(conversation_id, tenantId).first<{ channel_type: string; external_id: string; channel_id: string }>();
   if (!conv) return c.json({ error: 'Conversation not found' }, 404);
 
   // Get channel
@@ -356,9 +367,10 @@ messaging.post('/send', authMiddleware, zValidator('json', z.object({
 
 messaging.get('/templates', authMiddleware, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const rows = await c.env.DB.prepare(
     'SELECT * FROM message_templates WHERE user_id = ? AND is_active = 1 ORDER BY category, name'
-  ).bind(user.id).all();
+  ).bind(tenantId).all();
   return c.json({ data: rows.results });
 });
 
@@ -370,6 +382,7 @@ messaging.post('/templates', authMiddleware, zValidator('json', z.object({
   category: z.string().optional(),
 })), async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const data = c.req.valid('json');
   const id = `mt-${uuidv4().slice(0, 8)}`;

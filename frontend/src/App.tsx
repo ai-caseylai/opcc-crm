@@ -32,6 +32,7 @@ import WebsiteGenerator from './pages/WebsiteGenerator';
 import CardGenerator from './pages/CardGenerator';
 import Settings from './pages/Settings';
 import FileStorage from './pages/FileStorage';
+import FirmManagement from './pages/FirmManagement';
 
 const queryClient = new QueryClient();
 
@@ -117,6 +118,7 @@ function AppRoutes() {
       <Route path="/website-generator" element={<ProtectedRoute><WebsiteGenerator /></ProtectedRoute>} />
       <Route path="/card-generator" element={<ProtectedRoute><CardGenerator /></ProtectedRoute>} />
       <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+      <Route path="/firm/manage" element={<ProtectedRoute><FirmManagement /></ProtectedRoute>} />
       <Route path="*" element={<Navigate to="/" />} />
     </Routes>
   );

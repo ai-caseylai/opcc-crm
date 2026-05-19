@@ -50,6 +50,7 @@ async function generateInvoiceNumber(db: D1Database, userId: string): Promise<st
 
 invoices.get('/', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const status = c.req.query('status') || '';
   const search = c.req.query('q') || '';
@@ -58,7 +59,7 @@ invoices.get('/', async (c) => {
   const offset = (page - 1) * limit;
 
   let query = `SELECT i.*, c.name as customer_name, c.company_name as customer_company FROM invoices i LEFT JOIN customers c ON i.customer_id = c.id WHERE i.user_id = ?`;
-  const params: any[] = [user.id];
+  const params: any[] = [tenantId];
   if (status) { query += ' AND i.status = ?'; params.push(status); }
   if (search) { query += ' AND (i.invoice_number LIKE ? OR c.name LIKE ?)'; params.push(`%${search}%`, `%${search}%`); }
   query += ' ORDER BY i.created_at DESC LIMIT ? OFFSET ?';
@@ -74,11 +75,12 @@ invoices.get('/', async (c) => {
 
 invoices.get('/:id', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const id = c.req.param('id');
   const invoice = await db.prepare(
     'SELECT i.*, c.name as customer_name, c.email as customer_email, c.address as customer_address FROM invoices i LEFT JOIN customers c ON i.customer_id = c.id WHERE i.id = ? AND i.user_id = ?'
-  ).bind(id, user.id).first();
+  ).bind(id, tenantId).first();
   if (!invoice) return c.json({ error: 'Invoice not found' }, 404);
   const items = await db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY sort_order').bind(id).all();
   return c.json({ ...invoice, items: items.results });
@@ -102,11 +104,12 @@ const createSchema = z.object({
 
 invoices.post('/', zValidator('json', createSchema), async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const data = c.req.valid('json');
   const id = `i-${uuidv4().slice(0, 8)}`;
 
-  const invoice_number = data.invoice_number || await generateInvoiceNumber(db, user.id);
+  const invoice_number = data.invoice_number || await generateInvoiceNumber(db, tenantId);
 
   const subtotal = data.items.reduce((sum, item) => sum + item.amount, 0);
   const taxRate = data.tax_rate || 0;
@@ -137,10 +140,11 @@ invoices.post('/', zValidator('json', createSchema), async (c) => {
 
 invoices.patch('/:id/status', zValidator('json', z.object({ status: z.string() })), async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const id = c.req.param('id');
   const { status } = c.req.valid('json');
-  const existing = await db.prepare('SELECT id FROM invoices WHERE id = ? AND user_id = ?').bind(id, user.id).first();
+  const existing = await db.prepare('SELECT id FROM invoices WHERE id = ? AND user_id = ?').bind(id, tenantId).first();
   if (!existing) return c.json({ error: 'Invoice not found' }, 404);
   await db.prepare('UPDATE invoices SET status = ?, updated_at = datetime(\'now\') WHERE id = ?').bind(status, id).run();
   const invoice = await db.prepare('SELECT * FROM invoices WHERE id = ?').bind(id).first();
@@ -149,10 +153,11 @@ invoices.patch('/:id/status', zValidator('json', z.object({ status: z.string() }
 
 invoices.delete('/:id', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const id = c.req.param('id');
-  const existing = await c.env.DB.prepare('SELECT id FROM invoices WHERE id = ? AND user_id = ?').bind(id, user.id).first();
+  const existing = await c.env.DB.prepare('SELECT id FROM invoices WHERE id = ? AND user_id = ?').bind(id, tenantId).first();
   if (!existing) return c.json({ error: 'Invoice not found' }, 404);
-  await c.env.DB.prepare('DELETE FROM invoices WHERE id = ? AND user_id = ?').bind(id, user.id).run();
+  await c.env.DB.prepare('DELETE FROM invoices WHERE id = ? AND user_id = ?').bind(id, tenantId).run();
   return c.json({ success: true });
 });
 

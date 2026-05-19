@@ -5,9 +5,10 @@ import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../lib/api';
 import Chatbot from './Chatbot';
+import FirmClientSwitcher from './FirmClientSwitcher';
 import {
   LayoutDashboard, Users, Truck, Package, FileText, FileSpreadsheet, Mail,
-  Calculator, Upload, Settings, LogOut, Menu, X, MessageCircle, Calendar, Briefcase, FolderOpen, Plug, SlidersHorizontal, Landmark, Receipt, CheckSquare, Globe, CreditCard, Smartphone, HardDrive, ShoppingCart, ClipboardList, AlertCircle, BookOpen, ChevronLeft, ChevronRight,
+  Calculator, Upload, Settings, LogOut, Menu, X, MessageCircle, Calendar, Briefcase, FolderOpen, Plug, SlidersHorizontal, Landmark, Receipt, CheckSquare, Globe, CreditCard, Smartphone, HardDrive, ShoppingCart, ClipboardList, AlertCircle, BookOpen, ChevronLeft, ChevronRight, Building2,
 } from 'lucide-react';
 
 const navGroups = [
@@ -60,6 +61,12 @@ const navGroups = [
     ],
   },
   {
+    label: '會計師行 Firm',
+    items: [
+      { to: '/firm/manage', icon: Building2, key: 'firmManagement' },
+    ],
+  },
+  {
     label: '',
     items: [
       { to: '/website-generator', icon: Globe, key: 'websiteGenerator' },
@@ -100,7 +107,7 @@ const NAV_FEATURE_MAP: Record<string, string> = {
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const { t, i18n } = useTranslation();
-  const { user, logout, company } = useAuth();
+  const { user, logout, company, activeClient, isFirmUser } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -181,8 +188,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </div>
       ) : (
         <div className="p-6 border-b">
-          <h1 className="text-xl font-bold text-primary">{activeCompany?.name || t('app.title')}</h1>
-          <p className="text-sm text-muted-foreground mt-1">{activeCompany?.domain || user?.company_name || user?.name}</p>
+          <h1 className="text-xl font-bold text-primary">
+            {activeClient?.display_name || activeClient?.company_name || activeCompany?.name || t('app.title')}
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            {activeClient ? (activeCompany?.name || user?.company_name || 'Firm') : (activeCompany?.domain || user?.company_name || user?.name)}
+          </p>
         </div>
       )}
 
@@ -203,10 +214,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </div>
       )}
 
+      {/* Firm client switcher */}
+      {!collapsed && <FirmClientSwitcher />}
+
       {/* Navigation */}
       <nav className={`flex-1 space-y-0.5 overflow-y-auto ${collapsed ? 'p-0' : 'p-2'}`}>
         {navGroups.map((group, gi) => {
           const visibleItems = group.items.filter(item => {
+            if (item.key === 'firmManagement') return isFirmUser;
             const featKey = NAV_FEATURE_MAP[item.key];
             if (!featKey) return true;
             return features[featKey] !== false;

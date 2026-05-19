@@ -26,12 +26,13 @@ async function mailFetch(cfg: { base: string; jwt: string; sp: string }, path: s
 // ── Config management ──
 mail.get('/config', authMiddleware, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const row = await c.env.DB.prepare('SELECT base_url, jwt, address, updated_at FROM mail_config WHERE user_id = ?')
-    .bind(user.id).first();
+    .bind(tenantId).first();
   if (!row) return c.json({ configured: false });
   // Validate JWT
   try {
-    const cfg = await getMailConfig(c.env.DB, user.id);
+    const cfg = await getMailConfig(c.env.DB, tenantId);
     if (!cfg) return c.json({ configured: false });
     const res = await mailFetch(cfg, '/api/settings');
     if (res.ok) {
@@ -46,18 +47,19 @@ mail.get('/config', authMiddleware, async (c) => {
 
 mail.put('/config', authMiddleware, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const body = await c.req.json();
   const { base_url, jwt, site_password } = body;
   if (!base_url || !jwt) return c.json({ error: 'base_url and jwt required' }, 400);
 
-  const existing = await db.prepare('SELECT user_id FROM mail_config WHERE user_id = ?').bind(user.id).first();
+  const existing = await db.prepare('SELECT user_id FROM mail_config WHERE user_id = ?').bind(tenantId).first();
   if (existing) {
     await db.prepare("UPDATE mail_config SET base_url=?, jwt=?, site_password=?, updated_at=datetime('now') WHERE user_id=?")
-      .bind(base_url, jwt, site_password || null, user.id).run();
+      .bind(base_url, jwt, site_password || null, tenantId).run();
   } else {
     await db.prepare('INSERT INTO mail_config (user_id, base_url, jwt, site_password) VALUES (?,?,?,?)')
-      .bind(user.id, base_url, jwt, site_password || null).run();
+      .bind(tenantId, base_url, jwt, site_password || null).run();
   }
 
   // Fetch address info
@@ -66,7 +68,7 @@ mail.put('/config', authMiddleware, async (c) => {
     if (res.ok) {
       const info: any = await res.json();
       await db.prepare("UPDATE mail_config SET address=?, updated_at=datetime('now') WHERE user_id=?")
-        .bind(info.address, user.id).run();
+        .bind(info.address, tenantId).run();
       return c.json({ configured: true, address: info.address });
     }
   } catch { /* will retry later */ }
@@ -76,14 +78,16 @@ mail.put('/config', authMiddleware, async (c) => {
 
 mail.delete('/config', authMiddleware, async (c) => {
   const user = c.get('user');
-  await c.env.DB.prepare('DELETE FROM mail_config WHERE user_id = ?').bind(user.id).run();
+  const tenantId = c.get('client_user_id') || user.id;
+  await c.env.DB.prepare('DELETE FROM mail_config WHERE user_id = ?').bind(tenantId).run();
   return c.json({ success: true });
 });
 
 // ── Inbox ──
 mail.get('/inbox', authMiddleware, async (c) => {
   const user = c.get('user');
-  const cfg = await getMailConfig(c.env.DB, user.id);
+  const tenantId = c.get('client_user_id') || user.id;
+  const cfg = await getMailConfig(c.env.DB, tenantId);
   if (!cfg) return c.json({ error: 'Mail not configured' }, 400);
 
   const limit = c.req.query('limit') || '20';
@@ -99,7 +103,8 @@ mail.get('/inbox', authMiddleware, async (c) => {
 
 mail.get('/inbox/:id', authMiddleware, async (c) => {
   const user = c.get('user');
-  const cfg = await getMailConfig(c.env.DB, user.id);
+  const tenantId = c.get('client_user_id') || user.id;
+  const cfg = await getMailConfig(c.env.DB, tenantId);
   if (!cfg) return c.json({ error: 'Mail not configured' }, 400);
 
   try {
@@ -114,7 +119,8 @@ mail.get('/inbox/:id', authMiddleware, async (c) => {
 // ── Send ──
 mail.post('/send', authMiddleware, async (c) => {
   const user = c.get('user');
-  const cfg = await getMailConfig(c.env.DB, user.id);
+  const tenantId = c.get('client_user_id') || user.id;
+  const cfg = await getMailConfig(c.env.DB, tenantId);
   if (!cfg) return c.json({ error: 'Mail not configured' }, 400);
 
   const body = await c.req.json();
@@ -137,7 +143,8 @@ mail.post('/send', authMiddleware, async (c) => {
 // ── Address info ──
 mail.get('/settings', authMiddleware, async (c) => {
   const user = c.get('user');
-  const cfg = await getMailConfig(c.env.DB, user.id);
+  const tenantId = c.get('client_user_id') || user.id;
+  const cfg = await getMailConfig(c.env.DB, tenantId);
   if (!cfg) return c.json({ error: 'Mail not configured' }, 400);
 
   try {

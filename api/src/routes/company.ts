@@ -83,27 +83,28 @@ const updateSchema = z.object({
 
 company.put('/', authMiddleware, zValidator('json', updateSchema), async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const data = c.req.valid('json');
 
-  const existing = await db.prepare('SELECT user_id FROM company_settings WHERE user_id = ?').bind(user.id).first();
+  const existing = await db.prepare('SELECT user_id FROM company_settings WHERE user_id = ?').bind(tenantId).first();
   if (existing) {
     const sets: string[] = []; const params: any[] = [];
     for (const [k, v] of Object.entries(data)) { sets.push(`${k} = ?`); params.push(v); }
     sets.push("updated_at = datetime('now')");
-    params.push(user.id);
+    params.push(tenantId);
     await db.prepare(`UPDATE company_settings SET ${sets.join(', ')} WHERE user_id = ?`).bind(...params).run();
   } else {
     await db.prepare(
       `INSERT INTO company_settings (user_id, name, legal_name, short_name, tagline, address, address2, phone, email, website, bank_name, bank_account, bank_swift, bank_address, signatory_name, tax_id, invoice_number_pattern)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-    ).bind(user.id, data.name || 'OPCC', data.legal_name || null, data.short_name || null,
+    ).bind(tenantId, data.name || 'OPCC', data.legal_name || null, data.short_name || null,
       data.tagline || null, data.address || 'Hong Kong', data.address2 || null,
       data.phone || null, data.email || null, data.website || null, data.bank_name || null,
       data.bank_account || null, data.bank_swift || null, data.bank_address || null,
       data.signatory_name || null, data.tax_id || null, data.invoice_number_pattern || null).run();
   }
-  const row = await db.prepare('SELECT * FROM company_settings WHERE user_id = ?').bind(user.id).first();
+  const row = await db.prepare('SELECT * FROM company_settings WHERE user_id = ?').bind(tenantId).first();
   return c.json(row);
 });
 
@@ -125,28 +126,31 @@ const pdfImageSchema = z.object({ image: z.string().min(1) });
 company.post('/pdf-logo', authMiddleware, zValidator('json', pdfImageSchema), async (c) => {
   const { image } = c.req.valid('json');
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const base64 = image.replace(/^data:image\/\w+;base64,/, '');
   const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
-  await c.env.FILE_BUCKET.put(`tenants/${user.id}/images/header-logo.png`, bytes);
-  return c.json({ success: true, key: `tenants/${user.id}/images/header-logo.png` });
+  await c.env.FILE_BUCKET.put(`tenants/${tenantId}/images/header-logo.png`, bytes);
+  return c.json({ success: true, key: `tenants/${tenantId}/images/header-logo.png` });
 });
 
 company.post('/pdf-chop', authMiddleware, zValidator('json', pdfImageSchema), async (c) => {
   const { image } = c.req.valid('json');
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const base64 = image.replace(/^data:image\/\w+;base64,/, '');
   const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
-  await c.env.FILE_BUCKET.put(`tenants/${user.id}/images/company-chop.png`, bytes);
-  return c.json({ success: true, key: `tenants/${user.id}/images/company-chop.png` });
+  await c.env.FILE_BUCKET.put(`tenants/${tenantId}/images/company-chop.png`, bytes);
+  return c.json({ success: true, key: `tenants/${tenantId}/images/company-chop.png` });
 });
 
 company.post('/pdf-stamp', authMiddleware, zValidator('json', pdfImageSchema), async (c) => {
   const { image } = c.req.valid('json');
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const base64 = image.replace(/^data:image\/\w+;base64,/, '');
   const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
-  await c.env.FILE_BUCKET.put(`tenants/${user.id}/images/signature-stamp.png`, bytes);
-  return c.json({ success: true, key: `tenants/${user.id}/images/signature-stamp.png` });
+  await c.env.FILE_BUCKET.put(`tenants/${tenantId}/images/signature-stamp.png`, bytes);
+  return c.json({ success: true, key: `tenants/${tenantId}/images/signature-stamp.png` });
 });
 
 // ── Domain resolution ──

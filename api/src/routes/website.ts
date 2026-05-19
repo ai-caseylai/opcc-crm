@@ -43,10 +43,11 @@ function buildPrompt(template: string, company: Record<string, string>): string 
 
 website.post('/', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const body = await c.req.json().catch(() => ({})) as { customPrompt?: string };
 
-  const row = await db.prepare('SELECT * FROM company_settings WHERE user_id = ?').bind(user.id).first<Record<string, string>>();
+  const row = await db.prepare('SELECT * FROM company_settings WHERE user_id = ?').bind(tenantId).first<Record<string, string>>();
   const company = {
     name: row?.name || 'My Company',
     tagline: row?.tagline || '',
@@ -91,7 +92,7 @@ website.post('/', async (c) => {
     }
 
     // Auto-save version
-    const maxVer = await db.prepare('SELECT MAX(version_number) as v FROM website_versions WHERE user_id = ?').bind(user.id).first<{ v: number | null }>();
+    const maxVer = await db.prepare('SELECT MAX(version_number) as v FROM website_versions WHERE user_id = ?').bind(tenantId).first<{ v: number | null }>();
     const version_number = (maxVer?.v || 0) + 1;
     const id = `wv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -108,20 +109,22 @@ website.post('/', async (c) => {
 // List versions
 website.get('/versions', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const { results } = await db.prepare(
     'SELECT id, version_number, company_name, prompt, created_at FROM website_versions WHERE user_id = ? ORDER BY version_number DESC'
-  ).bind(user.id).all();
+  ).bind(tenantId).all();
   return c.json({ data: results });
 });
 
 // Get single version
 website.get('/versions/:id', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const row = await db.prepare(
     'SELECT * FROM website_versions WHERE id = ? AND user_id = ?'
-  ).bind(c.req.param('id'), user.id).first();
+  ).bind(c.req.param('id'), tenantId).first();
   if (!row) return c.json({ error: 'Version not found' }, 404);
   return c.json({ data: row });
 });
@@ -129,10 +132,11 @@ website.get('/versions/:id', async (c) => {
 // Delete version
 website.delete('/versions/:id', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
-  const existing = await db.prepare('SELECT id FROM website_versions WHERE id = ? AND user_id = ?').bind(c.req.param('id'), user.id).first();
+  const existing = await db.prepare('SELECT id FROM website_versions WHERE id = ? AND user_id = ?').bind(c.req.param('id'), tenantId).first();
   if (!existing) return c.json({ error: 'Version not found' }, 404);
-  await db.prepare('DELETE FROM website_versions WHERE id = ? AND user_id = ?').bind(c.req.param('id'), user.id).run();
+  await db.prepare('DELETE FROM website_versions WHERE id = ? AND user_id = ?').bind(c.req.param('id'), tenantId).run();
   return c.json({ ok: true });
 });
 

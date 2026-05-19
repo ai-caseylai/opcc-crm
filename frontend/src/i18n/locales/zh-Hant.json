@@ -31,7 +31,8 @@
     "communication": "通訊",
     "fileStorage": "檔案儲存",
     "purchaseOrders": "採購單",
-    "serviceOrders": "服務合約"
+    "serviceOrders": "服務合約",
+    "firmManagement": "會計師行管理"
   },
   "auth": {
     "login": "登入",

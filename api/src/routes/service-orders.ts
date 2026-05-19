@@ -11,6 +11,7 @@ so.use('*', authMiddleware);
 
 so.get('/', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const status = c.req.query('status') || '';
   const search = c.req.query('q') || '';
@@ -19,7 +20,7 @@ so.get('/', async (c) => {
   const offset = (page - 1) * limit;
 
   let query = `SELECT s.*, c.name as customer_name, c.company_name as customer_company FROM service_orders s LEFT JOIN customers c ON s.customer_id = c.id WHERE s.user_id = ?`;
-  const params: any[] = [user.id];
+  const params: any[] = [tenantId];
   if (status) { query += ' AND s.status = ?'; params.push(status); }
   if (search) { query += ' AND (s.so_number LIKE ? OR c.name LIKE ?)'; params.push(`%${search}%`, `%${search}%`); }
   query += ' ORDER BY s.created_at DESC LIMIT ? OFFSET ?';
@@ -35,11 +36,12 @@ so.get('/', async (c) => {
 
 so.get('/:id', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const id = c.req.param('id');
   const doc = await db.prepare(
     'SELECT s.*, c.name as customer_name, c.email as customer_email, c.address as customer_address FROM service_orders s LEFT JOIN customers c ON s.customer_id = c.id WHERE s.id = ? AND s.user_id = ?'
-  ).bind(id, user.id).first();
+  ).bind(id, tenantId).first();
   if (!doc) return c.json({ error: 'Service order not found' }, 404);
   const items = await db.prepare('SELECT * FROM service_order_items WHERE so_id = ? ORDER BY sort_order').bind(id).all();
   return c.json({ ...doc, items: items.results });
@@ -61,6 +63,7 @@ const createSchema = z.object({
 
 so.post('/', zValidator('json', createSchema), async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const data = c.req.valid('json');
   const id = `so-${uuidv4().slice(0, 8)}`;
@@ -91,10 +94,11 @@ so.post('/', zValidator('json', createSchema), async (c) => {
 
 so.patch('/:id/status', zValidator('json', z.object({ status: z.string() })), async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const id = c.req.param('id');
   const { status } = c.req.valid('json');
-  const existing = await db.prepare('SELECT id FROM service_orders WHERE id = ? AND user_id = ?').bind(id, user.id).first();
+  const existing = await db.prepare('SELECT id FROM service_orders WHERE id = ? AND user_id = ?').bind(id, tenantId).first();
   if (!existing) return c.json({ error: 'Service order not found' }, 404);
   await db.prepare("UPDATE service_orders SET status = ?, updated_at = datetime('now') WHERE id = ?").bind(status, id).run();
   const doc = await db.prepare('SELECT * FROM service_orders WHERE id = ?').bind(id).first();
@@ -103,10 +107,11 @@ so.patch('/:id/status', zValidator('json', z.object({ status: z.string() })), as
 
 so.delete('/:id', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const id = c.req.param('id');
-  const existing = await c.env.DB.prepare('SELECT id FROM service_orders WHERE id = ? AND user_id = ?').bind(id, user.id).first();
+  const existing = await c.env.DB.prepare('SELECT id FROM service_orders WHERE id = ? AND user_id = ?').bind(id, tenantId).first();
   if (!existing) return c.json({ error: 'Service order not found' }, 404);
-  await c.env.DB.prepare('DELETE FROM service_orders WHERE id = ? AND user_id = ?').bind(id, user.id).run();
+  await c.env.DB.prepare('DELETE FROM service_orders WHERE id = ? AND user_id = ?').bind(id, tenantId).run();
   return c.json({ success: true });
 });
 

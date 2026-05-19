@@ -11,9 +11,10 @@ services.use('*', authMiddleware);
 // ── List services ──
 services.get('/', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const rows = await c.env.DB.prepare(
     'SELECT * FROM services WHERE user_id = ? AND is_active = 1 ORDER BY category, name'
-  ).bind(user.id).all();
+  ).bind(tenantId).all();
   return c.json({ data: rows.results });
 });
 
@@ -29,6 +30,7 @@ const serviceSchema = z.object({
 
 services.post('/', zValidator('json', serviceSchema), async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const data = c.req.valid('json');
   const id = `sv-${uuidv4().slice(0, 8)}`;
@@ -44,16 +46,17 @@ services.post('/', zValidator('json', serviceSchema), async (c) => {
 
 services.put('/:id', zValidator('json', serviceSchema.partial()), async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const id = c.req.param('id');
   const data = c.req.valid('json');
 
-  const existing = await db.prepare('SELECT id FROM services WHERE id = ? AND user_id = ?').bind(id, user.id).first();
+  const existing = await db.prepare('SELECT id FROM services WHERE id = ? AND user_id = ?').bind(id, tenantId).first();
   if (!existing) return c.json({ error: 'Not found' }, 404);
 
   const sets: string[] = []; const params: any[] = [];
   for (const [k, v] of Object.entries(data)) { sets.push(`${k} = ?`); params.push(v); }
-  sets.push("updated_at = datetime('now')"); params.push(id, user.id);
+  sets.push("updated_at = datetime('now')"); params.push(id, tenantId);
 
   await db.prepare(`UPDATE services SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).bind(...params).run();
   const row = await db.prepare('SELECT * FROM services WHERE id = ?').bind(id).first();
@@ -62,21 +65,23 @@ services.put('/:id', zValidator('json', serviceSchema.partial()), async (c) => {
 
 services.delete('/:id', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   await c.env.DB.prepare('UPDATE services SET is_active = 0 WHERE id = ? AND user_id = ?')
-    .bind(c.req.param('id'), user.id).run();
+    .bind(c.req.param('id'), tenantId).run();
   return c.json({ success: true });
 });
 
 // ── Bookings ──
 services.get('/bookings', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const date = c.req.query('date') || new Date().toISOString().split('T')[0];
 
   const rows = await c.env.DB.prepare(
     `SELECT sb.*, s.name as service_name, s.duration_minutes, c.name as customer_name, c.phone as customer_phone
      FROM service_bookings sb JOIN services s ON sb.service_id = s.id JOIN customers c ON sb.customer_id = c.id
      WHERE sb.user_id = ? AND sb.booking_date = ? ORDER BY sb.start_time`
-  ).bind(user.id, date).all();
+  ).bind(tenantId, date).all();
   return c.json({ data: rows.results });
 });
 
@@ -92,6 +97,7 @@ const bookingSchema = z.object({
 
 services.post('/bookings', zValidator('json', bookingSchema), async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const data = c.req.valid('json');
   const id = `bk-${uuidv4().slice(0, 8)}`;
@@ -121,10 +127,11 @@ services.post('/bookings', zValidator('json', bookingSchema), async (c) => {
 
 services.patch('/bookings/:id', zValidator('json', z.object({ status: z.string() })), async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const { status } = c.req.valid('json');
   await db.prepare("UPDATE service_bookings SET status = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?")
-    .bind(status, c.req.param('id'), user.id).run();
+    .bind(status, c.req.param('id'), tenantId).run();
   return c.json({ success: true });
 });
 

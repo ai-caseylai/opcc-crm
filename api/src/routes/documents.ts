@@ -49,6 +49,7 @@ docs.use('*', authMiddleware);
 // ── List documents ──
 docs.get('/', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const docType = c.req.query('type') || '';
   let q = 'SELECT id, doc_type, doc_year, file_name, file_type, br_number, company_name_ocr, issue_date, expiry_date, status, ocr_text, created_at FROM documents WHERE user_id = ?';
   const p: any[] = [user.id];
@@ -61,8 +62,9 @@ docs.get('/', async (c) => {
 // ── Get single document (with file data) ──
 docs.get('/:id', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const row = await c.env.DB.prepare('SELECT * FROM documents WHERE id = ? AND user_id = ?')
-    .bind(c.req.param('id'), user.id).first();
+    .bind(c.req.param('id'), tenantId).first();
   if (!row) return c.json({ error: 'Not found' }, 404);
   return c.json(row);
 });
@@ -70,6 +72,7 @@ docs.get('/:id', async (c) => {
 // ── Upload document ──
 docs.post('/upload', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const body = await c.req.json();
   const { doc_type, doc_year, file_name, file_type, file_data } = body;
@@ -134,11 +137,12 @@ docs.post('/upload', async (c) => {
 // ── Update document metadata ──
 docs.patch('/:id', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const body = await c.req.json();
   const id = c.req.param('id');
 
-  const existing = await db.prepare('SELECT id FROM documents WHERE id = ? AND user_id = ?').bind(id, user.id).first();
+  const existing = await db.prepare('SELECT id FROM documents WHERE id = ? AND user_id = ?').bind(id, tenantId).first();
   if (!existing) return c.json({ error: 'Not found' }, 404);
 
   const sets: string[] = []; const params: any[] = [];
@@ -149,7 +153,7 @@ docs.patch('/:id', async (c) => {
   }
   if (sets.length === 0) return c.json({ error: 'No valid fields' }, 400);
   sets.push("updated_at = datetime('now')");
-  params.push(id, user.id);
+  params.push(id, tenantId);
 
   await db.prepare(`UPDATE documents SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).bind(...params).run();
   const row = await db.prepare('SELECT * FROM documents WHERE id = ?').bind(id).first();
@@ -159,11 +163,12 @@ docs.patch('/:id', async (c) => {
 // ── Delete document ──
 docs.delete('/:id', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const existing = await c.env.DB.prepare('SELECT id FROM documents WHERE id = ? AND user_id = ?')
-    .bind(c.req.param('id'), user.id).first();
+    .bind(c.req.param('id'), tenantId).first();
   if (!existing) return c.json({ error: 'Not found' }, 404);
   await c.env.DB.prepare('DELETE FROM documents WHERE id = ? AND user_id = ?')
-    .bind(c.req.param('id'), user.id).run();
+    .bind(c.req.param('id'), tenantId).run();
   return c.json({ success: true });
 });
 

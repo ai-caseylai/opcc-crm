@@ -7,9 +7,10 @@ const payment = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 // ── GET payment config ──
 payment.get('/config', authMiddleware, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const row = await c.env.DB.prepare(
     'SELECT methods, qr_fps, qr_wechat, qr_alipay, qr_octopus, stripe_publishable FROM payment_config WHERE user_id = ?'
-  ).bind(user.id).first();
+  ).bind(tenantId).first();
   if (!row) return c.json({ methods: [], stripe_publishable: '' });
   try { (row as any).methods = JSON.parse((row as any).methods || '[]'); } catch { (row as any).methods = []; }
   return c.json(row);
@@ -18,10 +19,11 @@ payment.get('/config', authMiddleware, async (c) => {
 // ── PUT payment config ──
 payment.put('/config', authMiddleware, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const body = await c.req.json();
 
-  const existing = await db.prepare('SELECT user_id FROM payment_config WHERE user_id = ?').bind(user.id).first();
+  const existing = await db.prepare('SELECT user_id FROM payment_config WHERE user_id = ?').bind(tenantId).first();
   if (existing) {
     const sets: string[] = []; const params: any[] = [];
     for (const k of ['methods','qr_fps','qr_wechat','qr_alipay','qr_octopus','stripe_secret','stripe_publishable','stripe_webhook_secret']) {
@@ -29,13 +31,13 @@ payment.put('/config', authMiddleware, async (c) => {
     }
     if (sets.length === 0) return c.json({ error: 'No fields' }, 400);
     sets.push("updated_at = datetime('now')");
-    params.push(user.id);
+    params.push(tenantId);
     await db.prepare(`UPDATE payment_config SET ${sets.join(', ')} WHERE user_id = ?`).bind(...params).run();
   } else {
     await db.prepare(
       `INSERT INTO payment_config (user_id, methods, qr_fps, qr_wechat, qr_alipay, qr_octopus, stripe_secret, stripe_publishable, stripe_webhook_secret)
        VALUES (?,?,?,?,?,?,?,?,?)`
-    ).bind(user.id, JSON.stringify(body.methods || []), body.qr_fps || null, body.qr_wechat || null,
+    ).bind(tenantId, JSON.stringify(body.methods || []), body.qr_fps || null, body.qr_wechat || null,
       body.qr_alipay || null, body.qr_octopus || null, body.stripe_secret || null,
       body.stripe_publishable || null, body.stripe_webhook_secret || null).run();
   }

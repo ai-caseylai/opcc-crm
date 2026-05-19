@@ -13,6 +13,7 @@ wb.get('/health', (c) => c.json({ service: 'workbuddy-v1', status: 'ok' }));
 // ── Customers ──
 wb.get('/customers', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const search = c.req.query('q') || '';
   let q = 'SELECT * FROM customers WHERE user_id = ?';
@@ -25,6 +26,7 @@ wb.get('/customers', async (c) => {
 
 wb.post('/customers', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const body = await c.req.json();
   const id = `c-${uuidv4().slice(0, 8)}`;
@@ -38,6 +40,7 @@ wb.post('/customers', async (c) => {
 // ── Products ──
 wb.get('/products', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const rows = await c.env.DB.prepare('SELECT * FROM products WHERE user_id = ? AND is_active = 1 ORDER BY name ASC LIMIT 200').bind(user.id).all();
   return c.json({ data: rows.results });
 });
@@ -45,6 +48,7 @@ wb.get('/products', async (c) => {
 // ── Invoices ──
 wb.get('/invoices', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const status = c.req.query('status') || '';
   let q = 'SELECT * FROM invoices WHERE user_id = ?';
@@ -57,6 +61,7 @@ wb.get('/invoices', async (c) => {
 
 wb.post('/invoices', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const body = await c.req.json();
   const id = `i-${uuidv4().slice(0, 8)}`;
@@ -82,12 +87,14 @@ wb.post('/invoices', async (c) => {
 // ── Quotations ──
 wb.get('/quotations', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const rows = await c.env.DB.prepare('SELECT * FROM quotations WHERE user_id = ? ORDER BY created_at DESC LIMIT 50').bind(user.id).all();
   return c.json({ data: rows.results });
 });
 
 wb.post('/quotations', async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const body = await c.req.json();
   const id = `q-${uuidv4().slice(0, 8)}`;
@@ -122,6 +129,7 @@ const mgmt = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 mgmt.get('/key', authMiddleware, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const row = await c.env.DB.prepare(
     'SELECT id, api_key, webhook_url, enabled, created_at FROM workbuddy_config WHERE user_id = ? LIMIT 1'
   ).bind(user.id).first();
@@ -131,6 +139,7 @@ mgmt.get('/key', authMiddleware, async (c) => {
 
 mgmt.post('/key', authMiddleware, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
 
   // Generate a random API key
@@ -140,7 +149,7 @@ mgmt.post('/key', authMiddleware, async (c) => {
   const existing = await db.prepare('SELECT id FROM workbuddy_config WHERE user_id = ?').bind(user.id).first();
   if (existing) {
     await db.prepare("UPDATE workbuddy_config SET api_key = ?, updated_at = datetime('now') WHERE user_id = ?")
-      .bind(apiKey, user.id).run();
+      .bind(apiKey, tenantId).run();
   } else {
     await db.prepare('INSERT INTO workbuddy_config (id, user_id, api_key) VALUES (?, ?, ?)')
       .bind('default', user.id, apiKey).run();
@@ -151,6 +160,7 @@ mgmt.post('/key', authMiddleware, async (c) => {
 
 mgmt.delete('/key', authMiddleware, async (c) => {
   const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
   await c.env.DB.prepare('UPDATE workbuddy_config SET enabled = 0 WHERE user_id = ?').bind(user.id).run();
   return c.json({ success: true });
 });

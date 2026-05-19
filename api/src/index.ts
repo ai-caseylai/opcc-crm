@@ -31,6 +31,8 @@ import { serviceRoutes } from './routes/services';
 import { fileStorageRoutes } from './routes/file-storage';
 import { purchaseOrderRoutes } from './routes/purchase-orders';
 import { serviceOrderRoutes } from './routes/service-orders';
+import { firmRoutes } from './routes/firms';
+import { firmContextMiddleware } from './middleware/auth';
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -39,9 +41,12 @@ app.use('*', cors({
   origin: ['http://localhost:5173', 'https://opcc-crm.techforliving.net', 'https://oppc-crm.techforliving.net'],
   credentials: true,
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization'],
+  allowHeaders: ['Content-Type', 'Authorization', 'X-Active-Client'],
 }));
 app.use('*', prettyJSON());
+
+// Firm context middleware — sets client_user_id for firm staff acting on behalf of clients
+app.use('/api/*', firmContextMiddleware);
 
 // Health check
 app.get('/api/health', (c) => c.json({ status: 'ok', timestamp: new Date().toISOString() }));
@@ -77,6 +82,7 @@ app.route('/api/wb', workbuddyMgmtRoutes);
 app.route('/api/file-storage', fileStorageRoutes);
 app.route('/api/purchase-orders', purchaseOrderRoutes);
 app.route('/api/service-orders', serviceOrderRoutes);
+app.route('/api/firms', firmRoutes);
 
 // 404
 app.notFound((c) => c.json({ error: 'Not found' }, 404));
