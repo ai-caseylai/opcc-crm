@@ -32,7 +32,13 @@
     "fileStorage": "檔案儲存",
     "purchaseOrders": "採購單",
     "serviceOrders": "服務合約",
+<<<<<<< HEAD
     "firmManagement": "會計師行管理"
+=======
+    "compliance": "合規儀表板",
+    "pricing": "定價方案",
+    "subscription": "我的訂閱"
+>>>>>>> 837a43aed898df18aa69f778036747b0e0231d16
   },
   "auth": {
     "login": "登入",
@@ -444,5 +450,33 @@
     "view": "查看",
     "downloadPdf": "下載 PDF",
     "allStatus": "全部狀態"
+  },
+  "compliance": {
+    "title": "合規儀表板",
+    "subtitle": "追蹤你的合規狀態，確保唔會錯過任何死線",
+    "refresh": "更新",
+    "compliant": "合規",
+    "pending": "待處理",
+    "overdue": "逾期",
+    "notApplicable": "不適用",
+    "company": "公司基本",
+    "tax": "稅務",
+    "employment": "僱傭相關",
+    "privacy": "資料私隱",
+    "industry": "行業特定",
+    "upcomingDeadlines": "即將到期提醒",
+    "companyInfo": "公司基本資料",
+    "brNumber": "BR No.",
+    "brExpiry": "BR 到期",
+    "ciNumber": "CI No.",
+    "secretary": "公司秘書",
+    "auditor": "審計師",
+    "fiscalYearEnd": "年結日",
+    "daysLeft": "天",
+    "markCompliant": "標記合規",
+    "markPending": "標記待處理",
+    "markNotApplicable": "標記不適用",
+    "required": "必須",
+    "errorLoading": "無法載入合規資料，請稍後再試"
   }
 }
