@@ -596,6 +596,9 @@ CREATE TABLE IF NOT EXISTS firms (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   owner_user_id TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- ═══════════════════════════════════════════
 -- SecondAct — Compliance Dashboard
 -- ═══════════════════════════════════════════
@@ -763,10 +766,6 @@ CREATE INDEX IF NOT EXISTS idx_firm_clients_firm ON firm_clients(firm_id);
 CREATE INDEX IF NOT EXISTS idx_firm_clients_user ON firm_clients(client_user_id);
 CREATE INDEX IF NOT EXISTS idx_firm_assignments_member ON firm_client_assignments(firm_member_id);
 CREATE INDEX IF NOT EXISTS idx_firm_assignments_client ON firm_client_assignments(firm_client_id);
-ALTER TABLE bank_transactions ADD COLUMN account_code TEXT;
--- Add BR number to invoices
-ALTER TABLE invoices ADD COLUMN br_number TEXT;
-
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_company_settings_user ON company_settings(user_id);
 CREATE INDEX IF NOT EXISTS idx_compliance_templates_industry ON compliance_templates(industry);
