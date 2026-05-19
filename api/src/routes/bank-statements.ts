@@ -59,6 +59,41 @@ bank.get('/:id/file', async (c) => {
   return c.json({ error: 'File data not available' }, 404);
 });
 
+// ── Export CSV (before auth middleware, supports ?token= query param) ──
+bank.get('/:id/export-csv', async (c) => {
+  let userId: string | null = null;
+  try { userId = (c.get('user') as any)?.id; } catch {}
+  if (!userId) {
+    const token = c.req.query('token');
+    if (token) {
+      try {
+        const payload = jwtVerify(token, c.env.JWT_SECRET || 'dev-secret-change-me') as { id: string };
+        userId = payload.id;
+      } catch {}
+    }
+  }
+  if (!userId) return c.json({ error: 'Authentication required' }, 401);
+
+  const stmt = await c.env.DB.prepare('SELECT id, file_name FROM bank_statements WHERE id = ? AND user_id = ?')
+    .bind(c.req.param('id'), userId).first();
+  if (!stmt) return c.json({ error: 'Not found' }, 404);
+
+  const txs = await c.env.DB.prepare(
+    'SELECT transaction_date, description, deposit_amount, withdrawal_amount, balance, account_type, account_code, reference FROM bank_transactions WHERE bank_statement_id = ? ORDER BY sort_order'
+  ).bind(c.req.param('id')).all();
+
+  let csv = 'Date,Description,Deposit,Withdrawal,Balance,Account Type,Account Code,Reference\n';
+  for (const tx of txs.results as any[]) {
+    const desc = (tx.description || '').replace(/"/g, '""');
+    csv += `"${tx.transaction_date}","${desc}",${tx.deposit_amount},${tx.withdrawal_amount},${tx.balance || ''},"${tx.account_type || ''}","${tx.account_code || ''}","${(tx.reference || '').replace(/"/g, '""')}"\n`;
+  }
+
+  return c.text(csv, 200, {
+    'Content-Type': 'text/csv',
+    'Content-Disposition': `attachment; filename="${stmt.file_name?.replace('.pdf','') || 'statement'}.csv"`,
+  });
+});
+
 bank.use('*', authMiddleware);
 
 // ── List ──
@@ -480,6 +515,59 @@ bank.post('/:id/auto-categorize', async (c) => {
   }
 
   return c.json({ categorized, skipped, total: txs.results.length, results: results.slice(0, 20) });
+});
+
+// ── Import CSV (update transactions) ──
+bank.post('/:id/import-csv', async (c) => {
+  const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
+  const db = c.env.DB;
+
+  const stmt = await db.prepare('SELECT id FROM bank_statements WHERE id = ? AND user_id = ?')
+    .bind(c.req.param('id'), tenantId).first();
+  if (!stmt) return c.json({ error: 'Not found' }, 404);
+
+  const body = await c.req.json();
+  const { csv } = body as { csv: string };
+  if (!csv) return c.json({ error: 'csv required' }, 400);
+
+  const lines = csv.trim().split('\n');
+  if (lines.length < 2) return c.json({ error: 'CSV must have header + data rows' }, 400);
+
+  let updated = 0;
+  let created = 0;
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(',');
+    if (cols.length < 4) continue;
+    const date = cols[0]?.replace(/"/g, '').trim();
+    const desc = cols[1]?.replace(/"/g, '').trim();
+    const dep = parseFloat(cols[2]?.replace(/"/g, '').trim()) || 0;
+    const wit = parseFloat(cols[3]?.replace(/"/g, '').trim()) || 0;
+    const bal = cols[4] ? (parseFloat(cols[4]?.replace(/"/g, '').trim()) || null) : null;
+    const acctType = cols[5]?.replace(/"/g, '').trim() || '';
+    const acctCode = cols[6]?.replace(/"/g, '').trim() || '';
+    const ref = cols[7]?.replace(/"/g, '').trim() || '';
+
+    // Try to match by date + amount
+    const existing = await db.prepare(
+      'SELECT id FROM bank_transactions WHERE bank_statement_id = ? AND transaction_date = ? AND ABS(deposit_amount + withdrawal_amount - ?) < 0.01 LIMIT 1'
+    ).bind(c.req.param('id'), date, dep + wit).first<{ id: string }>();
+
+    if (existing) {
+      await db.prepare(
+        'UPDATE bank_transactions SET description = ?, deposit_amount = ?, withdrawal_amount = ?, balance = ?, account_type = ?, account_code = ?, reference = ? WHERE id = ?'
+      ).bind(desc, dep, wit, bal, acctType, acctCode || null, ref || null, existing.id).run();
+      updated++;
+    } else if (desc) {
+      const txId = `bt-${uuidv4().slice(0, 8)}`;
+      await db.prepare(
+        'INSERT INTO bank_transactions (id, bank_statement_id, user_id, transaction_date, description, deposit_amount, withdrawal_amount, balance, account_type, account_code, reference, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      ).bind(txId, c.req.param('id'), tenantId, date, desc, dep, wit, bal, acctType, acctCode || null, ref || null, i).run();
+      created++;
+    }
+  }
+
+  return c.json({ updated, created, total: lines.length - 1 });
 });
 
 export { bank as bankStatementRoutes };

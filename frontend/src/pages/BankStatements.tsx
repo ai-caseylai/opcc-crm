@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
-import { Eye, Trash2, Landmark, ChevronDown, ChevronRight, FileText, Link2, Check, X, Zap, Search, Tag } from 'lucide-react';
+import { Eye, Trash2, Landmark, ChevronDown, ChevronRight, FileText, Link2, Check, X, Zap, Search, Tag, Download, Upload } from 'lucide-react';
 
 interface Transaction {
   id: string;
@@ -180,10 +180,38 @@ export default function BankStatements() {
                             )}
                             <span>Opening: <span className="font-mono font-medium">{detail?.opening_balance?.toLocaleString(undefined, { minimumFractionDigits: 2 }) || '-'}</span></span>
                             <span>Closing: <span className="font-mono font-medium text-green-600">{detail?.closing_balance?.toLocaleString(undefined, { minimumFractionDigits: 2 }) || '-'}</span></span>
-                            <button onClick={() => { setEditMode(!editMode); setEdits({}); }}
-                              className={`px-2 py-1 text-xs rounded border ${editMode ? 'bg-primary text-primary-foreground border-primary' : 'hover:bg-muted'}`}>
-                              {editMode ? 'Done Editing' : '✏️ Edit'}
-                            </button>
+                            <div className="flex items-center gap-1">
+                              <a href={`/api/bank-statements/${detail?.id}/export-csv?token=${localStorage.getItem('token') || ''}`}
+                                className="px-2 py-1 text-xs rounded border hover:bg-muted flex items-center gap-1"
+                                title="Export CSV">
+                                <Download className="h-3 w-3" /> CSV
+                              </a>
+                              <label className="px-2 py-1 text-xs rounded border hover:bg-muted cursor-pointer flex items-center gap-1"
+                                title="Import CSV">
+                                <Upload className="h-3 w-3" /> CSV
+                                <input type="file" accept=".csv" className="hidden"
+                                  onChange={async (e) => {
+                                    const file = e.target.files?.[0];
+                                    if (!file) return;
+                                    const text = await file.text();
+                                    try {
+                                      await api(`/bank-statements/${detail?.id}/import-csv`, {
+                                        method: 'POST',
+                                        body: { csv: text },
+                                      });
+                                      queryClient.invalidateQueries({ queryKey: ['bank-statement', expandedId] });
+                                      alert('CSV 匯入完成');
+                                    } catch (err: any) {
+                                      alert('匯入失敗：' + (err.message || 'unknown'));
+                                    }
+                                    e.target.value = '';
+                                  }} />
+                              </label>
+                              <button onClick={() => { setEditMode(!editMode); setEdits({}); }}
+                                className={`px-2 py-1 text-xs rounded border ${editMode ? 'bg-primary text-primary-foreground border-primary' : 'hover:bg-muted'}`}>
+                                {editMode ? 'Done Editing' : '✏️ Edit'}
+                              </button>
+                            </div>
                           </div>
                         </div>
 
