@@ -2,6 +2,8 @@ import { Context, Next } from 'hono';
 
 export type Bindings = {
   DB: D1Database;
+  DB_HAYSON?: D1Database;
+  DB_PAULTANG?: D1Database;
   KV: KVNamespace;
   JWT_SECRET: string;
   ENVIRONMENT?: string;

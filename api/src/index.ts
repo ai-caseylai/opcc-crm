@@ -49,6 +49,17 @@ app.use('*', cors({
 }));
 app.use('*', prettyJSON());
 
+// DB routing middleware — routes to tenant-specific D1 database based on hostname
+app.use('/api/*', async (c, next) => {
+  const host = c.req.header('host') || '';
+  if (host.includes('hayson.techforliving.net') && c.env.DB_HAYSON) {
+    (c.env as any).DB = c.env.DB_HAYSON;
+  } else if (host.includes('paultang.techforliving.net') && c.env.DB_PAULTANG) {
+    (c.env as any).DB = c.env.DB_PAULTANG;
+  }
+  await next();
+});
+
 // Firm context middleware — sets client_user_id for firm staff acting on behalf of clients
 app.use('/api/*', firmContextMiddleware);
 
