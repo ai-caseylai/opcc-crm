@@ -31,15 +31,12 @@ import { serviceRoutes } from './routes/services';
 import { fileStorageRoutes } from './routes/file-storage';
 import { purchaseOrderRoutes } from './routes/purchase-orders';
 import { serviceOrderRoutes } from './routes/service-orders';
-<<<<<<< HEAD
 import { firmRoutes } from './routes/firms';
 import { firmContextMiddleware } from './middleware/auth';
-=======
 import { complianceRoutes } from './routes/compliance';
 import { plansRoutes } from './routes/plans';
 import { emailDashRoutes } from './routes/email-dash';
 import { waitlistRoutes } from './routes/waitlist';
->>>>>>> 837a43aed898df18aa69f778036747b0e0231d16
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -89,14 +86,11 @@ app.route('/api/wb', workbuddyMgmtRoutes);
 app.route('/api/file-storage', fileStorageRoutes);
 app.route('/api/purchase-orders', purchaseOrderRoutes);
 app.route('/api/service-orders', serviceOrderRoutes);
-<<<<<<< HEAD
 app.route('/api/firms', firmRoutes);
-=======
 app.route('/api/compliance', complianceRoutes);
 app.route('/api/plans', plansRoutes);
 app.route('/api/email-dash', emailDashRoutes);
 app.route('/api/waitlist', waitlistRoutes);
->>>>>>> 837a43aed898df18aa69f778036747b0e0231d16
 
 // 404
 app.notFound((c) => c.json({ error: 'Not found' }, 404));

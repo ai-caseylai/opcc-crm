@@ -32,13 +32,10 @@
     "fileStorage": "檔案儲存",
     "purchaseOrders": "採購單",
     "serviceOrders": "服務合約",
-<<<<<<< HEAD
-    "firmManagement": "會計師行管理"
-=======
+    "firmManagement": "會計師行管理",
     "compliance": "合規儀表板",
     "pricing": "定價方案",
     "subscription": "我的訂閱"
->>>>>>> 837a43aed898df18aa69f778036747b0e0231d16
   },
   "auth": {
     "login": "登入",

@@ -32,13 +32,10 @@ import WebsiteGenerator from './pages/WebsiteGenerator';
 import CardGenerator from './pages/CardGenerator';
 import Settings from './pages/Settings';
 import FileStorage from './pages/FileStorage';
-<<<<<<< HEAD
 import FirmManagement from './pages/FirmManagement';
-=======
 import Compliance from './pages/Compliance';
 import PricingPage from './pages/PricingPage';
 import SubscriptionPage from './pages/SubscriptionPage';
->>>>>>> 837a43aed898df18aa69f778036747b0e0231d16
 
 const queryClient = new QueryClient();
 

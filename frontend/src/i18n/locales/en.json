@@ -32,13 +32,10 @@
     "fileStorage": "File Storage",
     "purchaseOrders": "Purchase Orders",
     "serviceOrders": "Service Orders",
-<<<<<<< HEAD
-    "firmManagement": "Firm Management"
-=======
+    "firmManagement": "Firm Management",
     "compliance": "Compliance",
     "pricing": "Pricing",
     "subscription": "Subscription"
->>>>>>> 837a43aed898df18aa69f778036747b0e0231d16
   },
   "auth": {
     "login": "Login",

@@ -114,15 +114,12 @@ company.put('/', authMiddleware, zValidator('json', updateSchema), async (c) => 
     await db.prepare(`UPDATE company_settings SET ${sets.join(', ')} WHERE user_id = ?`).bind(...params).run();
   } else {
     await db.prepare(
-<<<<<<< HEAD
       `INSERT INTO company_settings (user_id, name, legal_name, short_name, tagline, address, address2, phone, email, website, bank_name, bank_account, bank_swift, bank_address, signatory_name, tax_id, invoice_number_pattern)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     ).bind(tenantId, data.name || 'OPCC', data.legal_name || null, data.short_name || null,
-=======
       `INSERT INTO company_settings (user_id, name, legal_name, short_name, tagline, address, address2, phone, email, website, bank_name, bank_account, bank_swift, bank_address, signatory_name, tax_id, invoice_number_pattern, br_number, br_expiry_date, ci_number, industry, employee_count, fiscal_year_end, secretary_name, secretary_contact, auditor_name, auditor_contact)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     ).bind(user.id, data.name || 'OPCC', data.legal_name || null, data.short_name || null,
->>>>>>> 837a43aed898df18aa69f778036747b0e0231d16
       data.tagline || null, data.address || 'Hong Kong', data.address2 || null,
       data.phone || null, data.email || null, data.website || null, data.bank_name || null,
       data.bank_account || null, data.bank_swift || null, data.bank_address || null,

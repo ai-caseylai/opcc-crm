@@ -8,11 +8,7 @@ import Chatbot from './Chatbot';
 import FirmClientSwitcher from './FirmClientSwitcher';
 import {
   LayoutDashboard, Users, Truck, Package, FileText, FileSpreadsheet, Mail,
-<<<<<<< HEAD
-  Calculator, Upload, Settings, LogOut, Menu, X, MessageCircle, Calendar, Briefcase, FolderOpen, Plug, SlidersHorizontal, Landmark, Receipt, CheckSquare, Globe, CreditCard, Smartphone, HardDrive, ShoppingCart, ClipboardList, AlertCircle, BookOpen, ChevronLeft, ChevronRight, Building2,
-=======
-  Calculator, Upload, Settings, LogOut, Menu, X, MessageCircle, Calendar, Briefcase, FolderOpen, Plug, SlidersHorizontal, Landmark, Receipt, CheckSquare, Globe, CreditCard, Smartphone, HardDrive, ShoppingCart, ClipboardList, AlertCircle, BookOpen, ChevronLeft, ChevronRight, Shield, Tag,
->>>>>>> 837a43aed898df18aa69f778036747b0e0231d16
+  Calculator, Upload, Settings, LogOut, Menu, X, MessageCircle, Calendar, Briefcase, FolderOpen, Plug, SlidersHorizontal, Landmark, Receipt, CheckSquare, Globe, CreditCard, Smartphone, HardDrive, ShoppingCart, ClipboardList, AlertCircle, BookOpen, ChevronLeft, ChevronRight, Building2, Shield, Tag,
 } from 'lucide-react';
 
 const navGroups = [
@@ -66,16 +62,16 @@ const navGroups = [
     ],
   },
   {
-<<<<<<< HEAD
     label: '會計師行 Firm',
     items: [
       { to: '/firm/manage', icon: Building2, key: 'firmManagement' },
-=======
+    ],
+  },
+  {
     label: '帳戶 Account',
     items: [
       { to: '/pricing', icon: Tag, key: 'pricing' },
       { to: '/subscription', icon: CreditCard, key: 'subscription' },
->>>>>>> 837a43aed898df18aa69f778036747b0e0231d16
     ],
   },
   {

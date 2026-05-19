@@ -180,34 +180,13 @@ export default function BankStatements() {
                             )}
                             <span>Opening: <span className="font-mono font-medium">{detail?.opening_balance?.toLocaleString(undefined, { minimumFractionDigits: 2 }) || '-'}</span></span>
                             <span>Closing: <span className="font-mono font-medium text-green-600">{detail?.closing_balance?.toLocaleString(undefined, { minimumFractionDigits: 2 }) || '-'}</span></span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => autoCatMut.mutate()}
-                              disabled={autoCatMut.isPending}
-                              className="flex items-center gap-1 px-3 py-1.5 bg-primary text-primary-foreground rounded-md text-xs hover:opacity-90 disabled:opacity-40"
-                            >
-                              🏷️ Auto Categorize
-                            </button>
-                            <button
-                              onClick={() => autoMatchMut.mutate()}
-                              disabled={autoMatchMut.isPending}
-                              className="flex items-center gap-1 px-3 py-1.5 bg-primary text-primary-foreground rounded-md text-xs hover:opacity-90 disabled:opacity-40"
-                            >
-                              <Zap className="h-3 w-3" /> Auto Match
+                            <button onClick={() => { setEditMode(!editMode); setEdits({}); }}
+                              className={`px-2 py-1 text-xs rounded border ${editMode ? 'bg-primary text-primary-foreground border-primary' : 'hover:bg-muted'}`}>
+                              {editMode ? 'Done Editing' : '✏️ Edit'}
                             </button>
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2 mb-2">
-                          <button onClick={() => { setEditMode(!editMode); setEdits({}); }}
-                            className={`px-2 py-1 text-xs rounded border ${editMode ? 'bg-primary text-primary-foreground border-primary' : 'hover:bg-muted'}`}>
-                            {editMode ? 'Done Editing' : '✏️ Edit Mode'}
-                          </button>
-                          {editMode && Object.keys(edits).length > 0 && (
-                            <span className="text-xs text-muted-foreground">{Object.keys(edits).length} changes pending</span>
-                          )}
-                        </div>
                         <div className="overflow-x-auto">
                           <table className="w-full text-sm">
                             <thead>

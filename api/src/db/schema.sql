@@ -589,7 +589,6 @@ CREATE INDEX IF NOT EXISTS idx_chat_sessions_user ON chat_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_updated ON chat_sessions(user_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id);
 
-<<<<<<< HEAD
 -- ── Accounting Firm Mode ──
 
 -- Firms: top-level accounting firm organization
@@ -597,7 +596,6 @@ CREATE TABLE IF NOT EXISTS firms (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   owner_user_id TEXT NOT NULL REFERENCES users(id),
-=======
 -- ═══════════════════════════════════════════
 -- SecondAct — Compliance Dashboard
 -- ═══════════════════════════════════════════
@@ -724,12 +722,10 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   auto_renew INTEGER NOT NULL DEFAULT 1,
   payment_method TEXT,
   stripe_subscription_id TEXT,
->>>>>>> 837a43aed898df18aa69f778036747b0e0231d16
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-<<<<<<< HEAD
 -- Firm members: staff who work at a firm
 CREATE TABLE IF NOT EXISTS firm_members (
   id TEXT PRIMARY KEY,
@@ -768,7 +764,6 @@ CREATE INDEX IF NOT EXISTS idx_firm_clients_user ON firm_clients(client_user_id)
 CREATE INDEX IF NOT EXISTS idx_firm_assignments_member ON firm_client_assignments(firm_member_id);
 CREATE INDEX IF NOT EXISTS idx_firm_assignments_client ON firm_client_assignments(firm_client_id);
 ALTER TABLE bank_transactions ADD COLUMN account_code TEXT;
-=======
 -- Add BR number to invoices
 ALTER TABLE invoices ADD COLUMN br_number TEXT;
 
@@ -793,4 +788,3 @@ CREATE TABLE IF NOT EXISTS waitlist (
   notes TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
->>>>>>> 837a43aed898df18aa69f778036747b0e0231d16

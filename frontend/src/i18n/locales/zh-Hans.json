@@ -32,13 +32,10 @@
     "fileStorage": "文件存储",
     "purchaseOrders": "采购单",
     "serviceOrders": "服务合约",
-<<<<<<< HEAD
-    "firmManagement": "会计师行管理"
-=======
+    "firmManagement": "会计师行管理",
     "compliance": "合规仪表板",
     "pricing": "定价方案",
     "subscription": "我的订阅"
->>>>>>> 837a43aed898df18aa69f778036747b0e0231d16
   },
   "auth": {
     "login": "登录",
