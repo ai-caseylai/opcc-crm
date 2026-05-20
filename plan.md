@@ -1,7 +1,14 @@
-# AI 任務計劃
+# AI Task Plan
 
-> AI 助理在執行複雜任務時，會先將任務拆分為小步驟寫入此檔案，碎步執行，每完成一步就記錄下來，直到全部完成。
+> AI assistant breaks complex tasks into small steps, writes them here, executes step by step, and marks completion.
 
 ---
 
-（目前無進行中的任務）
+## Count Bank Statements
+
+- [x] 1. Read plan.md to check existing plan
+- [x] 2. Call list_bank_statements to get all bank statements
+- [x] 3. Count and report results to user
+
+## Task Complete
+
