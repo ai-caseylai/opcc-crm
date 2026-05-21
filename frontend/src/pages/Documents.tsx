@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { api } from '../lib/api';
+import { api, WORKER_API_BASE } from '../lib/api';
 import { Upload, Eye, Trash2, FileText } from 'lucide-react';
 
 type DocType = 'br' | 'ci' | 'ei' | 'ec' | 'tc' | 'rl';
@@ -19,8 +19,12 @@ export default function Documents() {
   });
 
   const uploadMut = useMutation({
-    mutationFn: (body: any) => api('/documents/upload', { method: 'POST', body }),
+    mutationFn: (body: any) => api('/documents/upload', { method: 'POST', body, baseUrl: WORKER_API_BASE }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['documents'] }),
+    onError: (err: any) => {
+      alert(`上傳失敗：${err?.message || err?.error || '未知錯誤'}`);
+      setUploading(false);
+    },
   });
 
   const deleteMut = useMutation({

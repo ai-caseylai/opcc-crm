@@ -177,11 +177,24 @@ CREATE TABLE IF NOT EXISTS accounts (
   user_id TEXT NOT NULL REFERENCES users(id),
   account_code TEXT NOT NULL,
   account_name TEXT NOT NULL,
-  account_type TEXT NOT NULL, -- asset, liability, equity, revenue, expense
+  account_type TEXT NOT NULL CHECK (account_type IN ('asset', 'liability', 'equity', 'revenue', 'expense')),
   parent_code TEXT,
+  opening_balance REAL DEFAULT 0,
   is_active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(user_id, account_code)
+);
+
+-- Closed Periods (prevent modifications to closed accounting periods)
+CREATE TABLE IF NOT EXISTS closed_periods (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  period_start TEXT NOT NULL,
+  period_end TEXT NOT NULL,
+  closed_by TEXT NOT NULL REFERENCES users(id),
+  closed_at TEXT NOT NULL DEFAULT (datetime('now')),
+  notes TEXT,
+  UNIQUE(user_id, period_start, period_end)
 );
 
 -- Audit Trail
@@ -517,6 +530,7 @@ CREATE TABLE IF NOT EXISTS bank_statements (
   branch TEXT,
   currency TEXT DEFAULT 'HKD',
   account_type TEXT,
+  account_code TEXT,
   statement_year INTEGER,
   statement_month INTEGER,
   period_start TEXT,
@@ -554,6 +568,57 @@ CREATE INDEX IF NOT EXISTS idx_bank_statements_period ON bank_statements(user_id
 CREATE INDEX IF NOT EXISTS idx_bank_transactions_stmt ON bank_transactions(bank_statement_id);
 CREATE INDEX IF NOT EXISTS idx_bank_transactions_user ON bank_transactions(user_id);
 CREATE INDEX IF NOT EXISTS idx_bank_transactions_date ON bank_transactions(user_id, transaction_date);
+
+-- Fixed Asset Register
+CREATE TABLE IF NOT EXISTS fixed_assets (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  asset_name TEXT NOT NULL,
+  asset_code TEXT,
+  category TEXT DEFAULT 'office_equipment',
+  purchase_date TEXT NOT NULL,
+  cost REAL NOT NULL,
+  useful_life_years REAL NOT NULL DEFAULT 5,
+  salvage_value REAL DEFAULT 0,
+  depreciation_method TEXT NOT NULL DEFAULT 'straight_line',
+  monthly_depreciation REAL DEFAULT 0,
+  accumulated_depreciation REAL DEFAULT 0,
+  net_book_value REAL DEFAULT 0,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  disposal_date TEXT,
+  disposal_amount REAL,
+  account_code TEXT DEFAULT '12201',
+  depn_account_code TEXT DEFAULT '66101',
+  acc_depn_account_code TEXT DEFAULT '12301',
+  notes TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_fixed_assets_user ON fixed_assets(user_id);
+
+-- Bank Reconciliation
+CREATE TABLE IF NOT EXISTS bank_reconciliations (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  bank_statement_id TEXT NOT NULL REFERENCES bank_statements(id),
+  account_code TEXT NOT NULL,
+  statement_date TEXT NOT NULL,
+  statement_balance REAL NOT NULL,
+  gl_balance REAL NOT NULL,
+  outstanding_deposits REAL DEFAULT 0,
+  outstanding_withdrawals REAL DEFAULT 0,
+  reconciled_balance REAL DEFAULT 0,
+  difference REAL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'draft',
+  notes TEXT,
+  reconciled_by TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_bank_reconciliations_user ON bank_reconciliations(user_id);
+CREATE INDEX IF NOT EXISTS idx_bank_reconciliations_stmt ON bank_reconciliations(bank_statement_id);
 
 -- Website Generator Versions
 CREATE TABLE IF NOT EXISTS website_versions (
@@ -631,6 +696,7 @@ CREATE TABLE IF NOT EXISTS company_settings (
   ci_number TEXT,
   industry TEXT DEFAULT 'general',
   employee_count INTEGER DEFAULT 0,
+  fiscal_year_start TEXT,
   fiscal_year_end TEXT DEFAULT '03-31',
   secretary_name TEXT,
   secretary_contact TEXT,

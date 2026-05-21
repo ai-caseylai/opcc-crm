@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { Plus, Calculator, Download } from 'lucide-react';
+import { Plus, Calculator, Download, Save } from 'lucide-react';
 
 export default function Bookkeeping() {
   const queryClient = useQueryClient();
@@ -149,7 +149,10 @@ export default function Bookkeeping() {
                 <th className="text-left p-3">號碼</th>
                 <th className="text-left p-3">日期</th>
                 <th className="text-left p-3">描述</th>
+                <th className="text-right p-3">借方 Debit</th>
+                <th className="text-right p-3">貸方 Credit</th>
                 <th className="text-left p-3">狀態</th>
+                <th className="text-center p-3 w-[80px]">操作</th>
               </tr>
             </thead>
             <tbody>
@@ -158,11 +161,31 @@ export default function Bookkeeping() {
                   <td className="p-3 font-medium">{e.entry_number}</td>
                   <td className="p-3">{e.entry_date}</td>
                   <td className="p-3">{e.description}</td>
-                  <td className="p-3">{e.status}</td>
+                  <td className="p-3 text-right font-mono">{e.total_debit > 0 ? e.total_debit.toLocaleString(undefined, { minimumFractionDigits: 2 }) : ''}</td>
+                  <td className="p-3 text-right font-mono">{e.total_credit > 0 ? e.total_credit.toLocaleString(undefined, { minimumFractionDigits: 2 }) : ''}</td>
+                  <td className="p-3">
+                    {e.status === 'stale' ? <span className="text-amber-600 font-medium" title="銀行交易已修改，分錄可能過時">⚠ 過時</span>
+                     : e.status === 'draft' ? <span className="text-muted-foreground italic">草稿 Draft</span>
+                     : e.status}
+                    {e.status === 'draft' && (
+                      <button onClick={async () => {
+                        await api(`/bookkeeping/entries/${e.id}/status`, { method: 'PATCH', body: { status: 'posted' } });
+                        queryClient.invalidateQueries({ queryKey: ['entries'] });
+                      }} className="ml-2 text-xs text-primary hover:underline">過帳 Post</button>
+                    )}
+                  </td>
+                  <td className="p-3 text-center">
+                    <button onClick={() => {
+                      if (!confirm('確定要刪除此分錄嗎？此操作不可撤銷。')) return;
+                      api(`/bookkeeping/entries/${e.id}`, { method: 'DELETE' }).then(() => {
+                        queryClient.invalidateQueries({ queryKey: ['entries'] });
+                      }).catch(err => alert('刪除失敗：' + (err.message || '未知錯誤')));
+                    }} className="text-destructive text-xs hover:underline">刪除</button>
+                  </td>
                 </tr>
               ))}
               {(!entries?.data || entries.data.length === 0) && (
-                <tr><td colSpan={4} className="text-center p-6 text-muted-foreground">未有分錄記錄</td></tr>
+                <tr><td colSpan={7} className="text-center p-6 text-muted-foreground">未有分錄記錄</td></tr>
               )}
             </tbody>
           </table>
@@ -170,28 +193,7 @@ export default function Bookkeeping() {
       )}
 
       {/* Accounts Tab */}
-      {tab === 'accounts' && (
-        <div className="bg-card border rounded-xl overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b bg-muted/50">
-                <th className="text-left p-3">科目編號</th>
-                <th className="text-left p-3">科目名稱</th>
-                <th className="text-left p-3">類別</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(accounts?.data || []).map((a: any) => (
-                <tr key={a.id} className="border-b hover:bg-muted/30">
-                  <td className="p-3 font-medium">{a.account_code}</td>
-                  <td className="p-3">{a.account_name}</td>
-                  <td className="p-3 capitalize">{a.account_type}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {tab === 'accounts' && <AccountsTab accounts={accounts?.data || []} />}
 
       {/* Trial Balance Tab */}
       {tab === 'trial' && (
@@ -200,16 +202,20 @@ export default function Bookkeeping() {
             <thead>
               <tr className="border-b bg-muted/50">
                 <th className="text-left p-3">科目</th>
+                <th className="text-right p-3">期初 Opening</th>
                 <th className="text-right p-3">借方 Debit</th>
                 <th className="text-right p-3">貸方 Credit</th>
+                <th className="text-right p-3">期末 Ending</th>
               </tr>
             </thead>
             <tbody>
               {(trialBalance?.data || []).map((row: any) => (
                 <tr key={row.account_code} className="border-b hover:bg-muted/30">
                   <td className="p-3">{row.account_code} – {row.account_name}</td>
+                  <td className="p-3 text-right">{row.opening_balance?.toLocaleString() || '0'}</td>
                   <td className="p-3 text-right">{row.total_debit?.toLocaleString()}</td>
                   <td className="p-3 text-right">{row.total_credit?.toLocaleString()}</td>
+                  <td className="p-3 text-right font-medium">{row.ending_balance?.toLocaleString()}</td>
                 </tr>
               ))}
             </tbody>
@@ -425,10 +431,23 @@ export default function Bookkeeping() {
                 </div>
                 {entryForm.lines.map((line, idx) => (
                   <div key={idx} className="grid grid-cols-12 gap-2 items-center">
-                    <input required value={line.account_code} onChange={(e) => updateLine(idx, 'account_code', e.target.value)}
-                      placeholder="科目編號" className="col-span-2 px-2 py-1 border rounded text-sm" />
-                    <input required value={line.account_name} onChange={(e) => updateLine(idx, 'account_name', e.target.value)}
-                      placeholder="科目名稱" className="col-span-3 px-2 py-1 border rounded text-sm" />
+                    <input required value={line.account_code} onChange={(e) => {
+                      const code = e.target.value;
+                      updateLine(idx, 'account_code', code);
+                      const match = (accounts?.data || []).find((a: any) => a.account_code === code);
+                      if (match) updateLine(idx, 'account_name', match.account_name);
+                    }} placeholder="科目編號" list="account-list" className="col-span-2 px-2 py-1 border rounded text-sm" />
+                    <select value={line.account_name} onChange={(e) => {
+                      const name = e.target.value;
+                      updateLine(idx, 'account_name', name);
+                      const match = (accounts?.data || []).find((a: any) => a.account_name === name);
+                      if (match) updateLine(idx, 'account_code', match.account_code);
+                    }} className="col-span-3 px-2 py-1 border rounded text-sm bg-background">
+                      <option value="">選擇科目...</option>
+                      {(accounts?.data || []).map((a: any) => (
+                        <option key={a.id} value={a.account_name}>{a.account_code} – {a.account_name}</option>
+                      ))}
+                    </select>
                     <input type="number" step="0.01" value={line.debit} onChange={(e) => updateLine(idx, 'debit', parseFloat(e.target.value))}
                       className="col-span-2 px-2 py-1 border rounded text-sm" placeholder="借方" />
                     <input type="number" step="0.01" value={line.credit} onChange={(e) => updateLine(idx, 'credit', parseFloat(e.target.value))}
@@ -452,9 +471,182 @@ export default function Bookkeeping() {
                   className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm">建立</button>
               </div>
             </form>
+            <datalist id="account-list">
+              {(accounts?.data || []).map((a: any) => (
+                <option key={a.id} value={a.account_code}>{a.account_code} – {a.account_name}</option>
+              ))}
+            </datalist>
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ═══════ Accounts Tab with B/F balance & fiscal period ═══════
+
+function AccountsTab({ accounts }: { accounts: any[] }) {
+  const queryClient = useQueryClient();
+  const [bfEdits, setBfEdits] = useState<Record<string, string>>({});
+  const [fiscalStart, setFiscalStart] = useState('');
+  const [fiscalEnd, setFiscalEnd] = useState('');
+  const [fiscalSaved, setFiscalSaved] = useState(false);
+  const [closedPeriods, setClosedPeriods] = useState<any[]>([]);
+
+  const fetchClosedPeriods = () => {
+    api('/bookkeeping/closed-periods').then((d: any) => setClosedPeriods(d.data || []));
+  };
+
+  // Fetch fiscal period and closed periods
+  useEffect(() => {
+    api('/bookkeeping/fiscal-period').then((d: any) => {
+      if (d.fiscal_year_start) setFiscalStart(d.fiscal_year_start);
+      if (d.fiscal_year_end) setFiscalEnd(d.fiscal_year_end);
+    });
+    fetchClosedPeriods();
+  }, []);
+
+  const saveBF = async (code: string) => {
+    const val = parseFloat(bfEdits[code]);
+    if (isNaN(val)) return;
+    await api(`/bookkeeping/accounts/${code}`, { method: 'PATCH', body: { opening_balance: val } });
+    queryClient.invalidateQueries({ queryKey: ['accounts'] });
+    setBfEdits(prev => { const n = {...prev}; delete n[code]; return n; });
+  };
+
+  const saveFiscal = async () => {
+    await api('/bookkeeping/fiscal-period', { method: 'PATCH', body: { fiscal_year_start: fiscalStart, fiscal_year_end: fiscalEnd } });
+    setFiscalSaved(true);
+    setTimeout(() => setFiscalSaved(false), 2000);
+  };
+
+  const grouped: Record<string, any[]> = {};
+  for (const a of accounts) {
+    const parent = a.parent_code || '__root__';
+    if (!grouped[parent]) grouped[parent] = [];
+    grouped[parent].push(a);
+  }
+
+  const topLevel = (code: string) => !accounts.find((a: any) => a.parent_code === code);
+
+  return (
+    <div className="space-y-4">
+      {/* Fiscal period */}
+      <div className="bg-card border rounded-xl p-4 flex flex-wrap items-center gap-3">
+        <span className="text-sm font-medium">財政年度 Fiscal Period</span>
+        <span className="text-xs text-muted-foreground">起</span>
+        <input type="month" value={fiscalStart} onChange={e => setFiscalStart(e.target.value)}
+          className="px-2 py-1 border rounded text-sm bg-background" />
+        <span className="text-xs text-muted-foreground">至</span>
+        <input type="month" value={fiscalEnd} onChange={e => setFiscalEnd(e.target.value)}
+          className="px-2 py-1 border rounded text-sm bg-background" />
+        <button onClick={saveFiscal}
+          className={`px-3 py-1 rounded text-xs font-medium ${fiscalSaved ? 'bg-green-100 text-green-700' : 'bg-primary text-primary-foreground hover:opacity-90'}`}>
+          {fiscalSaved ? '✓ 已儲存' : '儲存'}
+        </button>
+      </div>
+
+      {/* Period & Year-End Actions */}
+      <div className="bg-card border rounded-xl p-4 space-y-3">
+        <span className="text-sm font-medium">會計操作 Actions</span>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={async () => {
+            const start = prompt('關帳期間起 (YYYY-MM-DD)：');
+            const end = prompt('關帳期間至 (YYYY-MM-DD)：');
+            if (!start || !end) return;
+            await api('/bookkeeping/close-period', { method: 'POST', body: { period_start: start, period_end: end } });
+            fetchClosedPeriods();
+            alert('已關帳');
+          }} className="px-3 py-1.5 bg-amber-100 text-amber-800 rounded text-xs font-medium hover:bg-amber-200">
+            關帳 Close Period
+          </button>
+          <button onClick={async () => {
+            if (!confirm('確定要執行年結嗎？這會將所有收入/費用科目結轉至保留盈餘，並更新承上結餘。')) return;
+            const date = prompt('財政年度結束日 (YYYY-MM-DD)：', fiscalEnd || '');
+            if (!date) return;
+            const res = await api('/bookkeeping/year-end-close', { method: 'POST', body: { fiscal_end_date: date } });
+            alert(`年結完成！\n收入：HKD ${res.revenue?.toLocaleString()}\n支出：HKD ${res.expenses?.toLocaleString()}\n淨利：HKD ${res.net_income?.toLocaleString()}`);
+            queryClient.invalidateQueries({ queryKey: ['entries'] });
+            queryClient.invalidateQueries({ queryKey: ['accounts'] });
+          }} className="px-3 py-1.5 bg-blue-100 text-blue-800 rounded text-xs font-medium hover:bg-blue-200">
+            年結 Year-End Close
+          </button>
+          <button onClick={async () => {
+            if (!confirm('確定要計算利得稅撥備嗎？（預設稅率 16.5%，首 $2M 為 8.25%）')) return;
+            const date = prompt('財政年度結束日 (YYYY-MM-DD)：', fiscalEnd || '');
+            if (!date) return;
+            const res = await api('/bookkeeping/profits-tax-provision', { method: 'POST', body: { fiscal_end_date: date } });
+            alert(`利得稅撥備完成！\n應評稅利潤：HKD ${res.net_income?.toLocaleString()}\n稅款：HKD ${res.tax_amount?.toLocaleString()}`);
+            queryClient.invalidateQueries({ queryKey: ['entries'] });
+          }} className="px-3 py-1.5 bg-red-100 text-red-800 rounded text-xs font-medium hover:bg-red-200">
+            利得稅撥備 Tax Provision
+          </button>
+        </div>
+        {closedPeriods.length > 0 && (
+          <div className="space-y-1">
+            <span className="text-xs text-muted-foreground">已關帳期間 Closed Periods</span>
+            {closedPeriods.map((cp: any) => (
+              <div key={cp.id} className="flex items-center justify-between bg-muted/30 rounded px-3 py-1.5">
+                <span className="text-xs">{cp.period_start} ~ {cp.period_end}</span>
+                <button onClick={async () => {
+                  if (!confirm(`確定要重開 ${cp.period_start} ~ ${cp.period_end} 的關帳嗎？`)) return;
+                  await api(`/bookkeeping/close-period/${cp.id}`, { method: 'DELETE' });
+                  fetchClosedPeriods();
+                }} className="text-xs text-destructive hover:underline">重開 Reopen</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Accounts with B/F balance */}
+      <div className="bg-card border rounded-xl overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b bg-muted/50">
+              <th className="text-left p-3 w-[100px]">科目編號</th>
+              <th className="text-left p-3">科目名稱</th>
+              <th className="text-left p-3 w-[80px]">類別</th>
+              <th className="text-right p-3 w-[180px]">承上結餘 B/F</th>
+            </tr>
+          </thead>
+          <tbody>
+            {accounts.map((a: any) => {
+              const isParent = grouped[a.account_code]?.length > 0;
+              const indent = a.account_code?.length <= 5 ? 0 : (a.account_code?.length === 5 ? 1 : 2);
+              const editing = a.account_code in bfEdits;
+              const bfVal = editing ? bfEdits[a.account_code] : (a.opening_balance || 0);
+              return (
+                <tr key={a.id} className={`border-b hover:bg-muted/30 ${isParent ? 'font-semibold bg-muted/20' : ''}`}>
+                  <td className="p-3 font-mono text-xs" style={{paddingLeft: `${12 + indent * 16}px`}}>
+                    {a.account_code}
+                  </td>
+                  <td className="p-3 truncate max-w-[300px]">{a.account_name}</td>
+                  <td className="p-3 text-xs capitalize text-muted-foreground">{a.account_type}</td>
+                  <td className="p-3 text-right">
+                    <div className="flex items-center justify-end gap-1">
+                      <input
+                        type="number" step="0.01"
+                        value={bfVal}
+                        onChange={e => setBfEdits(prev => ({...prev, [a.account_code]: e.target.value}))}
+                        onKeyDown={e => { if (e.key === 'Enter') saveBF(a.account_code); }}
+                        onBlur={() => { if (editing) saveBF(a.account_code); }}
+                        className="w-32 px-2 py-1 border rounded text-xs text-right bg-background"
+                      />
+                      {editing && (
+                        <button onClick={() => saveBF(a.account_code)}
+                          className="p-1 text-primary hover:bg-primary/10 rounded">
+                          <Save className="h-3 w-3" />
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

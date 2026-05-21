@@ -1,3 +1,4 @@
+import { getJwtSecret } from '../middleware/auth';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { zValidator } from '@hono/zod-validator';
@@ -59,7 +60,7 @@ company.get('/', async (c) => {
   const auth = c.req.header('Authorization');
   if (auth?.startsWith('Bearer ')) {
     try {
-      const payload = jwtVerify(auth.slice(7), c.env.JWT_SECRET || 'dev-secret-change-me') as { id: string };
+      const payload = jwtVerify(auth.slice(7), getJwtSecret(c.env)) as { id: string };
       targetUserId = payload.id;
     } catch { /* not authenticated — fall through */ }
   }

@@ -1,3 +1,4 @@
+import { getJwtSecret } from '../middleware/auth';
 import { Hono } from 'hono';
 import { v4 as uuidv4 } from 'uuid';
 import { verify as jwtVerify } from 'jsonwebtoken';
@@ -13,7 +14,7 @@ docs.get('/:id/file', async (c) => {
   const auth = c.req.header('Authorization');
   if (auth?.startsWith('Bearer ')) {
     try {
-      const payload = jwtVerify(auth.slice(7), c.env.JWT_SECRET || 'dev-secret-change-me') as { id: string };
+      const payload = jwtVerify(auth.slice(7), getJwtSecret(c.env)) as { id: string };
       userId = payload.id;
     } catch {}
   }
@@ -21,7 +22,7 @@ docs.get('/:id/file', async (c) => {
     const token = c.req.query('token');
     if (token) {
       try {
-        const payload = jwtVerify(token, c.env.JWT_SECRET || 'dev-secret-change-me') as { id: string };
+        const payload = jwtVerify(token, getJwtSecret(c.env)) as { id: string };
         userId = payload.id;
       } catch {}
     }

@@ -29,10 +29,12 @@
     "mail": "收件箱",
     "payment": "收款",
     "communication": "通訊",
-    "fileStorage": "檔案儲存",
+    "aiMemory": "AI 記憶",
+    "fileStorage": "文件上傳",
+    "telegramBills": "Telegram 帳單",
     "purchaseOrders": "採購單",
     "serviceOrders": "服務合約",
-    "firmManagement": "會計師行管理",
+    "firmManagement": "會計師樓管理",
     "compliance": "合規儀表板",
     "pricing": "定價方案",
     "subscription": "我的訂閱"
@@ -356,7 +358,7 @@
     "empty": "尚未有待辦事項"
   },
   "fileStorage": {
-    "title": "檔案儲存",
+    "title": "文件上傳",
     "desc": "上傳、整理及管理檔案",
     "upload": "上傳檔案",
     "folder": "資料夾",

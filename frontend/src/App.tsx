@@ -7,6 +7,7 @@ import Layout from './components/Layout';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
+import PrivacyPolicy from './pages/PrivacyPolicy';
 import Customers from './pages/Customers';
 import Suppliers from './pages/Suppliers';
 import Products from './pages/Products';
@@ -15,6 +16,7 @@ import Quotations from './pages/Quotations';
 import PurchaseOrders from './pages/PurchaseOrders';
 import ServiceOrders from './pages/ServiceOrders';
 import Bookkeeping from './pages/Bookkeeping';
+import FixedAssets from './pages/FixedAssets';
 import ImportData from './pages/ImportData';
 import CalendarPage from './pages/CalendarPage';
 import ServicesPage from './pages/Services';
@@ -34,6 +36,7 @@ import Settings from './pages/Settings';
 import FileStorage from './pages/FileStorage';
 import FirmManagement from './pages/FirmManagement';
 import Compliance from './pages/Compliance';
+import AiMemory from './pages/AiMemory';
 import PricingPage from './pages/PricingPage';
 import SubscriptionPage from './pages/SubscriptionPage';
 
@@ -95,9 +98,11 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/privacy" element={<PrivacyPolicy />} />
       <Route path="/register" element={<Register />} />
       <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
       <Route path="/compliance" element={<ProtectedRoute><FeatureGuard><Compliance /></FeatureGuard></ProtectedRoute>} />
+      <Route path="/ai-memory" element={<ProtectedRoute><AiMemory /></ProtectedRoute>} />
       <Route path="/pricing" element={<ProtectedRoute><PricingPage /></ProtectedRoute>} />
       <Route path="/subscription" element={<ProtectedRoute><SubscriptionPage /></ProtectedRoute>} />
       <Route path="/customers" element={<ProtectedRoute><FeatureGuard><Customers /></FeatureGuard></ProtectedRoute>} />
@@ -108,6 +113,7 @@ function AppRoutes() {
       <Route path="/purchase-orders" element={<ProtectedRoute><FeatureGuard><PurchaseOrders /></FeatureGuard></ProtectedRoute>} />
       <Route path="/service-orders" element={<ProtectedRoute><FeatureGuard><ServiceOrders /></FeatureGuard></ProtectedRoute>} />
       <Route path="/bookkeeping" element={<ProtectedRoute><FeatureGuard><Bookkeeping /></FeatureGuard></ProtectedRoute>} />
+              <Route path="/fixed-assets" element={<ProtectedRoute><FeatureGuard><FixedAssets /></FeatureGuard></ProtectedRoute>} />
       <Route path="/bank-statements" element={<ProtectedRoute><FeatureGuard><BankStatements /></FeatureGuard></ProtectedRoute>} />
       <Route path="/todos" element={<ProtectedRoute><Todos /></ProtectedRoute>} />
       <Route path="/expense-receipts" element={<ProtectedRoute><FeatureGuard><ExpenseReceipts /></FeatureGuard></ProtectedRoute>} />

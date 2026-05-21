@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../lib/api';
-import { Plus, Trash2, X } from 'lucide-react';
+import { Plus, Trash2, X, RefreshCw, Key } from 'lucide-react';
 
 export default function FirmManagement() {
   const { user } = useAuth();
@@ -15,6 +15,9 @@ export default function FirmManagement() {
   const [clientName, setClientName] = useState('');
   const [clientEmail, setClientEmail] = useState('');
   const [clientDisplayName, setClientDisplayName] = useState('');
+  const [pwModal, setPwModal] = useState<{ mid: string; name: string } | null>(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [editName, setEditName] = useState<{ mid: string; name: string } | null>(null);
 
   const firmId = user?.firm_id;
 
@@ -56,6 +59,24 @@ export default function FirmManagement() {
     mutationFn: (memberId: string) =>
       api(`/firms/${firmId}/members/${memberId}`, { method: 'DELETE' }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['firm-members'] }),
+  });
+
+  const toggleMemberMut = useMutation({
+    mutationFn: ({ memberId, active }: { memberId: string; active: boolean }) =>
+      api(`/firms/${firmId}/members/${memberId}`, { method: 'PATCH', body: { is_active: active } }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['firm-members'] }),
+  });
+
+  const changePwMut = useMutation({
+    mutationFn: ({ memberId, password }: { memberId: string; password: string }) =>
+      api(`/firms/${firmId}/members/${memberId}/password`, { method: 'PATCH', body: { password } }),
+    onSuccess: () => { setPwModal(null); setNewPassword(''); },
+  });
+
+  const renameMut = useMutation({
+    mutationFn: ({ memberId, name }: { memberId: string; name: string }) =>
+      api(`/firms/${firmId}/members/${memberId}`, { method: 'PATCH', body: { name } }),
+    onSuccess: () => { setEditName(null); queryClient.invalidateQueries({ queryKey: ['firm-members'] }); },
   });
 
   const addClientMut = useMutation({
@@ -111,7 +132,7 @@ export default function FirmManagement() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold">Firm Management 會計師行管理</h2>
+        <h2 className="text-2xl font-bold">Firm Management 會計師樓管理</h2>
         <p className="text-muted-foreground mt-1">{firmData?.firm?.name}</p>
       </div>
 
@@ -167,21 +188,27 @@ export default function FirmManagement() {
                   <th className="text-left p-3">Email</th>
                   <th className="text-left p-3">Role</th>
                   <th className="text-left p-3">Status</th>
-                  <th className="p-3"></th>
+                  <th className="p-3 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {members.map((m: any) => (
                   <tr key={m.id} className="border-b hover:bg-muted/30">
-                    <td className="p-3">{m.name}</td>
+                    <td className="p-3 cursor-pointer hover:text-primary hover:underline" onClick={() => setEditName({ mid: m.id, name: m.name || '' })} title="Click to rename">{m.name}</td>
                     <td className="p-3 text-muted-foreground">{m.email}</td>
                     <td className="p-3 capitalize">{m.role}</td>
                     <td className="p-3">
-                      <span className={`px-1.5 py-0.5 rounded text-xs ${m.is_active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                      <button onClick={() => toggleMemberMut.mutate({ memberId: m.id, active: !m.is_active })}
+                        className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${m.is_active ? 'bg-green-100 text-green-700 hover:bg-red-100 hover:text-red-700' : 'bg-red-100 text-red-700 hover:bg-green-100 hover:text-green-700'}`}
+                        title="Click to toggle">
                         {m.is_active ? 'Active' : 'Inactive'}
-                      </span>
+                      </button>
                     </td>
-                    <td className="p-3 text-right">
+                    <td className="p-3 text-right flex items-center justify-end gap-1">
+                      <button onClick={() => { setPwModal({ mid: m.id, name: m.name || m.email }); setNewPassword(''); }}
+                        className="p-1 hover:bg-muted rounded text-muted-foreground hover:text-primary" title="Change password">
+                        <Key className="h-3.5 w-3.5" />
+                      </button>
                       <button onClick={() => { if (confirm('Remove this member?')) removeMemberMut.mutate(m.id); }}
                         className="p-1 hover:bg-muted rounded text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
                     </td>
@@ -309,6 +336,40 @@ export default function FirmManagement() {
             {members.length === 0 && (
               <p className="text-sm text-muted-foreground">Add staff members first.</p>
             )}
+          </div>
+        </div>
+      )}
+      {/* Rename modal */}
+      {editName && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setEditName(null)}>
+          <div className="bg-card border rounded-xl p-6 w-full max-w-sm mx-4 space-y-4" onClick={e => e.stopPropagation()}>
+            <h3 className="font-bold text-lg">修改員工名字</h3>
+            <input value={editName.name} onChange={e => setEditName({ ...editName, name: e.target.value })}
+              className="w-full px-3 py-2 border rounded-md text-sm" autoFocus />
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setEditName(null)} className="px-4 py-2 border rounded-md text-sm">取消</button>
+              <button onClick={() => renameMut.mutate({ memberId: editName.mid, name: editName.name })}
+                disabled={renameMut.isPending || !editName.name.trim()}
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm disabled:opacity-40">儲存</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Password change modal */}
+      {pwModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setPwModal(null)}>
+          <div className="bg-card border rounded-xl p-6 w-full max-w-sm mx-4 space-y-4" onClick={e => e.stopPropagation()}>
+            <h3 className="font-bold text-lg">修改密碼</h3>
+            <p className="text-sm text-muted-foreground">{pwModal.name}</p>
+            <input type="text" value={newPassword} onChange={e => setNewPassword(e.target.value)}
+              placeholder="新密碼（最少 4 字元）" className="w-full px-3 py-2 border rounded-md text-sm" autoFocus />
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setPwModal(null)} className="px-4 py-2 border rounded-md text-sm">取消</button>
+              <button onClick={() => changePwMut.mutate({ memberId: pwModal.mid, password: newPassword })}
+                disabled={changePwMut.isPending || newPassword.length < 4}
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm disabled:opacity-40">儲存</button>
+            </div>
           </div>
         </div>
       )}

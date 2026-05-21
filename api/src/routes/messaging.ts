@@ -87,6 +87,37 @@ messaging.delete('/channels/:id', authMiddleware, async (c) => {
 });
 
 // ═══════════════════════════════════
+// Telegram Bot Setup — register webhook
+// ═══════════════════════════════════
+
+messaging.post('/telegram/setup', authMiddleware, async (c) => {
+  const user = c.get('user');
+  const body = await c.req.json();
+  const { bot_token } = body;
+  if (!bot_token) return c.json({ error: 'bot_token required' }, 400);
+
+  // Save channel
+  const chId = `ch-${uuidv4().slice(0, 8)}`;
+  await c.env.DB.prepare(
+    "INSERT INTO channels (id, user_id, channel_type, name, bot_token) VALUES (?, ?, 'telegram', 'Telegram Bot', ?)"
+  ).bind(chId, user.id, bot_token).run();
+
+  // Register webhook with Telegram
+  const webhookUrl = `https://${new URL(c.req.url).hostname}/api/messaging/telegram/webhook/${chId}`;
+  try {
+    const resp = await fetch(`https://api.telegram.org/bot${bot_token}/setWebhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: webhookUrl, allowed_updates: ['message'] }),
+    });
+    const data = await resp.json() as any;
+    return c.json({ channel_id: chId, webhook_url: webhookUrl, telegram_response: data });
+  } catch (e: any) {
+    return c.json({ error: 'Failed to register webhook: ' + e.message }, 500);
+  }
+});
+
+// ═══════════════════════════════════
 // Telegram Bot Webhook
 // ═══════════════════════════════════
 
@@ -151,6 +182,13 @@ messaging.post('/telegram/webhook/:channelId', async (c) => {
     }
 
     // Mark processed
+    await db.prepare('UPDATE webhook_events SET processed = 1, processed_at = datetime(\'now\') WHERE id = ?').bind(eventId).run();
+  }
+
+  // Handle photo — Telegram bill import
+  if (body.message && (body.message.photo || body.message.document)) {
+    c.executionCtx.waitUntil(processTelegramMedia(channel, body.message, db, c.env));
+    // Mark processed immediately
     await db.prepare('UPDATE webhook_events SET processed = 1, processed_at = datetime(\'now\') WHERE id = ?').bind(eventId).run();
   }
 
@@ -412,6 +450,149 @@ async function sendTelegramMessage(botToken: string, chatId: string, text: strin
     throw new Error(`Telegram API error: ${err}`);
   }
   return response.json();
+}
+
+// ═══════════════════════════════════
+// Telegram photo/document bill import
+// ═══════════════════════════════════
+
+async function processTelegramMedia(
+  channel: { user_id: string; bot_token: string },
+  msg: any,
+  db: D1Database,
+  env: any
+) {
+  const userId = channel.user_id;
+  const botToken = channel.bot_token;
+  if (!botToken) return;
+
+  try {
+    // Get file_id from photo (largest) or document
+    let fileId: string | null = null;
+    let mimeType = 'image/jpeg';
+    let caption = msg.caption || '';
+
+    if (msg.photo && msg.photo.length > 0) {
+      // Pick largest photo (last in array)
+      const largest = msg.photo[msg.photo.length - 1];
+      fileId = largest.file_id;
+    } else if (msg.document) {
+      fileId = msg.document.file_id;
+      mimeType = msg.document.mime_type || 'application/pdf';
+      caption = msg.caption || msg.document.file_name || '';
+    }
+    if (!fileId) return;
+
+    // 1. Get file path from Telegram
+    const getFileUrl = `https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`;
+    const fileResp = await fetch(getFileUrl);
+    if (!fileResp.ok) return;
+    const fileData = await fileResp.json() as any;
+    const filePath = fileData?.result?.file_path;
+    if (!filePath) return;
+
+    // 2. Download file from Telegram
+    const downloadUrl = `https://api.telegram.org/file/bot${botToken}/${filePath}`;
+    const downloadResp = await fetch(downloadUrl);
+    if (!downloadResp.ok) return;
+    const fileBuffer = await downloadResp.arrayBuffer();
+
+    // 3. Save to R2
+    const fileId2 = `tg-${uuidv4().slice(0, 8)}`;
+    const safeName = filePath.split('/').pop() || `telegram-${Date.now()}`;
+    const r2Key = `${userId}/telegram/${fileId2}-${safeName}`;
+    await env.FILE_BUCKET.put(r2Key, fileBuffer, {
+      httpMetadata: { contentType: mimeType },
+    });
+
+    // 4. Convert to base64 for OCR
+    const bytes = new Uint8Array(fileBuffer);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    const base64 = btoa(binary);
+
+    // 5. Run GLM-OCR
+    let ocrText = '';
+    if (env.GLM_API_KEY) {
+      try {
+        const glmResp = await fetch('https://api.z.ai/api/paas/v4/layout_parsing', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${env.GLM_API_KEY}` },
+          body: JSON.stringify({ model: 'glm-ocr', file: `data:${mimeType};base64,${base64}` }),
+        });
+        if (glmResp.ok) {
+          const glmData = await glmResp.json() as any;
+          ocrText = typeof glmData === 'string' ? glmData : JSON.stringify(glmData);
+        }
+      } catch {}
+    }
+
+    // 6. Save to file_records
+    await db.prepare(
+      `INSERT INTO file_records (id, user_id, folder, filename, original_name, file_type, file_size, r2_key, description, ocr_text, ocr_status, category, direction)
+       VALUES (?, ?, 'Telegram Bills', ?, ?, ?, ?, ?, ?, ?, ?, 'expense_receipt', 'incoming')`
+    ).bind(fileId2, userId, safeName, safeName, mimeType, fileBuffer.byteLength, r2Key, caption, ocrText, ocrText.length > 20 ? 'completed' : 'pending').run();
+
+    // 7. Parse with DeepSeek
+    let parsed: any = null;
+    if (env.DEEPSEEK_API_KEY && ocrText.length > 20) {
+      try {
+        const resp = await fetch('https://api.deepseek.com/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${env.DEEPSEEK_API_KEY}` },
+          body: JSON.stringify({
+            model: 'deepseek-chat',
+            messages: [{
+              role: 'user',
+              content: `Parse this bill/receipt OCR text into JSON. Extract: supplier_name, bill_date (YYYY-MM-DD), due_date, total_amount (number), currency (default HKD), items (array of {description, amount}), bill_number, category (one of: rent, utilities, telecom, office, travel, meals, software, professional, insurance, tax, other). Return ONLY valid JSON, no explanation.\n\n${ocrText.slice(0, 6000)}`,
+            }],
+            max_tokens: 2000,
+          }),
+        });
+        const data = await resp.json() as any;
+        const raw = data.choices?.[0]?.message?.content || '';
+        const jsonMatch = raw.match(/\{[\s\S]*\}/);
+        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+      } catch {}
+    }
+
+    // 8. Create expense receipt
+    if (parsed?.total_amount || parsed?.supplier_name) {
+      const erId = `ex-${uuidv4().slice(0, 8)}`;
+      const vendorName = parsed.supplier_name || caption || 'Unknown';
+      const billDate = parsed.bill_date || new Date().toISOString().split('T')[0];
+      const total = parsed.total_amount || 0;
+      const category = parsed.category || 'other';
+
+      await db.prepare(
+        `INSERT INTO expense_receipts (id, user_id, file_name, file_type, file_data, vendor_name, amount, expense_date, category, description)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(erId, userId, safeName, mimeType, `data:${mimeType};base64,${base64}`, vendorName, total, billDate, category, parsed.bill_number || caption || null).run();
+
+      // 9. Reply to user
+      const items = (parsed.items || []).slice(0, 5).map((it: any) => `• ${it.description}: $${it.amount}`).join('\n');
+      const reply = `✅ <b>帳單已導入</b>\n\n供應商：${vendorName}\n日期：${billDate}\n金額：HKD ${total.toLocaleString()}\n類別：${category}\n${items ? '\n項目：\n' + items : ''}`;
+      await sendTelegramMessage(botToken, msg.chat.id.toString(), reply, env);
+
+      // Save reply to messages
+      const outId = `msg-${uuidv4().slice(0, 8)}`;
+      const chatId = msg.chat.id.toString();
+      let conv = await db.prepare(
+        "SELECT id FROM conversations WHERE user_id = ? AND channel_type = 'telegram' AND external_id = ?"
+      ).bind(userId, chatId).first<{ id: string }>();
+      if (conv) {
+        await db.prepare(
+          "INSERT INTO messages (id, user_id, conversation_id, channel_type, direction, message_type, content, status) VALUES (?, ?, ?, 'telegram', 'outbound', 'text', ?, 'sent')"
+        ).bind(outId, userId, conv.id, reply).run();
+      }
+    } else {
+      // File saved but couldn't parse — notify user
+      const reply = `📎 已收到檔案「${safeName}」，正在處理中。請稍候或手動分類。`;
+      await sendTelegramMessage(botToken, msg.chat.id.toString(), reply, env);
+    }
+  } catch (e: any) {
+    console.error('Telegram media processing error:', e.message);
+  }
 }
 
 export { messaging as messagingRoutes };

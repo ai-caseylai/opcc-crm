@@ -1,3 +1,4 @@
+import { getJwtSecret } from '../middleware/auth';
 import { Hono } from 'hono';
 import { v4 as uuidv4 } from 'uuid';
 import { verify as jwtVerify } from 'jsonwebtoken';
@@ -6,24 +7,40 @@ import { authMiddleware } from '../middleware/auth';
 
 const bank = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
+// Audit log helper
+async function auditLog(db: any, userId: string, action: string, entityType: string, entityId: string | null, changes?: object) {
+  const id = `al-${uuidv4().slice(0, 8)}`;
+  try {
+    await db.prepare(
+      'INSERT INTO audit_log (id, user_id, action, entity_type, entity_id, changes) VALUES (?, ?, ?, ?, ?, ?)'
+    ).bind(id, userId, action, entityType, entityId, changes ? JSON.stringify(changes) : null).run();
+  } catch { /* audit log table may not exist yet */ }
+}
+
+// Helper to extract JWT from cookie, header, or query param
+function extractJwt(c: any, secret: string): string | null {
+  // 1. httpOnly cookie (XSS-safe)
+  const cookieHeader = c.req.header('Cookie') || '';
+  const cookieMatch = cookieHeader.match(/(?:^|;\s*)token=([^;]+)/);
+  if (cookieMatch) return cookieMatch[1];
+  // 2. Authorization header
+  const auth = c.req.header('Authorization');
+  if (auth?.startsWith('Bearer ')) return auth.slice(7);
+  // 3. Query param (legacy)
+  const qt = c.req.query('token');
+  if (qt) return qt;
+  return null;
+}
+
 // ── Download file (token-protected) ──
 bank.get('/:id/file', async (c) => {
   let userId: string | null = null;
-  const auth = c.req.header('Authorization');
-  if (auth?.startsWith('Bearer ')) {
+  const token = extractJwt(c, getJwtSecret(c.env));
+  if (token) {
     try {
-      const payload = jwtVerify(auth.slice(7), c.env.JWT_SECRET || 'dev-secret-change-me') as { id: string };
+      const payload = jwtVerify(token, getJwtSecret(c.env)) as { id: string };
       userId = payload.id;
     } catch {}
-  }
-  if (!userId) {
-    const token = c.req.query('token');
-    if (token) {
-      try {
-        const payload = jwtVerify(token, c.env.JWT_SECRET || 'dev-secret-change-me') as { id: string };
-        userId = payload.id;
-      } catch {}
-    }
   }
   if (!userId) return c.json({ error: 'Authentication required' }, 401);
 
@@ -59,15 +76,15 @@ bank.get('/:id/file', async (c) => {
   return c.json({ error: 'File data not available' }, 404);
 });
 
-// ── Export CSV (before auth middleware, supports ?token= query param) ──
+// ── Export CSV (before auth middleware, supports cookie + token auth) ──
 bank.get('/:id/export-csv', async (c) => {
   let userId: string | null = null;
   try { userId = (c.get('user') as any)?.id; } catch {}
   if (!userId) {
-    const token = c.req.query('token');
+    const token = extractJwt(c, getJwtSecret(c.env));
     if (token) {
       try {
-        const payload = jwtVerify(token, c.env.JWT_SECRET || 'dev-secret-change-me') as { id: string };
+        const payload = jwtVerify(token, getJwtSecret(c.env)) as { id: string };
         userId = payload.id;
       } catch {}
     }
@@ -75,7 +92,7 @@ bank.get('/:id/export-csv', async (c) => {
   if (!userId) return c.json({ error: 'Authentication required' }, 401);
 
   const stmt = await c.env.DB.prepare('SELECT id, file_name FROM bank_statements WHERE id = ? AND user_id = ?')
-    .bind(c.req.param('id'), userId).first();
+    .bind(c.req.param('id'), userId).first<{ id: string; file_name: string | null }>();
   if (!stmt) return c.json({ error: 'Not found' }, 404);
 
   const txs = await c.env.DB.prepare(
@@ -105,7 +122,7 @@ bank.get('/', async (c) => {
            statement_year, statement_month, period_start, period_end,
            opening_balance, closing_balance, page_count, ocr_text, status, created_at
            FROM bank_statements WHERE user_id = ?`;
-  const p: any[] = [user.id];
+  const p: any[] = [tenantId];
   if (year) { q += ' AND statement_year = ?'; p.push(parseInt(year)); }
   q += ' ORDER BY statement_year DESC, statement_month DESC';
   const rows = await c.env.DB.prepare(q).bind(...p).all();
@@ -236,6 +253,15 @@ bank.patch('/transactions/:id', async (c) => {
   await db.prepare(`UPDATE bank_transactions SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`)
     .bind(...params).run();
 
+  await auditLog(db, user.id, 'update', 'bank_transaction', txId, body);
+
+  // Flag linked journal entry as stale if transaction was modified
+  if (body.account_code !== undefined || body.deposit_amount !== undefined || body.withdrawal_amount !== undefined || body.description !== undefined) {
+    await db.prepare(
+      "UPDATE journal_entries SET status = 'stale' WHERE reference_type = 'bank_transaction' AND reference_id = ? AND status NOT IN ('stale', 'reconciled')"
+    ).bind(txId).run();
+  }
+
   const row = await db.prepare('SELECT * FROM bank_transactions WHERE id = ?').bind(txId).first();
   return c.json(row);
 });
@@ -268,6 +294,7 @@ bank.patch('/transactions/:id/match', async (c) => {
       `UPDATE invoices SET status = 'paid', paid_date = ?, updated_at = datetime('now') WHERE id = ?`
     ).bind(tx.transaction_date, invoice_id).run();
 
+    await auditLog(db, user.id, 'confirm_match', 'bank_transaction', txId, { invoice_id, action: 'confirm' });
     return c.json({ success: true, invoice_status: 'paid', paid_date: tx.transaction_date });
   }
 
@@ -275,6 +302,7 @@ bank.patch('/transactions/:id/match', async (c) => {
     await db.prepare(
       `UPDATE bank_transactions SET invoice_id = NULL, match_confidence = NULL, match_status = 'unmatched' WHERE id = ?`
     ).bind(txId).run();
+    await auditLog(db, user.id, 'unlink_match', 'bank_transaction', txId, { action: 'unlink' });
     return c.json({ success: true });
   }
 
@@ -322,10 +350,16 @@ bank.post('/import', async (c) => {
 
   if (!r2_key) return c.json({ error: 'r2_key required' }, 400);
 
-  const existing = await db.prepare(
+  // Dedup: check by r2_key OR by same year/month/account
+  let existing = await db.prepare(
     'SELECT id FROM bank_statements WHERE user_id = ? AND r2_key = ?'
   ).bind(tenantId, r2_key).first();
-  if (existing) return c.json({ error: 'Statement already imported', id: existing.id }, 409);
+  if (!existing && statement_year && statement_month) {
+    existing = await db.prepare(
+      'SELECT id FROM bank_statements WHERE user_id = ? AND statement_year = ? AND statement_month = ? AND account_number = ? LIMIT 1'
+    ).bind(tenantId, statement_year, statement_month, account_number || null).first();
+  }
+  if (existing) return c.json({ error: 'Statement already imported for this period', id: (existing as any).id }, 409);
 
   const id = `bs-${uuidv4().slice(0, 8)}`;
   const fileName = file_name || r2_key.split('/').pop() || 'statement.pdf';
@@ -336,7 +370,7 @@ bank.post('/import', async (c) => {
      statement_year, statement_month, period_start, period_end,
      opening_balance, closing_balance, page_count, ocr_text)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-  ).bind(id, user.id, fileName, 'application/pdf', '', r2_key,
+  ).bind(id, tenantId, fileName, 'application/pdf', '', r2_key,
     bank_name || null, account_number || null, branch || null,
     currency || 'HKD', account_type || null,
     statement_year || null, statement_month || null,
@@ -353,7 +387,7 @@ bank.post('/import', async (c) => {
         `INSERT INTO bank_transactions (id, bank_statement_id, user_id, transaction_date, description,
          deposit_amount, withdrawal_amount, balance, account_type, reference, sort_order)
          VALUES (?,?,?,?,?,?,?,?,?,?,?)`
-      ).bind(txId, id, user.id, tx.transaction_date, tx.description,
+      ).bind(txId, id, tenantId, tx.transaction_date, tx.description,
         tx.deposit_amount || 0, tx.withdrawal_amount || 0, tx.balance ?? 0,
         tx.account_type || account_type || null, tx.reference || null,
         tx.sort_order || txCount
@@ -362,6 +396,7 @@ bank.post('/import', async (c) => {
     }
   }
 
+  await auditLog(db, user.id, 'import', 'bank_statement', id, { file_name: fileName, transactions: txCount });
   return c.json({ id, file_name: fileName, transactions_count: txCount }, 201);
 });
 
@@ -404,7 +439,7 @@ bank.post('/upload', async (c) => {
      bank_name, account_number, branch, currency,
      statement_year, statement_month, opening_balance, closing_balance, ocr_text)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-  ).bind(id, user.id, file_name || null, file_type || 'application/pdf',
+  ).bind(id, tenantId, file_name || null, file_type || 'application/pdf',
     file_data || '', r2_key || null,
     bank_name || null, account_number || null, branch || null,
     currency || 'HKD',
@@ -429,6 +464,7 @@ bank.delete('/:id', async (c) => {
   if (!existing) return c.json({ error: 'Not found' }, 404);
   await c.env.DB.prepare('DELETE FROM bank_statements WHERE id = ? AND user_id = ?')
     .bind(c.req.param('id'), tenantId).run();
+  await auditLog(c.env.DB, user.id, 'delete', 'bank_statement', c.req.param('id'));
   return c.json({ success: true });
 });
 
@@ -446,29 +482,29 @@ bank.post('/:id/auto-categorize', async (c) => {
   // Categorization rules: [pattern, account_code]
   const rules: [RegExp, string][] = [
     [/B\/F\s+BALANCE|承上結餘/i, ''],
-    [/INTEREST\s*(PAYMENT|收入)|利息/i, '42010'],
-    [/VISA\s+DEBIT.*-.*CR|CREDIT.*VISA/i, '52070'],
-    [/VISA\s+DEBIT|扣賬卡交易/i, '52070'],
-    [/TRANSFER-DEBIT|轉賬支出/i, '52070'],
+    [/INTEREST\s*(PAYMENT|收入)|利息/i, '42101'],
+    [/VISA\s+DEBIT.*-.*CR|CREDIT.*VISA/i, '62303'],
+    [/VISA\s+DEBIT|扣賬卡交易/i, '62303'],
+    [/TRANSFER-DEBIT|轉賬支出/i, '62303'],
     [/DIRECT\s+CREDIT|自動轉賬存入/i, ''],
-    [/FPS\s+FEE|FPSPAYMENT/i, '52100'],
-    [/OUTCLEARING|RETURN|退票/i, '22020'],
-    [/CHEQUE|支票/i, '11012'],
-    [/SALARY|薪金|薪資|工資|PAYROLL/i, '52020'],
-    [/RENT|租金/i, '52030'],
-    [/UTILITIES|水電|電費|水費/i, '52040'],
-    [/INSURANCE|保險/i, '52090'],
-    [/TAX|稅|IRD/i, '57010'],
-    [/SOFTWARE|SUBSCRIPTION|CLOUD|API|\.AI\b|\.COM/i, '52070'],
-    [/MPF|強積金|公積金/i, '52021'],
-    [/AUDIT|審計/i, '52081'],
-    [/SECRETARY|秘書/i, '52084'],
-    [/TRAVEL|交通|機票|HOTEL/i, '54000'],
-    [/ADVERTISING|廣告|MARKETING/i, '53000'],
-    [/COMMISSION|佣金/i, '53030'],
-    [/ENTERTAINMENT|交際|應酬/i, '53040'],
-    [/BANK\s+CHARGE|手續費/i, '52100'],
-    [/DONATION|捐款|慈善/i, '58020'],
+    [/FPS\s+FEE|FPSPAYMENT/i, '65101'],
+    [/OUTCLEARING|RETURN|退票/i, '21201'],
+    [/CHEQUE|支票/i, '11101'],
+    [/SALARY|薪金|薪資|工資|PAYROLL/i, '61201'],
+    [/RENT|租金/i, '62101'],
+    [/UTILITIES|水電|電費|水費/i, '62201'],
+    [/INSURANCE|保險/i, '63301'],
+    [/TAX|稅|IRD/i, '81101'],
+    [/SOFTWARE|SUBSCRIPTION|CLOUD|API|\.AI\b|\.COM/i, '62303'],
+    [/MPF|強積金|公積金/i, '61202'],
+    [/AUDIT|審計/i, '63101'],
+    [/SECRETARY|秘書/i, '63102'],
+    [/TRAVEL|交通|機票|HOTEL/i, '64301'],
+    [/ADVERTISING|廣告|MARKETING/i, '64101'],
+    [/COMMISSION|佣金/i, '64201'],
+    [/ENTERTAINMENT|交際|應酬/i, '64202'],
+    [/BANK\s+CHARGE|手續費/i, '65101'],
+    [/DONATION|捐款|慈善/i, '66202'],
   ];
 
   // Director names for Director Loan classification
@@ -498,12 +534,12 @@ bank.post('/:id/auto-categorize', async (c) => {
 
     // Override: director-related deposits/withdrawals → Director Loan
     if (isDirector && /DIRECT\s+CREDIT|TRANSFER-DEBIT|FPS|自動轉賬|轉賬/.test(desc)) {
-      code = '22020';
+      code = '21201';
     }
 
     // Override: DIRECT CREDIT that's not matched → check for director
     if (!code && tx.deposit_amount > 0 && /DIRECT\s+CREDIT|自動轉賬存入/i.test(desc)) {
-      code = isDirector ? '22020' : '41020';
+      code = isDirector ? '21201' : '41101';
     }
 
     if (!code) { skipped++; continue; }
@@ -514,7 +550,21 @@ bank.post('/:id/auto-categorize', async (c) => {
     categorized++;
   }
 
-  return c.json({ categorized, skipped, total: txs.results.length, results: results.slice(0, 20) });
+  // Auto-complete compliance items for government fees
+  const complianceMap: Record<string, string> = { '63201': 'BR', '63202': 'NAR1' };
+  const categorizedCodes = new Set((txs.results as any[]).filter((t: any) => t.account_code && complianceMap[t.account_code]).map((t: any) => complianceMap[t.account_code]));
+  let complianceUpdated = 0;
+  for (const tag of categorizedCodes) {
+    const updated = await db.prepare(
+      `UPDATE member_compliance SET status = 'completed', completed_at = datetime('now'), updated_at = datetime('now')
+       WHERE user_id = ? AND status = 'pending' AND template_id IN
+       (SELECT id FROM compliance_templates WHERE (title_en LIKE ? OR title_zh LIKE ?) AND is_required = 1)`
+    ).bind(tenantId, `%${tag}%`, `%${tag}%`).run();
+    complianceUpdated += (updated as any)?.changes || 0;
+  }
+
+  await auditLog(db, user.id, 'auto_categorize', 'bank_statement', stmtId, { categorized, skipped, compliance_updated: complianceUpdated });
+  return c.json({ categorized, skipped, total: txs.results.length, results: results.slice(0, 20), compliance_updated: complianceUpdated });
 });
 
 // ── Import CSV (update transactions) ──
@@ -568,6 +618,95 @@ bank.post('/:id/import-csv', async (c) => {
   }
 
   return c.json({ updated, created, total: lines.length - 1 });
+});
+
+// ── Bank Reconciliation ──
+
+// Preview reconciliation for a statement
+bank.post('/:id/reconcile', async (c) => {
+  const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
+  const db = c.env.DB;
+  const stmtId = c.req.param('id');
+
+  const stmt = await db.prepare(
+    'SELECT * FROM bank_statements WHERE id = ? AND user_id = ?'
+  ).bind(stmtId, tenantId).first<{ id: string; closing_balance: number; period_end: string; account_number: string; account_code: string | null }>();
+  if (!stmt) return c.json({ error: 'Statement not found' }, 404);
+
+  // Get GL bank balance as of statement period end for the specific bank account
+  const glAccountCode = stmt.account_code || '11101';
+  const glBalance = await db.prepare(
+    `SELECT COALESCE(SUM(jl.debit) - SUM(jl.credit), 0) as balance
+     FROM journal_lines jl JOIN journal_entries je ON jl.entry_id = je.id
+     WHERE je.user_id = ? AND je.entry_date <= ? AND jl.account_code = ?`
+  ).bind(tenantId, stmt.period_end || new Date().toISOString().split('T')[0], glAccountCode).first<{ balance: number }>();
+
+  // Get outstanding (un-reconciled) transactions
+  const outstandingTxs = await db.prepare(
+    `SELECT id, transaction_date, description, deposit_amount, withdrawal_amount
+     FROM bank_transactions
+     WHERE bank_statement_id = ? AND match_status NOT IN ('confirmed')
+     ORDER BY transaction_date`
+  ).bind(stmtId).all();
+
+  const glBal = glBalance?.balance || 0;
+  const statementBal = stmt.closing_balance || 0;
+  const difference = statementBal - glBal;
+
+  return c.json({
+    statement_id: stmtId,
+    statement_balance: statementBal,
+    gl_balance: glBal,
+    difference,
+    outstanding_transactions: outstandingTxs.results,
+    matched: Math.abs(difference) < 0.01,
+  });
+});
+
+// Save a completed reconciliation
+bank.post('/:id/reconcile/save', async (c) => {
+  const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
+  const db = c.env.DB;
+  const stmtId = c.req.param('id');
+  const body = await c.req.json();
+  const { account_code, statement_balance, gl_balance, outstanding_deposits, outstanding_withdrawals, reconciled_balance, notes } = body;
+
+  const stmt = await db.prepare(
+    'SELECT id, period_end FROM bank_statements WHERE id = ? AND user_id = ?'
+  ).bind(stmtId, tenantId).first<{ id: string; period_end: string }>();
+  if (!stmt) return c.json({ error: 'Statement not found' }, 404);
+
+  const id = `br-${uuidv4().slice(0, 8)}`;
+  const difference = (statement_balance || 0) - (reconciled_balance || 0);
+
+  await db.prepare(
+    `INSERT INTO bank_reconciliations (id, user_id, bank_statement_id, account_code,
+     statement_date, statement_balance, gl_balance,
+     outstanding_deposits, outstanding_withdrawals, reconciled_balance, difference, notes, reconciled_by)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
+  ).bind(id, tenantId, stmtId, account_code || '11101',
+    stmt.period_end || new Date().toISOString().split('T')[0],
+    statement_balance || 0, gl_balance || 0,
+    outstanding_deposits || 0, outstanding_withdrawals || 0,
+    reconciled_balance || 0, difference, notes || null, user.id).run();
+
+  return c.json({ id, difference, status: Math.abs(difference) < 0.01 ? 'balanced' : 'difference' }, 201);
+});
+
+// List reconciliations
+bank.get('/reconciliations/list', async (c) => {
+  const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
+  const rows = await c.env.DB.prepare(
+    `SELECT br.*, bs.bank_name, bs.account_number, bs.statement_year, bs.statement_month
+     FROM bank_reconciliations br
+     JOIN bank_statements bs ON br.bank_statement_id = bs.id
+     WHERE br.user_id = ?
+     ORDER BY br.created_at DESC`
+  ).bind(tenantId).all();
+  return c.json({ data: rows.results });
 });
 
 export { bank as bankStatementRoutes };

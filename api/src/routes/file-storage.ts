@@ -7,7 +7,7 @@ import { processBankStatement, extractCompanyInfo, extractBankInfo } from '../li
 
 // Shared import: file_record → bank_statement + bank_transactions
 async function importStatementFromFile(
-  fileId: string, userId: string, db: D1Database, fileBucket: R2Bucket, ai: any, deepseekKey: string,
+  fileId: string, userId: string, db: D1Database, fileBucket: R2Bucket, ai: any, deepseekKey: string, glmApiKey?: string,
 ): Promise<{ success: boolean; statement_id?: string; error?: string; transactions_count?: number; parsed_via_ai?: boolean }> {
   const fileRow = await db.prepare(
     'SELECT id, r2_key, filename, original_name, file_type, ocr_text, ocr_status, category FROM file_records WHERE id = ? AND user_id = ?'
@@ -17,25 +17,28 @@ async function importStatementFromFile(
   const existing = await db.prepare('SELECT id FROM bank_statements WHERE user_id = ? AND r2_key = ?').bind(userId, fileRow.r2_key).first();
   if (existing) return { success: false, error: 'Statement already imported', statement_id: existing.id as string };
 
-  // Get OCR text
+  // Get OCR text from file record or run GLM-OCR
   let ocrText = fileRow.ocr_text || '';
   if (!ocrText || ocrText.length < 20) {
     const obj = await fileBucket.get(fileRow.r2_key);
-    if (obj) {
-      const buffer = await obj.arrayBuffer();
-      const bytes = new Uint8Array(buffer);
-      let binary = '';
-      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-      const base64 = btoa(binary);
-      if (ai) {
-        try {
-          const aiResponse = await ai.run('@cf/unum/uform-gen2-qwen-500m', {
-            prompt: 'Extract all visible text from this bank statement. Include all transaction dates, descriptions, deposit amounts, withdrawal amounts, balances, account numbers, bank name, statement period, opening and closing balances.',
-            image: base64,
-          });
-          ocrText = aiResponse?.description || '';
-        } catch {}
-      }
+    if (obj && glmApiKey) {
+      try {
+        const buffer = await obj.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        const base64 = btoa(binary);
+        const mimeType = fileRow.file_type || 'application/pdf';
+        const glmResp = await fetch('https://api.z.ai/api/paas/v4/layout_parsing', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${glmApiKey}` },
+          body: JSON.stringify({ model: 'glm-ocr', file: `data:${mimeType};base64,${base64}` }),
+        });
+        if (glmResp.ok) {
+          const glmData = await glmResp.json() as any;
+          ocrText = typeof glmData === 'string' ? glmData : JSON.stringify(glmData);
+        }
+      } catch {}
       if (ocrText) {
         await db.prepare("UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ?").bind(ocrText, fileId).run();
       }
@@ -213,7 +216,7 @@ ${ocrText.slice(0, 8000)}` }],
 
 // Shared import: file_record → invoice + invoice_items
 async function importInvoiceFromFile(
-  fileId: string, userId: string, db: D1Database, fileBucket: R2Bucket, ai: any, deepseekKey: string,
+  fileId: string, userId: string, db: D1Database, fileBucket: R2Bucket, ai: any, deepseekKey: string, glmApiKey?: string,
 ): Promise<{ success: boolean; invoice_id?: string; error?: string; items_count?: number }> {
   const fileRow = await db.prepare(
     'SELECT id, r2_key, filename, original_name, file_type, ocr_text, ocr_status, category, direction FROM file_records WHERE id = ? AND user_id = ?'
@@ -224,20 +227,23 @@ async function importInvoiceFromFile(
   if (!ocrText || ocrText.length < 20) {
     const obj = await fileBucket.get(fileRow.r2_key);
     if (obj) {
-      const buffer = await obj.arrayBuffer();
-      const bytes = new Uint8Array(buffer);
-      let binary = '';
-      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-      const base64 = btoa(binary);
-      if (ai) {
-        try {
-          const aiResponse = await ai.run('@cf/unum/uform-gen2-qwen-500m', {
-            prompt: 'Extract all visible text from this invoice. Include invoice number, dates, company names, amounts, line items with descriptions and prices.',
-            image: base64,
-          });
-          ocrText = aiResponse?.description || '';
-        } catch {}
-      }
+      try {
+        const buffer = await obj.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        const base64 = btoa(binary);
+        const mimeType = fileRow.file_type || 'application/pdf';
+        const glmResp = await fetch('https://api.z.ai/api/paas/v4/layout_parsing', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${glmApiKey}` },
+          body: JSON.stringify({ model: 'glm-ocr', file: `data:${mimeType};base64,${base64}` }),
+        });
+        if (glmResp.ok) {
+          const glmData = await glmResp.json() as any;
+          ocrText = typeof glmData === 'string' ? glmData : JSON.stringify(glmData);
+        }
+      } catch {}
       if (ocrText) {
         await db.prepare("UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ?").bind(ocrText, fileId).run();
       }
@@ -437,21 +443,26 @@ function classifyFile(filename: string, fileType: string, ocrText?: string): { f
   return { folder: 'General', category: 'general' };
 }
 
-// Run OCR via Cloudflare AI for PDFs and images
-async function runOcr(fileData: string, fileType: string, ai: any): Promise<{ text: string; status: string }> {
-  if (!ai) return { text: '', status: 'pending' };
+// Run GLM-OCR for PDFs and images
+async function runGlmOcr(fileData: string, fileType: string, glmApiKey?: string): Promise<{ text: string; status: string }> {
+  if (!glmApiKey) return { text: '', status: 'pending' };
 
   const isOcrCandidate = fileType.includes('pdf') || fileType.includes('image') || fileType.includes('png') || fileType.includes('jpg') || fileType.includes('jpeg');
   if (!isOcrCandidate) return { text: '', status: 'skipped' };
 
   try {
-    const cleanBase64 = fileData.replace(/^data:.*?;base64,/, '');
-    const aiResponse = await ai.run('@cf/unum/uform-gen2-qwen-500m', {
-      prompt: 'Extract all visible text from this document. Identify document type (invoice/receipt/bank statement/certificate/contract), dates, amounts, company names, and document numbers.',
-      image: cleanBase64,
+    const resp = await fetch('https://api.z.ai/api/paas/v4/layout_parsing', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${glmApiKey}`,
+      },
+      body: JSON.stringify({ model: 'glm-ocr', file: fileData }),
     });
-    const text = (aiResponse as any)?.description || '';
-    return { text, status: text.length > 10 ? 'completed' : 'unclear' };
+    if (!resp.ok) return { text: '', status: 'failed' };
+    const data = await resp.json() as any;
+    const text = typeof data === 'string' ? data : JSON.stringify(data);
+    return { text, status: text.length > 20 ? 'completed' : 'unclear' };
   } catch {
     return { text: '', status: 'failed' };
   }
@@ -510,6 +521,16 @@ files.post('/upload', async (c) => {
 
   if (!file_data) return c.json({ error: 'file_data required (base64)' }, 400);
 
+  // Validate file size (max 10MB base64 ≈ 13.3MB encoded)
+  if (file_data.length > 14_000_000) return c.json({ error: 'File too large. Maximum 10MB.' }, 400);
+
+  // Validate file type
+  const allowedTypes = ['application/pdf', 'image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'text/csv', 'application/vnd.ms-excel'];
+  if (file_type && !allowedTypes.includes(file_type)) {
+    return c.json({ error: `File type not allowed: ${file_type}` }, 400);
+  }
+
   const id = `fs-${uuidv4().slice(0, 8)}`;
   const safeName = original_name || filename || 'untitled';
   const r2Key = `${tenantId}/${id}-${safeName}`;
@@ -519,8 +540,8 @@ files.post('/upload', async (c) => {
   const classification = classifyFile(safeName, file_type || '');
   const folder = reqFolder || classification.folder;
 
-  // Run OCR
-  const ocrResult = await runOcr(file_data, file_type || '', c.env.AI);
+  // Run GLM-OCR
+  const ocrResult = await runGlmOcr(file_data, file_type || '', c.env.GLM_API_KEY);
   const ocrDirection = classifyFile(safeName, file_type || '', ocrResult.text).direction || classification.direction;
   const ocrAmount = classification.category === 'invoice' ? extractAmount(ocrResult.text) : null;
 
@@ -558,10 +579,10 @@ files.post('/upload', async (c) => {
           .bind(id).run();
 
         // Path A: Import using pdftotext OCR
-        const importResult = await importStatementFromFile(id, user.id, c.env.DB, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY);
+        const importResult = await importStatementFromFile(id, user.id, c.env.DB, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY, c.env.GLM_API_KEY);
 
         // Path B: Run GLM-OCR in background for cross-validation
-        if (importResult.success && c.env.DEEPSEEK_API_KEY) {
+        if (importResult.success && c.env.GLM_API_KEY) {
           try {
             const obj = await c.env.FILE_BUCKET.get(r2Key);
             if (obj) {
@@ -575,7 +596,7 @@ files.post('/upload', async (c) => {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
-                  'Authorization': 'Bearer bc604bbc774c49528e8615564aa51ea3.f0Hzibmlxdd5bKGZ',
+                  'Authorization': `Bearer ${c.env.GLM_API_KEY}`,
                 },
                 body: JSON.stringify({ model: 'glm-ocr', file: `data:${file_type || 'application/pdf'};base64,${base64}` }),
               });
@@ -615,7 +636,7 @@ files.post('/upload', async (c) => {
 
         // Try GLM-OCR first for better invoice recognition
         let ocrText = ocrResult.text || '';
-        if (c.env.DEEPSEEK_API_KEY) {
+        if (c.env.GLM_API_KEY) {
           try {
             const obj = await c.env.FILE_BUCKET.get(r2Key);
             if (obj) {
@@ -629,7 +650,7 @@ files.post('/upload', async (c) => {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
-                  'Authorization': 'Bearer bc604bbc774c49528e8615564aa51ea3.f0Hzibmlxdd5bKGZ',
+                  'Authorization': `Bearer ${c.env.GLM_API_KEY}`,
                 },
                 body: JSON.stringify({ model: 'glm-ocr', file: `data:${file_type || 'application/pdf'};base64,${base64}` }),
               });
@@ -646,7 +667,7 @@ files.post('/upload', async (c) => {
 
         // If we have OCR text, try to import
         if (ocrText && ocrText.length > 20) {
-          await importInvoiceFromFile(id, user.id, c.env.DB, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY);
+          await importInvoiceFromFile(id, user.id, c.env.DB, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY, c.env.GLM_API_KEY);
         }
 
         await c.env.DB.prepare("UPDATE file_records SET ocr_status = 'completed', updated_at = datetime('now') WHERE id = ?")
@@ -688,7 +709,7 @@ files.post('/upload-batch', async (c) => {
     const classification = classifyFile(safeName, f.file_type || '');
     const folder = batchFolder || classification.folder;
 
-    const ocrResult = await runOcr(f.file_data, f.file_type || '', c.env.AI);
+    const ocrResult = await runGlmOcr(f.file_data, f.file_type || '', c.env.GLM_API_KEY);
 
     const cleanBase64 = f.file_data.replace(/^data:.*?;base64,/, '');
     const binary = Uint8Array.from(atob(cleanBase64), ch => ch.charCodeAt(0));
@@ -707,10 +728,10 @@ files.post('/upload-batch', async (c) => {
 
     results.push({ id, filename: displayName, folder, ocr_status: ocrResult.status, category: classification.category });
 
-    // Auto-import bank statements
-    if (classification.category === 'bank_statement' && ocrResult.status === 'completed') {
+    // Auto-import bank statements (always, GLM-OCR may complete later)
+    if (classification.category === 'bank_statement') {
       c.executionCtx.waitUntil(
-        importStatementFromFile(id, user.id, c.env.DB, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY)
+        importStatementFromFile(id, user.id, c.env.DB, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY, c.env.GLM_API_KEY)
       );
     }
 
@@ -742,7 +763,7 @@ files.post('/upload-batch', async (c) => {
             }
           }
         } catch {}
-        await importInvoiceFromFile(id, user.id, c.env.DB, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY);
+        await importInvoiceFromFile(id, user.id, c.env.DB, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY, c.env.GLM_API_KEY);
       })());
     }
   }
@@ -887,25 +908,30 @@ files.post('/reprocess', async (c) => {
           const buffer = await obj.arrayBuffer();
           const bytes = new Uint8Array(buffer);
 
-          if ((row.file_type || '').includes('pdf')) {
-            // PDF: can't extract text in Workers (no DOM), mark as skipped
-            ocrStatus = 'skipped';
+          // Use GLM-OCR for both PDFs and images
+          let binary = '';
+          for (let i = 0; i < bytes.length; i++) {
+            binary += String.fromCharCode(bytes[i]);
+          }
+          const base64 = btoa(binary);
+          const mimeType = row.file_type || 'application/pdf';
+          if (c.env.GLM_API_KEY) {
+            try {
+              const glmResp = await fetch('https://api.z.ai/api/paas/v4/layout_parsing', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${c.env.GLM_API_KEY}` },
+                body: JSON.stringify({ model: 'glm-ocr', file: `data:${mimeType};base64,${base64}` }),
+              });
+              if (glmResp.ok) {
+                const glmData = await glmResp.json() as any;
+                ocrText = typeof glmData === 'string' ? glmData : JSON.stringify(glmData);
+                ocrStatus = ocrText.length > 20 ? 'completed' : 'unclear';
+              } else {
+                ocrStatus = 'failed';
+              }
+            } catch { ocrStatus = 'failed'; }
           } else {
-            // Image: use DeepSeek vision
-            let binary = '';
-            for (let i = 0; i < bytes.length; i++) {
-              binary += String.fromCharCode(bytes[i]);
-            }
-            const base64 = btoa(binary);
-            if (c.env.DEEPSEEK_API_KEY) {
-              const result = await runDeepseekOcr(base64, row.file_type || 'image/png', c.env.DEEPSEEK_API_KEY);
-              ocrText = result.text;
-              ocrStatus = result.status;
-            } else if (c.env.AI) {
-              const result = await runOcr(`data:${row.file_type};base64,${base64}`, row.file_type, c.env.AI);
-              ocrText = result.text;
-              ocrStatus = result.status;
-            }
+            ocrStatus = 'skipped';
           }
         }
       }
@@ -954,12 +980,12 @@ files.post('/:id/ocr-result', async (c) => {
   const updatedOcrStatus = ocr_status || (row as any)?.ocr_status || '';
   if ((updatedCategory === 'bank_statement' || updatedCategory === 'bank') && updatedOcrStatus === 'completed') {
     c.executionCtx.waitUntil(
-      importStatementFromFile(id, user.id, db, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY)
+      importStatementFromFile(id, user.id, db, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY, c.env.GLM_API_KEY)
     );
   }
   if (updatedCategory === 'invoice' && updatedOcrStatus === 'completed') {
     c.executionCtx.waitUntil(
-      importInvoiceFromFile(id, user.id, db, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY)
+      importInvoiceFromFile(id, user.id, db, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY, c.env.GLM_API_KEY)
     );
   }
 
@@ -971,7 +997,7 @@ files.post('/:id/import-statement', async (c) => {
   const user = c.get('user');
   const tenantId = c.get('client_user_id') || user.id;
   const result = await importStatementFromFile(
-    c.req.param('id'), user.id, c.env.DB, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY
+    c.req.param('id'), tenantId, c.env.DB, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY, c.env.GLM_API_KEY
   );
   if (!result.success) {
     const status = result.error === 'File not found' ? 404 : result.error === 'Statement already imported' ? 409 : 422;
@@ -985,7 +1011,7 @@ files.post('/:id/import-invoice', async (c) => {
   const user = c.get('user');
   const tenantId = c.get('client_user_id') || user.id;
   const result = await importInvoiceFromFile(
-    c.req.param('id'), user.id, c.env.DB, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY
+    c.req.param('id'), tenantId, c.env.DB, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY, c.env.GLM_API_KEY
   );
   if (!result.success) {
     const status = result.error === 'File not found' ? 404 : result.error?.includes('already exists') ? 409 : 422;

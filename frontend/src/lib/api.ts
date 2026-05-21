@@ -1,9 +1,14 @@
 const API_BASE = '/api';
 
+// Direct Worker URL for large payloads (bypasses Pages Function body size limits)
+export const WORKER_API_BASE = 'https://oppc-crm-api-production.ai-caseylai.workers.dev/api';
+
 interface ApiOptions {
   method?: string;
   body?: unknown;
   headers?: Record<string, string>;
+  /** Use direct Worker URL instead of Pages Function proxy (for large uploads) */
+  baseUrl?: string;
 }
 
 function getHeaders(extra?: Record<string, string>): Record<string, string> {
@@ -25,10 +30,12 @@ function getHeaders(extra?: Record<string, string>): Record<string, string> {
 
 export async function api(path: string, options: ApiOptions = {}) {
   const headers = getHeaders(options.headers);
+  const base = options.baseUrl || API_BASE;
 
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetch(`${base}${path}`, {
     method: options.method || 'GET',
     headers,
+    credentials: 'include',
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
 
@@ -63,6 +70,7 @@ export async function streamChat(
     const res = await fetch(`${API_BASE}/chat`, {
       method: 'POST',
       headers,
+      credentials: 'include',
       body: JSON.stringify({ ...body, stream: true }),
     });
 

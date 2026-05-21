@@ -1,3 +1,4 @@
+import { getJwtSecret } from '../middleware/auth';
 import { Hono } from 'hono';
 import { upgradeWebSocket } from 'hono/cloudflare-workers';
 import { verify as jwtVerify } from 'jsonwebtoken';
@@ -29,7 +30,7 @@ ws.get('/', upgradeWebSocket((c) => {
       const token = url.searchParams.get('token') || '';
       if (!token) return; // Will authenticate via first message
       try {
-        const payload = jwtVerify(token, c.env.JWT_SECRET || 'dev-secret-change-me') as { id: string };
+        const payload = jwtVerify(token, getJwtSecret(c.env)) as { id: string };
         userId = payload.id;
         if (!clients.has(userId)) clients.set(userId, new Set());
         clients.get(userId)!.add(ws.raw!);
@@ -44,7 +45,7 @@ ws.get('/', upgradeWebSocket((c) => {
         // Auth via first message (for clients that can't use query params)
         if (!userId && msg.type === 'auth' && msg.token) {
           try {
-            const payload = jwtVerify(msg.token, c.env.JWT_SECRET || 'dev-secret-change-me') as { id: string };
+            const payload = jwtVerify(msg.token, getJwtSecret(c.env)) as { id: string };
             userId = payload.id;
             if (!clients.has(userId)) clients.set(userId, new Set());
             clients.get(userId)!.add(ws.raw!);

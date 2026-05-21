@@ -85,22 +85,29 @@ firms.post('/:id/members', async (c) => {
   }
 
   const body = await c.req.json();
-  const { email, role } = body as { email: string; role?: string };
+  const { email, role, password, name } = body as { email: string; role?: string; password?: string; name?: string };
   if (!email) return c.json({ error: 'email required' }, 400);
 
   // Find or create user
   let memberUser = await c.env.DB.prepare(
     'SELECT id, email, name FROM users WHERE email = ?'
   ).bind(email).first<{ id: string; email: string; name: string }>();
+  let createdPassword: string | null = null;
 
   if (!memberUser) {
     const id = `u-${uuidv4().slice(0, 8)}`;
-    const tempPassword = uuidv4().slice(0, 12);
-    const passwordHash = await hash(tempPassword, 10);
+    createdPassword = password || uuidv4().slice(0, 12);
+    const passwordHash = await hash(createdPassword, 10);
+    const displayName = name || email.split('@')[0];
     await c.env.DB.prepare(
       'INSERT INTO users (id, email, password_hash, name, role) VALUES (?, ?, ?, ?, ?)'
-    ).bind(id, email, passwordHash, email.split('@')[0], 'user').run();
-    memberUser = { id, email, name: email.split('@')[0] };
+    ).bind(id, email, passwordHash, displayName, 'user').run();
+    memberUser = { id, email, name: displayName };
+  } else if (password) {
+    // Update password for existing user
+    const passwordHash = await hash(password, 10);
+    await c.env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(passwordHash, memberUser.id).run();
+    createdPassword = password;
   }
 
   // Check if already a member
@@ -114,21 +121,72 @@ firms.post('/:id/members', async (c) => {
     'INSERT INTO firm_members (id, firm_id, user_id, role) VALUES (?, ?, ?, ?)'
   ).bind(memberId, user.firm_id, memberUser.id, role || 'staff').run();
 
-  return c.json({ id: memberId, user_id: memberUser.id, email: memberUser.email, role: role || 'staff' }, 201);
+  return c.json({ id: memberId, user_id: memberUser.id, email: memberUser.email, name: memberUser.name, role: role || 'staff', ...(createdPassword ? { password: createdPassword } : {}) }, 201);
 });
 
-// DELETE /api/firms/:id/members/:mid — remove staff member
+// DELETE /api/firms/:id/members/:mid — permanently delete staff member and user account
 firms.delete('/:id/members/:mid', async (c) => {
   const user = c.get('user');
   if (!user.firm_id || user.firm_id !== c.req.param('id') || user.firm_role !== 'admin') {
     return c.json({ error: 'Access denied' }, 403);
   }
+  // Get user_id before deleting
+  const member = await c.env.DB.prepare(
+    'SELECT user_id FROM firm_members WHERE id = ? AND firm_id = ?'
+  ).bind(c.req.param('mid'), user.firm_id).first<{ user_id: string }>();
+  if (!member) return c.json({ error: 'Member not found' }, 404);
+  // Don't allow deleting yourself
+  if (member.user_id === user.id) return c.json({ error: 'Cannot delete yourself' }, 400);
+  // Delete from firm_members
+  await c.env.DB.prepare('DELETE FROM firm_members WHERE id = ? AND firm_id = ?')
+    .bind(c.req.param('mid'), user.firm_id).run();
+  // Delete assignments
+  await c.env.DB.prepare('DELETE FROM firm_client_assignments WHERE firm_member_id = ?')
+    .bind(c.req.param('mid')).run();
+  // Delete user account
+  await c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(member.user_id).run();
+  return c.json({ success: true, deleted_user_id: member.user_id });
+});
 
-  // Soft-delete: set is_active = 0
-  await c.env.DB.prepare(
-    'UPDATE firm_members SET is_active = 0 WHERE id = ? AND firm_id = ?'
-  ).bind(c.req.param('mid'), user.firm_id).run();
+// PATCH /api/firms/:id/members/:mid — toggle active/inactive or update role
+firms.patch('/:id/members/:mid', async (c) => {
+  const user = c.get('user');
+  if (!user.firm_id || user.firm_id !== c.req.param('id') || user.firm_role !== 'admin') {
+    return c.json({ error: 'Access denied' }, 403);
+  }
+  const body = await c.req.json();
+  const sets: string[] = [];
+  const params: any[] = [];
+  if (body.is_active !== undefined) { sets.push('is_active = ?'); params.push(body.is_active ? 1 : 0); }
+  if (body.role) { sets.push('role = ?'); params.push(body.role); }
+  if (body.name) {
+    const member = await c.env.DB.prepare('SELECT user_id FROM firm_members WHERE id = ? AND firm_id = ?')
+      .bind(c.req.param('mid'), user.firm_id).first<{ user_id: string }>();
+    if (member) await c.env.DB.prepare('UPDATE users SET name = ? WHERE id = ?').bind(body.name, member.user_id).run();
+  }
+  if (sets.length === 0 && !body.name) return c.json({ error: 'No fields to update' }, 400);
+  if (sets.length > 0) {
+    params.push(c.req.param('mid'), user.firm_id);
+    await c.env.DB.prepare(`UPDATE firm_members SET ${sets.join(', ')} WHERE id = ? AND firm_id = ?`).bind(...params).run();
+  }
+  return c.json({ success: true });
+});
 
+// PATCH /api/firms/:id/members/:mid/password — change login password
+firms.patch('/:id/members/:mid/password', async (c) => {
+  const user = c.get('user');
+  if (!user.firm_id || user.firm_id !== c.req.param('id') || user.firm_role !== 'admin') {
+    return c.json({ error: 'Access denied' }, 403);
+  }
+  const body = await c.req.json();
+  const { password } = body;
+  if (!password || password.length < 4) return c.json({ error: 'Password must be at least 4 characters' }, 400);
+  // Get the user_id from firm_members
+  const member = await c.env.DB.prepare('SELECT user_id FROM firm_members WHERE id = ? AND firm_id = ?')
+    .bind(c.req.param('mid'), user.firm_id).first<{ user_id: string }>();
+  if (!member) return c.json({ error: 'Member not found' }, 404);
+  const pwHash = await hash(password, 10);
+  await c.env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(pwHash, member.user_id).run();
   return c.json({ success: true });
 });
 
@@ -177,6 +235,31 @@ firms.post('/:id/clients', async (c) => {
   await c.env.DB.prepare(
     'INSERT INTO firm_clients (id, firm_id, client_user_id, display_name) VALUES (?, ?, ?, ?)'
   ).bind(firmClientId, user.firm_id, clientUserId, display_name || null).run();
+
+  // Seed compliance records for the new client
+  const templates = await c.env.DB.prepare('SELECT id FROM compliance_templates WHERE is_required = 1').all();
+  for (const t of templates.results as any[]) {
+    await c.env.DB.prepare(
+      'INSERT OR IGNORE INTO member_compliance (id, user_id, template_id, status) VALUES (?, ?, ?, ?)'
+    ).bind(`mc-${uuidv4().slice(0, 8)}`, clientUserId, t.id, 'pending').run();
+  }
+
+  // Copy chart of accounts — prefer canonical COA (from u-hayson seed), fallback to admin's
+  const canonicalAccounts = await c.env.DB.prepare(
+    "SELECT account_code, account_name, account_type, parent_code, opening_balance FROM accounts WHERE user_id = 'u-hayson'"
+  ).all();
+  const sourceAccounts = canonicalAccounts.results.length > 0 ? canonicalAccounts.results
+    : (await c.env.DB.prepare(
+      'SELECT account_code, account_name, account_type, parent_code, opening_balance FROM accounts WHERE user_id = ?'
+    ).bind(user.id).all()).results;
+
+  if (sourceAccounts.length > 0) {
+    for (const a of sourceAccounts as any[]) {
+      await c.env.DB.prepare(
+        'INSERT OR IGNORE INTO accounts (id, user_id, account_code, account_name, account_type, parent_code, opening_balance) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      ).bind(`acc-${uuidv4().slice(0, 8)}`, clientUserId, a.account_code, a.account_name, a.account_type, a.parent_code || null, a.opening_balance || 0).run();
+    }
+  }
 
   return c.json({
     id: firmClientId,

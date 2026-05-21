@@ -1,15 +1,22 @@
 import { Hono } from 'hono';
 import { v4 as uuidv4 } from 'uuid';
+import { hash } from 'bcryptjs';
 import { authMiddleware } from '../middleware/auth';
 import { Bindings, Variables } from '../types';
 
 const chat = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 chat.use('*', authMiddleware);
 
-const SYSTEM_PROMPT = `You are the OPCC CRM AI assistant with access to the user's real CRM data via function calling. You use the DeepSeek LLM.
+const SYSTEM_PROMPT = `You are the OPCC CRM AI assistant. You use the DeepSeek LLM.
+
+CRITICAL — ANNOUNCE-AND-EXECUTE MODE:
+- When the user asks a question that requires data (counting, listing, searching, querying), you MUST call the appropriate function AND present results in ONE response.
+- Format: briefly state what you're doing, then call the function immediately. Do NOT wait for confirmation.
+- Example: "查詢中..." + call get_counts → present the results.
+- Example: "列出月結單..." + call list_bank_statements → present the list.
+- NEVER say "我準備呼叫" or ask the user to confirm. Just execute.
 
 Rules:
-- ALWAYS call functions to get real numbers — never guess or provide example data
 - NEVER fabricate or make up data. Only present data that was ACTUALLY returned by your function calls.
 - When a function returns data, present it EXACTLY as returned. Do not invent fake names, amounts, or transactions.
 - If you cannot access the data, say so honestly. Do not create plausible-looking fake data.
@@ -51,7 +58,11 @@ BANK STATEMENT RULES:
 - Use get_bank_statement_summary for a quick overview (opening/closing, totals, top 10 transactions).
 - Use list_bank_statements to see all available statements.
 - Use ocr_bank_statement ONLY when the user explicitly asks to re-OCR the original PDF.
-- When the user asks to "list transactions" or "show statement", use get_bank_statement_raw — NEVER get_bank_statement or ocr_bank_statement.`;
+- When the user asks to "list transactions" or "show statement", use get_bank_statement_raw — NEVER get_bank_statement or ocr_bank_statement.
+
+FIRM TOOLS: Use list_firms for firm info, list_staff for staff, add_staff_member to add employees. NEVER use query_database for these.
+CODE TOOLS: Use read_code/write_code/list_project_files/git_log/deploy_frontend to edit code. Always read_code first, then write COMPLETE file content.
+For counts/numbers: if user asks "多少/幾個/數量/how many/count", call get_counts.`;
 
 const TOOLS: any[] = [
   // ── Dashboard / Summary ──
@@ -174,6 +185,15 @@ const TOOLS: any[] = [
   { type: 'function', function: { name: 'delete_document', description: 'Delete a document', parameters: { type: 'object', properties: { id: { type: 'string', description: 'Document ID' } }, required: ['id'] } } },
 
   // ── Dynamic Query (fallback for any data not covered by specific functions) ──
+  { type: 'function', function: { name: 'list_firms', description: 'List firms the current user belongs to', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'list_staff', description: 'List all staff members in the firm', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'add_staff_member', description: 'Add a staff member to the firm. Returns login password.', parameters: { type: 'object', properties: { email: { type: 'string' }, password: { type: 'string' }, name: { type: 'string' }, role: { type: 'string' } }, required: ['email'] } } },
+  { type: 'function', function: { name: 'read_code', description: 'Read source code from GitHub repo ai-caseylai/opcc-crm', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } } },
+  { type: 'function', function: { name: 'write_code', description: 'Write a file to GitHub. Read first, then write COMPLETE content.', parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' }, message: { type: 'string' } }, required: ['path', 'content', 'message'] } } },
+  { type: 'function', function: { name: 'list_project_files', description: 'List files in project repo directory', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: [] } } },
+  { type: 'function', function: { name: 'git_log', description: 'Show recent git commits', parameters: { type: 'object', properties: { count: { type: 'number' } }, required: [] } } },
+  { type: 'function', function: { name: 'deploy_frontend', description: 'Deploy frontend to Cloudflare Pages', parameters: { type: 'object', properties: { confirm: { type: 'boolean' } }, required: ['confirm'] } } },
+
   { type: 'function', function: { name: 'query_database', description: 'Execute a SQL SELECT query on the database to retrieve data. Only SELECT queries are allowed. Use this when no specific function covers the data you need. Tables: customers, suppliers, products, invoices, invoice_items, quotations, quotation_items, purchase_orders, purchase_order_items, service_orders, service_order_items, services, service_bookings, todos, calendar_events, journal_entries, journal_lines, accounts, bank_statements, bank_transactions, expense_receipts, file_records, documents, chat_sessions, chat_messages, company_settings, domains. All tables have user_id column for filtering.', parameters: { type: 'object', properties: { sql: { type: 'string', description: 'SQL SELECT query. Must include WHERE user_id = ? placeholder. Example: SELECT * FROM customers WHERE user_id = ? AND name LIKE ? LIMIT 10' }, params: { type: 'array', description: 'Parameters for the query. First param must always be the user_id, additional params as needed.', items: { type: 'string' } } }, required: ['sql'] } } },
 ];
 
@@ -189,11 +209,12 @@ async function ensureAccount(db: D1Database, userId: string, code: string): Prom
   return null;
 }
 
-async function executeTool(name: string, db: D1Database, userId: string, args: any = {}, env?: any): Promise<string> {
+async function executeTool(name: string, db: D1Database, userId: string, args: any = {}, env?: any, realUserId?: string): Promise<string> {
+  const firmUserId = realUserId || userId;
   const limit = args?.limit || 10;
   switch (name) {
     case 'get_counts': {
-      const tables = ['customers', 'suppliers', 'products', 'invoices', 'quotations', 'purchase_orders', 'service_orders', 'todos'];
+      const tables = ['customers', 'suppliers', 'products', 'invoices', 'quotations', 'purchase_orders', 'service_orders', 'todos', 'bank_statements', 'bank_transactions', 'journal_entries'];
       const result: Record<string, number> = {};
       for (const t of tables) {
         try {
@@ -205,7 +226,7 @@ async function executeTool(name: string, db: D1Database, userId: string, args: a
     }
     case 'get_summary': {
       const counts: Record<string, number> = {};
-      for (const t of ['customers','suppliers','products','invoices','quotations','purchase_orders','service_orders','todos']) {
+      for (const t of ['customers','suppliers','products','invoices','quotations','purchase_orders','service_orders','todos','bank_statements','bank_transactions','journal_entries']) {
         try {
           const r = await db.prepare(`SELECT COUNT(*) as cnt FROM ${t} WHERE user_id = ?`).bind(userId).first<{cnt:number}>();
           counts[t] = r?.cnt || 0;
@@ -1302,31 +1323,111 @@ ${ocrText.slice(0, 8000)}` }],
       }
     }
 
+    case 'list_firms': {
+      const rows = await db.prepare('SELECT f.id, f.name, fm.role FROM firms f JOIN firm_members fm ON fm.firm_id = f.id WHERE fm.user_id = ? AND fm.is_active = 1').bind(firmUserId).all();
+      return JSON.stringify(rows.results);
+    }
+    case 'list_staff': {
+      const rows = await db.prepare('SELECT u.name, u.email, fm.role, fm.is_active FROM firm_members fm JOIN users u ON u.id = fm.user_id WHERE fm.firm_id IN (SELECT firm_id FROM firm_members WHERE user_id = ? AND is_active = 1) ORDER BY fm.is_active DESC').bind(firmUserId).all();
+      return JSON.stringify({ count: rows.results.length, staff: rows.results });
+    }
+    case 'add_staff_member': {
+      const fm = await db.prepare('SELECT firm_id, role FROM firm_members WHERE user_id = ? AND is_active = 1 LIMIT 1').bind(firmUserId).first<{ firm_id: string; role: string }>();
+      if (!fm || fm.role !== 'admin') return JSON.stringify({ error: 'Only firm admins can add staff' });
+      const { email, password, name, role } = args;
+      if (!email) return JSON.stringify({ error: 'email required' });
+      let mu = await db.prepare('SELECT id, email, name FROM users WHERE email = ?').bind(email).first<{ id: string; email: string; name: string }>();
+      let createdPw: string | null = null;
+      if (!mu) {
+        const id = 'u-' + require('uuid').v4().slice(0, 8);
+        createdPw = password || require('uuid').v4().slice(0, 12);
+        const pwHash = await hash(createdPw, 10);
+        await db.prepare('INSERT INTO users (id, email, password_hash, name, role) VALUES (?,?,?,?,?)').bind(id, email, pwHash, name || email.split('@')[0], 'user').run();
+        mu = { id, email, name: name || email.split('@')[0] };
+      } else if (password) {
+        const pwHash = await hash(password, 10);
+        await db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(pwHash, mu.id).run();
+        createdPw = password;
+      }
+      const ex = await db.prepare('SELECT id FROM firm_members WHERE firm_id = ? AND user_id = ?').bind(fm.firm_id, mu.id).first();
+      if (ex) return JSON.stringify({ error: 'Already a member' });
+      const fmId = 'fm-' + require('uuid').v4().slice(0, 8);
+      await db.prepare('INSERT INTO firm_members (id, firm_id, user_id, role) VALUES (?,?,?,?)').bind(fmId, fm.firm_id, mu.id, role || 'staff').run();
+      return JSON.stringify({ success: true, firm_id: fm.firm_id, user_id: mu.id, email, name: mu.name, role: role || 'staff', ...(createdPw ? { password: createdPw } : {}) });
+    }
+    case 'read_code': {
+      const p = args?.path; if (!p) return JSON.stringify({ error: 'path required' });
+      try {
+        const r = await fetch('https://api.github.com/repos/ai-caseylai/opcc-crm/contents/'+encodeURIComponent(p)+'?ref=main', { headers: { Authorization: 'Bearer '+(env.GITHUB_TOKEN||''), 'User-Agent': 'opcc-crm', Accept: 'application/vnd.github.v3+json' } });
+        if (!r.ok) return JSON.stringify({ error: 'GitHub '+r.status });
+        const d = await r.json() as any;
+        const content = d.content ? (()=>{const b=atob(d.content.replace(/\n/g,''));const u=new Uint8Array(b.length);for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);return new TextDecoder('utf-8').decode(u);})() : '(no content)';
+        return JSON.stringify({ path: p, size: d.size, content });
+      } catch(e: any) { return JSON.stringify({ error: e.message }); }
+    }
+    case 'write_code': {
+      const { path: fp, content: fc, message: fm } = args; if (!fp || fc === undefined) return JSON.stringify({ error: 'path and content required' });
+      try {
+        let sha = '';
+        try { const gr = await fetch('https://api.github.com/repos/ai-caseylai/opcc-crm/contents/'+encodeURIComponent(fp)+'?ref=main', { headers: { Authorization: 'Bearer '+(env.GITHUB_TOKEN||''), 'User-Agent': 'opcc-crm', Accept: 'application/vnd.github.v3+json' } }); if (gr.ok) { const gd = await gr.json() as any; sha = gd.sha || ''; } } catch {}
+        const body: any = { message: fm || 'Update via AI', content: btoa(fc), branch: 'main' }; if (sha) body.sha = sha;
+        const pr = await fetch('https://api.github.com/repos/ai-caseylai/opcc-crm/contents/'+encodeURIComponent(fp), { method: 'PUT', headers: { Authorization: 'Bearer '+(env.GITHUB_TOKEN||''), 'User-Agent': 'opcc-crm', Accept: 'application/vnd.github.v3+json', 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        if (!pr.ok) return JSON.stringify({ error: 'GitHub '+pr.status });
+        const pd = await pr.json() as any;
+        return JSON.stringify({ success: true, path: fp, commit: pd.commit?.sha?.slice(0,7) });
+      } catch(e: any) { return JSON.stringify({ error: e.message }); }
+    }
+    case 'list_project_files': {
+      try {
+        const r = await fetch('https://api.github.com/repos/ai-caseylai/opcc-crm/contents/'+(args?.path||''), { headers: { Authorization: 'Bearer '+(env.GITHUB_TOKEN||''), 'User-Agent': 'opcc-crm', Accept: 'application/vnd.github.v3+json' } });
+        if (!r.ok) return JSON.stringify({ error: 'GitHub '+r.status });
+        const d = await r.json() as any[];
+        return JSON.stringify(Array.isArray(d) ? d.map(f=>({name:f.name,path:f.path,type:f.type,size:f.size})) : [d]);
+      } catch(e: any) { return JSON.stringify({ error: e.message }); }
+    }
+    case 'git_log': {
+      try {
+        const r = await fetch('https://api.github.com/repos/ai-caseylai/opcc-crm/commits?per_page='+(args?.count||10), { headers: { Authorization: 'Bearer '+(env.GITHUB_TOKEN||''), 'User-Agent': 'opcc-crm', Accept: 'application/vnd.github.v3+json' } });
+        if (!r.ok) return JSON.stringify({ error: 'GitHub '+r.status });
+        const d = await r.json() as any[];
+        return JSON.stringify(d.map(c=>({sha:c.sha.slice(0,7),message:c.commit.message.split('\n')[0],date:c.commit.author.date})));
+      } catch(e: any) { return JSON.stringify({ error: e.message }); }
+    }
+    case 'deploy_frontend': {
+      if (!args?.confirm) return JSON.stringify({ error: 'Confirm required' });
+      try {
+        const r = await fetch('https://api.cloudflare.com/client/v4/accounts/'+env.CF_ACCOUNT_ID+'/pages/projects/oppc-crm/deployments', { method: 'POST', headers: { Authorization: 'Bearer '+env.CF_API_TOKEN, 'Content-Type': 'application/json' } });
+        const d = await r.json() as any;
+        return JSON.stringify(r.ok?{success:true,id:d.result?.id}:{error:'Deploy failed'});
+      } catch(e: any) { return JSON.stringify({ error: e.message }); }
+    }
+
     default:
       return '{}';
   }
 }
 
-async function callDeepSeek(apiKey: string, messages: any[], tools?: any[]): Promise<any> {
-  const body: any = {
-    model: 'deepseek-v4-pro',
-    messages,
-    max_tokens: 4000,
-    temperature: 0.1,
-  };
-  if (tools && tools.length > 0) body.tools = tools;
-  if (tools && tools.length > 0) body.tool_choice = 'auto';
+async function callQwen(apiKey: string, messages: any[], tools?: any[], forceTool?: boolean): Promise<any> {
+  const body: any = { model: 'qwen-plus', messages, max_tokens: 4000, temperature: 0.1 };
+  if (tools && tools.length > 0) { body.tools = tools; body.tool_choice = forceTool ? 'required' : 'auto'; }
+  const resp = await fetch('https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) { const err = await resp.text(); throw new Error(`Qwen API error: ${resp.status} ${err}`); }
+  return resp.json();
+}
 
+async function callDeepSeek(apiKey: string, messages: any[], tools?: any[], forceTool?: boolean): Promise<any> {
+  const body: any = { model: 'deepseek-chat', messages, max_tokens: 4000, temperature: 0.1 };
+  if (tools && tools.length > 0) { body.tools = tools; body.tool_choice = forceTool ? 'required' : 'auto'; }
   const resp = await fetch('https://api.deepseek.com/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
     body: JSON.stringify(body),
   });
-
-  if (!resp.ok) {
-    const err = await resp.text();
-    throw new Error(`DeepSeek API error: ${resp.status} ${err}`);
-  }
+  if (!resp.ok) { const err = await resp.text(); throw new Error(`DeepSeek API error: ${resp.status} ${err}`); }
   return resp.json();
 }
 
@@ -1434,8 +1535,13 @@ chat.post('/', async (c) => {
 
   if (!message && !file) return c.json({ reply: 'Message required' });
 
-  const apiKey = c.env.DEEPSEEK_API_KEY;
-  if (!apiKey) return c.json({ reply: 'DeepSeek API key not configured' });
+  const qwenKey = c.env.QWEN_API_KEY as string | undefined;
+  const dsKey = c.env.DEEPSEEK_API_KEY;
+  const apiKey = qwenKey || dsKey;
+  if (!apiKey) return c.json({ reply: 'No LLM API key configured' });
+  const useQwen = !!qwenKey;
+  const callLLM = (msgs: any[], tools?: any[], force?: boolean) =>
+    useQwen ? callQwen(apiKey, msgs, tools, force) : callLLM(msgs, tools, force);
 
   const db = c.env.DB;
 
@@ -1499,7 +1605,7 @@ chat.post('/', async (c) => {
     }
     messages.push({ role: 'user', content: userMessage });
 
-    const response1 = await callDeepSeek(apiKey, messages, TOOLS);
+    const response1 = await callLLM(messages, TOOLS, true);
     const choice = response1.choices?.[0];
     const toolCalls = choice?.message?.tool_calls;
 
@@ -1513,7 +1619,7 @@ chat.post('/', async (c) => {
         let fnArgs: any = {};
         try { fnArgs = JSON.parse(tc.function?.arguments || '{}'); } catch {}
         const startTime = Date.now();
-        const result = fnName ? await executeTool(fnName, db, tenantId, fnArgs, c.env) : '{}';
+        const result = fnName ? await executeTool(fnName, db, tenantId, fnArgs, c.env, user.id) : '{}';
         const elapsed = Date.now() - startTime;
         toolLog.push(`[${fnName}] ${elapsed}ms args=${JSON.stringify(fnArgs).slice(0, 200)} result=${String(result).slice(0, 100)}`);
         messages.push({ role: 'tool', tool_call_id: tc.id, content: result });
@@ -1529,7 +1635,7 @@ chat.post('/', async (c) => {
         const parsed = JSON.parse(rawDisplay.content);
         reply = parsed.display;
       } else {
-        const response2 = await callDeepSeek(apiKey, messages);
+        const response2 = await callLLM(messages);
         reply = response2.choices?.[0]?.message?.content || 'Sorry, I could not process that.';
       }
 
@@ -1586,6 +1692,13 @@ chat.post('/', async (c) => {
           sql_query: 'query_database',
           query: 'query_database',
           raw_query: 'query_database',
+          list_firm: 'list_firms',
+          get_firm: 'list_firms',
+          add_staff: 'add_staff_member',
+          create_staff: 'add_staff_member',
+          list_employees: 'list_staff',
+          staff_count: 'list_staff',
+          get_staff: 'list_staff',
           search_data: 'query_database',
           find_data: 'query_database',
           get_data: 'query_database',
@@ -1639,7 +1752,7 @@ chat.post('/', async (c) => {
               log.push(`  Converted year+month → start_date=${fnArgs.start_date}, end_date=${fnArgs.end_date}`);
             }
             try {
-              const result = await executeTool(fnName, db, tenantId, fnArgs, c.env);
+              const result = await executeTool(fnName, db, tenantId, fnArgs, c.env, user.id);
               results.push(`${fnName}: ${result}`);
               log.push(`  Result: OK`);
             } catch (e: any) {
@@ -1685,7 +1798,7 @@ chat.post('/', async (c) => {
             const retryMessages = [...messages];
             retryMessages.push({ role: 'assistant', content: cleanReply || 'Processing...' });
             retryMessages.push({ role: 'user', content: retryPrompt });
-            const retryResp = await callDeepSeek(apiKey, retryMessages);
+            const retryResp = await callLLM(retryMessages);
             const retryText = retryResp.choices?.[0]?.message?.content || '';
 
             // Check if retry produced new DSML tool calls
@@ -1701,14 +1814,14 @@ chat.post('/', async (c) => {
                 const combinedResults = [...allResults, ...phase2.results];
                 messages.push({ role: 'assistant', content: stripXml(retryText) || 'Processing...' });
                 messages.push({ role: 'user', content: `[Tool results]\n${combinedResults.join('\n')}\n\nPresent this data EXACTLY as shown above. Copy the table verbatim into your response. Do NOT summarize, modify, or invent any data.` });
-                const finalResp = await callDeepSeek(apiKey, messages);
+                const finalResp = await callLLM(messages);
                 reply = finalResp.choices?.[0]?.message?.content || 'Done.';
                 fullLog.push(`Phase 3: Final answer generated (${reply.length} chars)`);
               } else {
                 // Retry tools also failed — ask for plain text answer
                 messages.push({ role: 'assistant', content: 'Tool calls failed.' });
                 messages.push({ role: 'user', content: 'All tool call attempts failed. Please answer the question directly in plain text.' });
-                const textResp = await callDeepSeek(apiKey, messages);
+                const textResp = await callLLM(messages);
                 reply = textResp.choices?.[0]?.message?.content || cleanReply || 'Sorry, I could not process that.';
                 fullLog.push(`Phase 3: Fallback to plain text answer`);
               }
@@ -1725,7 +1838,7 @@ chat.post('/', async (c) => {
           // Phase 1 succeeded — get final answer from DeepSeek
           messages.push({ role: 'assistant', content: cleanReply || 'Processing...' });
           messages.push({ role: 'user', content: `[Tool results]\n${allResults.join('\n')}\n\nPresent this data EXACTLY as shown. Copy the formatted table verbatim. Do NOT summarize, modify, or invent anything.` });
-          const resp2 = await callDeepSeek(apiKey, messages);
+          const resp2 = await callLLM(messages);
           reply = resp2.choices?.[0]?.message?.content || cleanReply || 'Done.';
           fullLog.push(`Phase 1 success: Final answer generated (${reply.length} chars)`);
         }
@@ -1746,35 +1859,29 @@ chat.post('/', async (c) => {
       }
     }
 
+    // Strip any XML before saving
+    if (/<[a-z_]+[\s>]/i.test(reply) && /<\/[a-z_]+>/i.test(reply)) {
+      reply = '[XML_STRIPPED] ' + reply.replace(/<[^>]*>/g, '').trim();
+    }
     // Save assistant reply
     const asstMsgId = `cm-${uuidv4().slice(0, 8)}`;
     await db.prepare('INSERT INTO chat_messages (id, session_id, role, content) VALUES (?, ?, ?, ?)').bind(asstMsgId, sid, 'assistant', reply).run();
     await db.prepare("UPDATE chat_sessions SET updated_at = datetime('now') WHERE id = ?").bind(sid).run();
 
-    // Streaming mode: return SSE stream
-    if (doStream) {
-      // For streaming, re-call DeepSeek in stream mode with the final messages
-      try {
-        const streamMessages = [{ role: 'system', content: SYSTEM_PROMPT + `\n\nCurrent date: ${today}` }];
-        if (Array.isArray(history)) {
-          for (const msg of history.slice(-4)) {
-            if (msg.role && msg.content) streamMessages.push({ role: msg.role, content: msg.content });
-          }
-        }
-        streamMessages.push({ role: 'user', content: userMessage });
-        streamMessages.push({ role: 'assistant', content: reply.slice(0, 100) + '...' });
+    // Final safety: if XML still present, strip and return clean
+    if (/<[a-z_]+[\s>]/i.test(reply) && /<\/[a-z_]+>/i.test(reply)) {
+      reply = reply.replace(/<[^>]*>/g, '').trim() || '抱歉，請重新輸入您的問題。';
+    }
 
-        const stream = await callDeepSeekStream(apiKey, streamMessages);
-        return new Response(stream, {
-          headers: {
-            'Content-Type': 'text/plain; charset=utf-8',
-            'Transfer-Encoding': 'chunked',
-            'X-Session-Id': sid,
-          },
-        });
-      } catch {
-        return c.json({ reply, session_id: sid });
-      }
+    // Return reply — stream if needed
+    if (doStream) {
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        start(controller) { controller.enqueue(encoder.encode(reply)); controller.close(); },
+      });
+      return new Response(stream, {
+        headers: { 'Content-Type': 'text/plain; charset=utf-8', 'X-Session-Id': sid },
+      });
     }
 
     return c.json({ reply, session_id: sid });

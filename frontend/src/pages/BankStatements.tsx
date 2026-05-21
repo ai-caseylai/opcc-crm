@@ -32,6 +32,7 @@ export default function BankStatements() {
   const [edits, setEdits] = useState<Record<string, Partial<Transaction>>>({});
   const [acctModalTx, setAcctModalTx] = useState<Transaction | null>(null);
   const [aiLoading, setAiLoading] = useState<string | null>(null);
+  const [reconData, setReconData] = useState<any>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['bank-statements'],
@@ -69,7 +70,14 @@ export default function BankStatements() {
         method: 'PATCH',
         body: JSON.stringify({ invoice_id: invoiceId, action: 'confirm' }),
       }),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['bank-statement', expandedId] }); },
+    onSuccess: async (_data: any, variables: { txId: string; invoiceId: string }) => {
+      queryClient.invalidateQueries({ queryKey: ['bank-statement', expandedId] });
+      // Auto-post payment to GL: Dr Cash, Cr AR
+      try {
+        await api(`/bookkeeping/post-payment/${variables.txId}`, { method: 'POST' });
+        queryClient.invalidateQueries({ queryKey: ['entries'] });
+      } catch { /* may already be posted */ }
+    },
   });
 
   const unlinkMut = useMutation({
@@ -151,7 +159,7 @@ export default function BankStatements() {
                     </div>
                   </div>
                   <div className="flex gap-2 flex-shrink-0 ml-2" onClick={e => e.stopPropagation()}>
-                    <a href={`/api/bank-statements/${s.id}/file?token=${localStorage.getItem('token') || ''}`} target="_blank" className="p-1.5 hover:bg-muted rounded">
+                    <a href={`/api/bank-statements/${s.id}/file`} target="_blank" className="p-1.5 hover:bg-muted rounded">
                       <Eye className="h-4 w-4" />
                     </a>
                     <button onClick={() => { if (confirm(t('common.confirmDelete'))) deleteMut.mutate(s.id); }}
@@ -181,7 +189,7 @@ export default function BankStatements() {
                             <span>Opening: <span className="font-mono font-medium">{detail?.opening_balance?.toLocaleString(undefined, { minimumFractionDigits: 2 }) || '-'}</span></span>
                             <span>Closing: <span className="font-mono font-medium text-green-600">{detail?.closing_balance?.toLocaleString(undefined, { minimumFractionDigits: 2 }) || '-'}</span></span>
                             <div className="flex items-center gap-1">
-                              <a href={`/api/bank-statements/${detail?.id}/export-csv?token=${localStorage.getItem('token') || ''}`}
+                              <a href={`/api/bank-statements/${detail?.id}/export-csv`}
                                 className="px-2 py-1 text-xs rounded border hover:bg-muted flex items-center gap-1"
                                 title="Export CSV">
                                 <Download className="h-3 w-3" /> CSV
@@ -210,6 +218,16 @@ export default function BankStatements() {
                               <button onClick={() => { setEditMode(!editMode); setEdits({}); }}
                                 className={`px-2 py-1 text-xs rounded border ${editMode ? 'bg-primary text-primary-foreground border-primary' : 'hover:bg-muted'}`}>
                                 {editMode ? 'Done Editing' : '✏️ Edit'}
+                              </button>
+                              <button onClick={async () => {
+                                if (!detail?.id) return;
+                                try {
+                                  const res = await api(`/bank-statements/${detail.id}/reconcile`, { method: 'POST' });
+                                  setReconData(res);
+                                } catch (err: any) { alert('對賬失敗：' + (err.message || 'unknown')); }
+                              }}
+                                className="px-2 py-1 text-xs rounded border hover:bg-green-100">
+                                🔍 對賬 Reconcile
                               </button>
                             </div>
                           </div>
@@ -292,18 +310,33 @@ export default function BankStatements() {
                                       '0.00'
                                     )}
                                   </td>
-                                  <td className="py-1.5 pr-3" onClick={e => { e.stopPropagation(); setAcctModalTx(tx); }}>
+                                  <td className="py-1.5 pr-3" onClick={e => e.stopPropagation()}>
                                     {tx.account_code ? (
-                                      <span className="text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded cursor-pointer hover:bg-primary/20 inline-block max-w-[200px] truncate">
+                                      <span className="text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded cursor-pointer hover:bg-primary/20 inline-block max-w-[200px] truncate"
+                                        onClick={() => setAcctModalTx(tx)}>
                                         <span className="font-mono">{tx.account_code}</span>
                                         <span className="text-muted-foreground ml-1">
                                           {accounts.find((a: any) => a.account_code === tx.account_code)?.account_name?.slice(0, 15) || ''}
                                         </span>
                                       </span>
                                     ) : (
-                                      <span className="text-xs text-muted-foreground cursor-pointer hover:text-primary flex items-center gap-1">
-                                        <Tag className="h-3 w-3" /> +
-                                      </span>
+                                      <select
+                                        className="text-xs border rounded px-1 py-0.5 bg-background max-w-[180px] truncate cursor-pointer"
+                                        value={tx.account_code || ''}
+                                        onChange={e => {
+                                          if (e.target.value) {
+                                            updateTxMut.mutate({ id: tx.id, body: { account_code: e.target.value } });
+                                          }
+                                        }}
+                                        onClick={e => e.stopPropagation()}
+                                      >
+                                        <option value="" className="text-muted-foreground">-- 選科目 --</option>
+                                        {accounts.slice(0, 40).map((a: any) => (
+                                          <option key={a.account_code} value={a.account_code}>
+                                            {a.account_code} {a.account_name?.slice(0, 25)}
+                                          </option>
+                                        ))}
+                                      </select>
                                     )}
                                   </td>
                                   <td className="py-1.5 text-center">
@@ -467,6 +500,55 @@ Return ONLY a JSON object with corrected fields. If nothing needs fixing, return
             setMatchTxId(null);
           }}
         />
+      )}
+
+      {/* Bank Reconciliation Modal */}
+      {reconData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setReconData(null)}>
+          <div className="bg-card border rounded-xl p-6 w-full max-w-lg mx-4 space-y-4" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-lg">銀行對賬 Bank Reconciliation</h3>
+              <span className={`text-sm font-bold px-3 py-1 rounded ${Math.abs(reconData.difference || 0) < 0.01 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                {Math.abs(reconData.difference || 0) < 0.01 ? '✓ 相符' : '⚠ 不符'}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div className="bg-muted/50 rounded-lg p-3">
+                <span className="text-muted-foreground text-xs">月結單餘額</span>
+                <p className="font-bold text-lg">HKD {reconData.statement_balance?.toLocaleString()}</p>
+              </div>
+              <div className="bg-muted/50 rounded-lg p-3">
+                <span className="text-muted-foreground text-xs">總賬餘額</span>
+                <p className="font-bold text-lg">HKD {reconData.gl_balance?.toLocaleString()}</p>
+              </div>
+            </div>
+            <div className="text-sm flex justify-between border-t pt-3">
+              <span>差異 Difference</span>
+              <span className={`font-bold ${Math.abs(reconData.difference || 0) < 0.01 ? 'text-green-600' : 'text-red-600'}`}>
+                HKD {reconData.difference?.toLocaleString()}
+              </span>
+            </div>
+            {(reconData.outstanding_transactions || []).length > 0 && (
+              <div>
+                <span className="text-sm font-medium">未達交易 Outstanding ({reconData.outstanding_transactions.length})</span>
+                <div className="max-h-48 overflow-y-auto mt-2 border rounded-lg divide-y">
+                  {(reconData.outstanding_transactions || []).map((t: any) => (
+                    <div key={t.id} className="flex items-center justify-between px-3 py-2 text-xs hover:bg-muted/30">
+                      <span className="w-20 text-muted-foreground">{t.transaction_date}</span>
+                      <span className="flex-1 truncate mx-2">{t.description?.slice(0, 50)}</span>
+                      <span className={`font-mono ${t.deposit_amount > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        {t.deposit_amount > 0 ? `+${t.deposit_amount.toLocaleString()}` : t.withdrawal_amount > 0 ? `-${t.withdrawal_amount.toLocaleString()}` : ''}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setReconData(null)} className="px-4 py-2 border rounded-md text-sm">關閉</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

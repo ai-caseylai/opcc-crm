@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { api } from '../lib/api';
+import { api, WORKER_API_BASE } from '../lib/api';
 import { Upload, Eye, Trash2, Receipt } from 'lucide-react';
 
 const CATEGORIES = ['餐飲', '交通', '辦公', '租金', '水電', '薪金', '營銷', '其他'];
@@ -23,8 +23,12 @@ export default function ExpenseReceipts() {
   });
 
   const uploadMut = useMutation({
-    mutationFn: (body: any) => api('/expense-receipts/upload', { method: 'POST', body }),
+    mutationFn: (body: any) => api('/expense-receipts/upload', { method: 'POST', body, baseUrl: WORKER_API_BASE }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['expense-receipts'] }),
+    onError: (err: any) => {
+      alert(`上傳失敗：${err?.message || err?.error || '未知錯誤'}`);
+      setUploading(false);
+    },
   });
 
   const deleteMut = useMutation({
@@ -79,7 +83,7 @@ export default function ExpenseReceipts() {
                   </div>
                 </div>
                 <div className="flex gap-2 flex-shrink-0 ml-2">
-                  <a href={`/api/expense-receipts/${r.id}/file?token=${localStorage.getItem('token') || ''}`} target="_blank" className="p-1.5 hover:bg-muted rounded"><Eye className="h-4 w-4" /></a>
+                  <a href={`/api/expense-receipts/${r.id}/file`} target="_blank" className="p-1.5 hover:bg-muted rounded"><Eye className="h-4 w-4" /></a>
                   <button onClick={() => { if (confirm(t('common.confirmDelete'))) deleteMut.mutate(r.id); }} className="p-1.5 hover:bg-muted rounded text-destructive"><Trash2 className="h-4 w-4" /></button>
                 </div>
               </div>

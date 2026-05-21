@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { api } from '../lib/api';
+import { api, WORKER_API_BASE } from '../lib/api';
 import { Upload, Download, Trash2, Search, Pencil, X, Check, File, FileText, FileSpreadsheet, Image, FolderOpen, Folder, ChevronRight, ChevronDown, Zap } from 'lucide-react';
 
 function formatSize(bytes: number) {
@@ -207,11 +207,15 @@ export default function FileStorage() {
   });
 
   const uploadMut = useMutation({
-    mutationFn: (body: unknown) => api('/file-storage/upload', { method: 'POST', body }),
+    mutationFn: (body: unknown) => api('/file-storage/upload', { method: 'POST', body, baseUrl: WORKER_API_BASE }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['file-storage'] });
       queryClient.invalidateQueries({ queryKey: ['file-storage-folders'] });
       setDescription('');
+    },
+    onError: (err: any) => {
+      alert(`上傳失敗：${err?.message || err?.error || '未知錯誤'}`);
+      setUploading(false);
     },
   });
 

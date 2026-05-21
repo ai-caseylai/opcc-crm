@@ -1,3 +1,4 @@
+import { getJwtSecret } from '../middleware/auth';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { zValidator } from '@hono/zod-validator';
@@ -762,7 +763,7 @@ workbuddy.post('/admin/onboard', async (c) => {
   let role = '';
   // Try JWT first
   try {
-    const payload = jwtVerify(token, c.env.JWT_SECRET || 'dev-secret-change-me') as { role: string };
+    const payload = jwtVerify(token, getJwtSecret(c.env)) as { role: string };
     role = payload.role;
   } catch {
     // Fall back to API token (SHA256 hash)

@@ -3,6 +3,19 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { Mail, ArrowLeft, Send, RefreshCw } from 'lucide-react';
 
+// Strip dangerous HTML tags and event handlers to prevent XSS
+function sanitizeHtml(html: string): string {
+  return html
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '')
+    .replace(/<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>/gi, '')
+    .replace(/<embed\b[^>]*>/gi, '')
+    .replace(/\son\w+\s*=\s*"[^"]*"/gi, '')
+    .replace(/\son\w+\s*=\s*'[^']*'/gi, '')
+    .replace(/\son\w+\s*=\s*[^\s>]+/gi, '')
+    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '');
+}
+
 export default function MailInbox() {
   const queryClient = useQueryClient();
   const [viewId, setViewId] = useState<number | null>(null);
@@ -68,7 +81,7 @@ export default function MailInbox() {
           </div>
           <div className="border-t pt-4">
             {detail.html ? (
-              <div dangerouslySetInnerHTML={{ __html: detail.html }} className="prose prose-sm max-w-none" />
+              <div dangerouslySetInnerHTML={{ __html: sanitizeHtml(detail.html) }} className="prose prose-sm max-w-none" />
             ) : (
               <pre className="text-sm whitespace-pre-wrap font-sans">{detail.text}</pre>
             )}

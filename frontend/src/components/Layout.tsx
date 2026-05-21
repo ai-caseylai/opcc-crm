@@ -5,10 +5,11 @@ import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../lib/api';
 import Chatbot from './Chatbot';
+import CookieConsent from './CookieConsent';
 import FirmClientSwitcher from './FirmClientSwitcher';
 import {
   LayoutDashboard, Users, Truck, Package, FileText, FileSpreadsheet, Mail,
-  Calculator, Upload, Settings, LogOut, Menu, X, MessageCircle, Calendar, Briefcase, FolderOpen, Plug, SlidersHorizontal, Landmark, Receipt, CheckSquare, Globe, CreditCard, Smartphone, HardDrive, ShoppingCart, ClipboardList, AlertCircle, BookOpen, ChevronLeft, ChevronRight, Building2, Shield, Tag,
+  Calculator, Upload, Settings, LogOut, Menu, X, MessageCircle, Calendar, Briefcase, FolderOpen, Plug, SlidersHorizontal, Landmark, Receipt, CheckSquare, Globe, CreditCard, Smartphone, HardDrive, ShoppingCart, ClipboardList, AlertCircle, BookOpen, ChevronLeft, ChevronRight, Building2, Shield, Tag, Bot,
 } from 'lucide-react';
 
 const navGroups = [
@@ -16,74 +17,86 @@ const navGroups = [
     label: '',
     items: [
       { to: '/', icon: LayoutDashboard, key: 'dashboard' },
-      { to: '/compliance', icon: Shield, key: 'compliance' },
+      { to: '/compliance', icon: Shield, key: 'compliance', hidden: true },
+      { to: '/file-storage', icon: HardDrive, key: 'fileStorage' },
+      { to: '/expense-receipts', icon: Bot, key: 'telegramBills' },
+      { to: '/ai-memory', icon: BookOpen, key: 'aiMemory' },
     ],
   },
   {
-    label: 'CRM',
+    label: '文件處理',
     items: [
-      { to: '/customers', icon: Users, key: 'customers' },
-      { to: '/suppliers', icon: Truck, key: 'suppliers' },
-    ],
-  },
-  {
-    label: '銷售 Sales',
-    items: [
-      { to: '/products', icon: Package, key: 'products' },
-      { to: '/services', icon: Briefcase, key: 'services' },
-      { to: '/invoices', icon: FileText, key: 'invoices' },
-      { to: '/quotations', icon: FileSpreadsheet, key: 'quotations' },
-      { to: '/purchase-orders', icon: ShoppingCart, key: 'purchaseOrders' },
-      { to: '/service-orders', icon: ClipboardList, key: 'serviceOrders' },
-    ],
-  },
-  {
-    label: '財務 Finance',
-    items: [
-      { to: '/bookkeeping', icon: Calculator, key: 'bookkeeping' },
       { to: '/bank-statements', icon: Landmark, key: 'bankStatements' },
       { to: '/expense-receipts', icon: Receipt, key: 'expenseReceipts' },
     ],
   },
   {
-    label: '通訊',
+    label: '會計',
     items: [
-      { to: '/calendar', icon: Calendar, key: 'calendar' },
-      { to: '/mail', icon: Mail, key: 'mail' },
-      { to: '/messages', icon: MessageCircle, key: 'messages' },
+      { to: '/bookkeeping', icon: Calculator, key: 'bookkeeping' },
     ],
   },
   {
-    label: '工具 Tools',
+    label: '客戶',
+    hidden: true,
     items: [
-      { to: '/file-storage', icon: HardDrive, key: 'fileStorage' },
+      { to: '/customers', icon: Users, key: 'customers' },
+      { to: '/suppliers', icon: Truck, key: 'suppliers' },
+      { to: '/invoices', icon: FileText, key: 'invoices' },
+      { to: '/quotations', icon: FileSpreadsheet, key: 'quotations' },
+    ],
+  },
+  {
+    label: '銷售',
+    hidden: true,
+    items: [
+      { to: '/products', icon: Package, key: 'products' },
+      { to: '/services', icon: Briefcase, key: 'services' },
+      { to: '/purchase-orders', icon: ShoppingCart, key: 'purchaseOrders' },
+      { to: '/service-orders', icon: ClipboardList, key: 'serviceOrders' },
+    ],
+  },
+  {
+    label: '通訊',
+    hidden: true,
+    items: [
+      { to: '/calendar', icon: Calendar, key: 'calendar' },
+      { to: '/messages', icon: MessageCircle, key: 'messages' },
+      { to: '/mail', icon: Mail, key: 'mail' },
+    ],
+  },
+  {
+    label: '工具',
+    hidden: true,
+    items: [
       { to: '/todos', icon: CheckSquare, key: 'todos' },
       { to: '/documents', icon: FolderOpen, key: 'documents' },
     ],
   },
   {
-    label: '會計師行 Firm',
+    label: '會計師樓',
     items: [
       { to: '/firm/manage', icon: Building2, key: 'firmManagement' },
     ],
   },
   {
-    label: '帳戶 Account',
+    label: '',
     items: [
-      { to: '/pricing', icon: Tag, key: 'pricing' },
-      { to: '/subscription', icon: CreditCard, key: 'subscription' },
+      { to: '/settings', icon: Settings, key: 'settings' },
     ],
   },
   {
     label: '',
+    hidden: true,
     items: [
+      { to: '/pricing', icon: Tag, key: 'pricing' },
+      { to: '/subscription', icon: CreditCard, key: 'subscription' },
       { to: '/website-generator', icon: Globe, key: 'websiteGenerator' },
       { to: '/card-generator', icon: CreditCard, key: 'cardGenerator' },
       { to: '/modules', icon: SlidersHorizontal, key: 'modules' },
       { to: '/payment', icon: CreditCard, key: 'payment' },
       { to: '/communication', icon: Smartphone, key: 'communication' },
       { to: '/integrations', icon: Plug, key: 'integrations' },
-      { to: '/settings', icon: Settings, key: 'settings' },
     ],
   },
 ];
@@ -128,6 +141,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [sidebarDesktopOpen, setSidebarDesktopOpen] = React.useState(true);
   const [chatDesktopOpen, setChatDesktopOpen] = React.useState(true);
   const [chatWidth, setChatWidth] = React.useState(420);
+  const [showAll, setShowAll] = React.useState(false);
 
   // Resize handler for chat panel
   const resizingRef = React.useRef(false);
@@ -230,12 +244,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       <nav className={`flex-1 space-y-0.5 overflow-y-auto ${collapsed ? 'p-0' : 'p-2'}`}>
         {navGroups.map((group, gi) => {
           const visibleItems = group.items.filter(item => {
+            if ((item as any).hidden && !showAll) return false;
             if (item.key === 'firmManagement') return isFirmUser;
             const featKey = NAV_FEATURE_MAP[item.key];
             if (!featKey) return true;
             return features[featKey] !== false;
           });
           if (group.label && visibleItems.length === 0) return null;
+          if ((group as any).hidden && !showAll) return null;
           return (
             <div key={gi}>
               {group.label && !collapsed && (
@@ -286,6 +302,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </div>
       ) : (
         <div className="p-4 border-t space-y-3">
+          <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer hover:text-foreground">
+            <input type="checkbox" checked={showAll} onChange={e => setShowAll(e.target.checked)}
+              className="rounded border-muted-foreground/30" />
+            顯示全部功能
+          </label>
           <div className="text-sm text-muted-foreground">{user?.email}</div>
           <button onClick={handleLogout}
             className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground w-full px-3 py-2 rounded-md hover:bg-muted">
@@ -387,6 +408,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           {children}
         </div>
       </div>
+      <CookieConsent />
     </div>
   );
 }
