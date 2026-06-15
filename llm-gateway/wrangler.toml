@@ -1,7 +1,7 @@
 name = "llm-gateway"
 main = "src/index.ts"
 compatibility_date = "2025-01-13"
-account_id = "3498e268169ccb1bd1ad614210804529"
+account_id = "YOUR_CLOUDFLARE_ACCOUNT_ID"
 
 routes = [
   { pattern = "llm.techforliving.net/*", zone_name = "techforliving.net" }

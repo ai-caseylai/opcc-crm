@@ -1,10 +1,10 @@
 -- Seed data for oppc-crm
--- Default admin user (password: admin123 — CHANGE IN PRODUCTION)
+-- Default admin user (CHANGE PASSWORD IN PRODUCTION)
 
 INSERT OR IGNORE INTO users (id, email, password_hash, name, company_name, role)
 VALUES (
   'u-admin-001',
-  'admin@opcc-crm.techforliving.net',
+  'admin@example.com',
   '$2a$10$XQxBj0gYK5VGhHzVzqJ8OO1F6G7FLhLM3QKGqPONCqLNH0dJqFOce',
   'Admin',
   'OPPC',

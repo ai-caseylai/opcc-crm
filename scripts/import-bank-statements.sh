@@ -4,7 +4,8 @@
 
 set -e
 
-API_BASE="${API_BASE:-https://opcc-crm.techforliving.net}"
+API_BASE="${API_BASE:-https://your-domain.com}"
+ADMIN_EMAIL="${ADMIN_EMAIL:-admin@example.com}"
 WRANGLER="npx wrangler"
 CFG="api/wrangler.toml"
 BUCKET="oppc-crm-files"
@@ -19,12 +20,12 @@ echo ""
 
 # ── Step 1: Login to get JWT ──
 echo ">> Logging in as PnR..."
-read -sp "Password for admin@pnr.techforliving.net: " PASSWORD
+read -sp "Password for admin user: " PASSWORD
 echo ""
 
 LOGIN_RESP=$(curl -s -X POST "$API_BASE/api/auth/login" \
   -H "Content-Type: application/json" \
-  -d "{\"email\":\"admin@pnr.techforliving.net\",\"password\":\"$PASSWORD\"}")
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$PASSWORD\"}")
 
 TOKEN=$(echo "$LOGIN_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null)
 USER_ID=$(echo "$LOGIN_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('user',{}).get('id',''))" 2>/dev/null)

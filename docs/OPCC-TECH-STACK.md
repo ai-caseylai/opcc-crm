@@ -142,7 +142,7 @@ name = "oppc-crm-api"
 main = "src/index.ts"
 compatibility_date = "2025-01-13"
 compatibility_flags = ["nodejs_compat"]
-account_id = "3498e268169ccb1bd1ad614210804529"
+account_id = "YOUR_CLOUDFLARE_ACCOUNT_ID"
 
 [[d1_databases]]
 binding = "DB"
@@ -675,8 +675,8 @@ npm run dev
 
 | 項目 | 值 |
 |---|---|
-| Email | `admin@oppc-crm.techforliving.net` |
-| Password | `admin123` |
+| Email | `admin@example.com` |
+| Password | `your_password` |
 | Role | admin |
 
 ### 10.4 部署

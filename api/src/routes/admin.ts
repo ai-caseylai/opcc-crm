@@ -95,8 +95,8 @@ admin.post('/onboard', async (c) => {
 
   // 4. Try Cloudflare API: DNS + Pages domain
   const cfToken = c.env.CF_API_TOKEN || '';
-  const accountId = c.env.CF_ACCOUNT_ID || '3498e268169ccb1bd1ad614210804529';
-  const zoneId = c.env.CF_ZONE_ID || 'b73df921b8b38bc1382883ca5a76b83e';
+  const accountId = c.env.CF_ACCOUNT_ID || '';
+  const zoneId = c.env.CF_ZONE_ID || '';
 
   if (cfToken) {
     // DNS CNAME

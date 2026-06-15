@@ -20,7 +20,7 @@ const navGroups = [
       { to: '/compliance', icon: Shield, key: 'compliance', hidden: true },
       { to: '/file-storage', icon: HardDrive, key: 'fileStorage' },
       { to: '/expense-receipts', icon: Bot, key: 'telegramBills' },
-      { to: '/ai-memory', icon: BookOpen, key: 'aiMemory' },
+      { to: '/ai-memory', icon: BookOpen, key: 'aiMemory', hidden: true },
     ],
   },
   {
@@ -34,6 +34,7 @@ const navGroups = [
     label: '會計',
     items: [
       { to: '/bookkeeping', icon: Calculator, key: 'bookkeeping' },
+      { to: '/fixed-assets', icon: Building2, key: 'fixedAssets' },
     ],
   },
   {
@@ -75,6 +76,7 @@ const navGroups = [
   },
   {
     label: '會計師樓',
+    hidden: true,
     items: [
       { to: '/firm/manage', icon: Building2, key: 'firmManagement' },
     ],
@@ -124,6 +126,7 @@ const NAV_FEATURE_MAP: Record<string, string> = {
   fileStorage: 'fileStorage',
   purchaseOrders: 'purchaseOrders',
   serviceOrders: 'serviceOrders',
+  fixedAssets: 'fixedAssets',
   compliance: 'compliance',
 };
 

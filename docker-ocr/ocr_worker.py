@@ -5,7 +5,7 @@ Connects to Worker via WebSocket (NAT traversal), receives file upload notificat
 downloads PDFs, extracts text with pdftotext, posts results back via API.
 
 Usage:
-  python3 ocr_worker.py --url wss://oppc-crm.techforliving.net/api/ws --email admin@pnr.techforliving.net --password pnr1234
+  python3 ocr_worker.py --url wss://your-domain.com/api/ws --email your@email.com --password your_password
 
 Environment:
   Requires: pdftotext (poppler-utils)

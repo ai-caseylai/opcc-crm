@@ -74,6 +74,7 @@ const FEATURE_ROUTES: Record<string, string> = {
   '/purchase-orders': 'purchaseOrders',
   '/service-orders': 'serviceOrders',
   '/compliance': 'compliance',
+  '/fixed-assets': 'fixedAssets',
 };
 
 function FeatureGuard({ children }: { children: React.ReactNode }) {

@@ -817,8 +817,8 @@ workbuddy.post('/admin/onboard', async (c) => {
 
   // 4. Cloudflare DNS + Pages
   const cfToken = c.env.CF_API_TOKEN || '';
-  const accountId = '3498e268169ccb1bd1ad614210804529';
-  const zoneId = 'b73df921b8b38bc1382883ca5a76b83e';
+  const accountId = c.env.CF_ACCOUNT_ID || '';
+  const zoneId = c.env.CF_ZONE_ID || '';
 
   if (cfToken) {
     try {
