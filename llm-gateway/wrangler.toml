@@ -1,0 +1,13 @@
+name = "llm-gateway"
+main = "src/index.ts"
+compatibility_date = "2025-01-13"
+account_id = "YOUR_CLOUDFLARE_ACCOUNT_ID"
+
+routes = [
+  { pattern = "llm.techforliving.net/*", zone_name = "techforliving.net" }
+]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "llm-gateway-db"
+database_id = "77169ebb-8000-40bf-bc98-2356cf4ef124"

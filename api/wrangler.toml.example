@@ -1,0 +1,30 @@
+name = "oppc-crm-api"
+main = "src/index.ts"
+compatibility_date = "2025-01-13"
+compatibility_flags = ["nodejs_compat"]
+account_id = "YOUR_CLOUDFLARE_ACCOUNT_ID"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "oppc-crm-db"
+database_id = "YOUR_D1_DATABASE_ID"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "YOUR_KV_NAMESPACE_ID"
+
+[ai]
+binding = "AI"
+
+[vars]
+CF_API_TOKEN = "YOUR_CF_API_TOKEN"
+CF_ACCOUNT_ID = "YOUR_CF_ACCOUNT_ID"
+CF_ZONE_ID = "YOUR_CF_ZONE_ID"
+
+[env.production]
+vars = { ENVIRONMENT = "production", CF_API_TOKEN = "YOUR_CF_API_TOKEN", CF_ACCOUNT_ID = "YOUR_CF_ACCOUNT_ID", CF_ZONE_ID = "YOUR_CF_ZONE_ID" }
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "oppc-crm-db"
+database_id = "YOUR_D1_DATABASE_ID"
