@@ -1,10 +1,36 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '../lib/api';
-import { Plus, Search, FileText, Eye, Trash2, Download } from 'lucide-react';
+import { api, WORKER_API_BASE } from '../lib/api';
+import { Plus, Search, FileText, Eye, Trash2, Download, Pencil } from 'lucide-react';
+
+// Authenticated PDF download: fetches with Bearer token, opens as blob URL
+async function downloadInvoicePDF(invoiceId: string, invoiceNumber: string) {
+  const token = localStorage.getItem('token') || '';
+  const activeClientJson = localStorage.getItem('activeClient');
+  const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+  try {
+    const clientObj = activeClientJson ? JSON.parse(activeClientJson) : null;
+    if (clientObj?.id) headers['X-Active-Client'] = clientObj.id;
+  } catch {}
+  try {
+    const res = await fetch(`${WORKER_API_BASE}/pdf/invoice/${invoiceId}`, { headers });
+    if (!res.ok) { alert('PDF generation failed — please try again.'); return; }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Invoice_${invoiceNumber}.pdf`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  } catch {
+    alert('Could not download PDF. Please check your connection.');
+  }
+}
 
 export default function Invoices() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
   const [page, setPage] = useState(1);
@@ -17,7 +43,7 @@ export default function Invoices() {
 
   const { data, isLoading } = useQuery({
     queryKey: ['invoices', search, status, page],
-    queryFn: () => api(`/invoices?q=${search}&status=${status}&page=${page}&limit=20`),
+    queryFn: () => api(`/invoices?q=${search}&status=${status}&page=${page}&limit=20&doc_type=invoice`),
   });
 
   const { data: customers } = useQuery({
@@ -131,13 +157,14 @@ export default function Invoices() {
               {invoices.map((inv: any) => (
                 <tr key={inv.id} className="border-b hover:bg-muted/30">
                   <td className="p-3 font-medium">{inv.invoice_number}</td>
-                  <td className="p-3 hidden md:table-cell">{inv.customer_name || '-'}</td>
+                  <td className="p-3 hidden md:table-cell">{inv.direction === 'incoming' ? (inv.vendor_name || inv.customer_name || '-') : (inv.customer_name || '-')}</td>
                   <td className="p-3"><span className={statusBadge(inv.status)}>{statusLabel(inv.status)}</span></td>
                   <td className="p-3 text-right hidden lg:table-cell">{inv.currency} {inv.total?.toLocaleString()}</td>
                   <td className="p-3 hidden lg:table-cell">{inv.issue_date}</td>
                   <td className="p-3 text-right">
-                    <button onClick={() => setViewId(inv.id)} className="p-1 hover:bg-muted rounded mr-1"><Eye className="h-4 w-4" /></button>
-                    <a href={`/api/pdf/invoice/${inv.id}`} target="_blank" className="p-1 hover:bg-muted rounded mr-1 inline-block"><Download className="h-4 w-4" /></a>
+                    <button onClick={() => setViewId(inv.id)} className="p-1 hover:bg-muted rounded mr-1" title="查看 View"><Eye className="h-4 w-4" /></button>
+                    <button onClick={() => navigate(`/invoices/review/${inv.id}`)} className="p-1 hover:bg-muted rounded mr-1" title="編輯 Edit"><Pencil className="h-4 w-4" /></button>
+                    <button onClick={() => downloadInvoicePDF(inv.id, inv.invoice_number)} className="p-1 hover:bg-muted rounded mr-1" title="下載 PDF"><Download className="h-4 w-4" /></button>
                     {inv.status === 'draft' && (
                       <button onClick={() => updateStatus.mutate({ id: inv.id, status: 'sent' })} className="text-xs text-blue-600 hover:underline mr-2">發送（應收）</button>
                     )}
@@ -297,7 +324,7 @@ export default function Invoices() {
                 <button onClick={() => setViewId(null)} className="text-muted-foreground">✕</button>
               </div>
               <div className="grid grid-cols-2 gap-3 text-sm">
-                <div><span className="text-muted-foreground">客戶:</span> {invoiceDetail.customer_name}</div>
+                <div><span className="text-muted-foreground">{invoiceDetail.direction === 'incoming' ? '供應商:' : '客戶:'}</span> {invoiceDetail.direction === 'incoming' ? (invoiceDetail.vendor_name || invoiceDetail.customer_name) : invoiceDetail.customer_name}</div>
                 <div><span className="text-muted-foreground">狀態:</span> <span className={statusBadge(invoiceDetail.status)}>{statusLabel(invoiceDetail.status)}</span></div>
                 <div><span className="text-muted-foreground">日期:</span> {invoiceDetail.issue_date}</div>
                 <div><span className="text-muted-foreground">到期:</span> {invoiceDetail.due_date}</div>
@@ -318,12 +345,92 @@ export default function Invoices() {
                 </tbody>
                 <tfoot><tr><td colSpan={3} className="text-right font-bold p-2">總計</td><td className="text-right font-bold p-2">{invoiceDetail.currency} {invoiceDetail.total?.toFixed(2)}</td></tr></tfoot>
               </table>
-              <a href={`/api/pdf/invoice/${invoiceDetail.id}`} target="_blank"
-                className="inline-flex items-center gap-2 text-sm text-primary hover:underline"><Download className="h-4 w-4" /> 下載 PDF</a>
+              <button
+                onClick={() => downloadInvoicePDF(invoiceDetail.id, invoiceDetail.invoice_number)}
+                className="inline-flex items-center gap-2 text-sm text-primary hover:underline">
+                <Download className="h-4 w-4" /> 下載 PDF
+              </button>
             </div>
-            {/* Right: PDF preview */}
-            <div className="flex-1 border rounded-lg overflow-hidden bg-gray-100">
-              <iframe src={`/api/pdf/invoice/${invoiceDetail.id}?inline`} className="w-full h-full" title="PDF Preview" />
+            {/* Right: live invoice preview rendered from data (no iframe needed) */}
+            <div className="flex-1 border rounded-lg overflow-auto bg-white p-8 text-sm font-sans">
+              <div className="max-w-xl mx-auto space-y-6">
+                {/* Header */}
+                <div className="flex justify-between items-start border-b pb-4">
+                  <div>
+                    <div className="text-lg font-bold">{invoiceDetail.company_name || 'Proficiency and Reliance Co.'}</div>
+                    <div className="text-xs text-gray-500 mt-1">{invoiceDetail.company_address || ''}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xl font-bold text-gray-700">INVOICE</div>
+                    <div className="text-xs text-gray-500 mt-1"># {invoiceDetail.invoice_number}</div>
+                  </div>
+                </div>
+                {/* Meta */}
+                <div className="grid grid-cols-2 gap-4 text-xs">
+                  <div>
+                    <div className="text-gray-500 uppercase tracking-wide mb-1">Bill To</div>
+                    <div className="font-semibold">{invoiceDetail.direction === 'incoming' ? (invoiceDetail.vendor_name || invoiceDetail.customer_name) : invoiceDetail.customer_name}</div>
+                    {invoiceDetail.customer_address && <div className="text-gray-500">{invoiceDetail.customer_address}</div>}
+                    {invoiceDetail.customer_email && <div className="text-gray-500">{invoiceDetail.customer_email}</div>}
+                  </div>
+                  <div className="text-right space-y-1">
+                    <div><span className="text-gray-500">Invoice Date: </span>{invoiceDetail.issue_date}</div>
+                    <div><span className="text-gray-500">Due Date: </span>{invoiceDetail.due_date}</div>
+                    {invoiceDetail.receipt_number && <div><span className="text-gray-500">Receipt #: </span>{invoiceDetail.receipt_number}</div>}
+                  </div>
+                </div>
+                {/* Line items */}
+                <table className="w-full text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-gray-100">
+                      <th className="text-left p-2 border">項目 Description</th>
+                      <th className="text-right p-2 border w-16">數量 Qty</th>
+                      <th className="text-right p-2 border w-24">單價 Unit Price</th>
+                      <th className="text-right p-2 border w-24">金額 Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(invoiceDetail.items || []).map((item: any, i: number) => (
+                      <tr key={item.id || i} className="border-b">
+                        <td className="p-2 border">{item.description}</td>
+                        <td className="p-2 border text-right">{item.quantity}</td>
+                        <td className="p-2 border text-right">{invoiceDetail.currency} {Number(item.unit_price).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                        <td className="p-2 border text-right">{invoiceDetail.currency} {Number(item.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    {invoiceDetail.tax_amount > 0 && (
+                      <tr>
+                        <td colSpan={3} className="text-right p-2 text-gray-500">Tax ({invoiceDetail.tax_rate}%)</td>
+                        <td className="p-2 text-right border-t">{invoiceDetail.currency} {Number(invoiceDetail.tax_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                      </tr>
+                    )}
+                    <tr className="bg-gray-50 font-bold">
+                      <td colSpan={3} className="text-right p-2 border-t">Total Amount Due</td>
+                      <td className="p-2 text-right border-t border-l">{invoiceDetail.currency} {Number(invoiceDetail.total).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+                {/* Notes */}
+                {invoiceDetail.notes && (
+                  <div className="text-xs text-gray-600 border-t pt-3">
+                    <div className="font-semibold mb-1">Notes</div>
+                    <div className="whitespace-pre-line">{invoiceDetail.notes}</div>
+                  </div>
+                )}
+                {/* Status badge */}
+                <div className="flex justify-end">
+                  <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+                    invoiceDetail.status === 'paid' ? 'bg-green-100 text-green-700' :
+                    invoiceDetail.status === 'overdue' ? 'bg-red-100 text-red-700' :
+                    invoiceDetail.status === 'sent' ? 'bg-blue-100 text-blue-700' :
+                    'bg-gray-100 text-gray-600'
+                  }`}>
+                    {invoiceDetail.status?.toUpperCase()}
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
         </div>

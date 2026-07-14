@@ -1,7 +1,7 @@
 {
   "app": {
-    "title": "OPCC CRM",
-    "subtitle": "一人公司俱樂部"
+    "title": "Tech Connect SME",
+    "subtitle": "Smart Accounting for Hong Kong SMEs"
   },
   "nav": {
     "dashboard": "儀表板",
@@ -16,11 +16,18 @@
     "services": "服務",
     "messages": "訊息",
     "settings": "設定",
+    "userManagement": "用戶管理",
+    "applications": "申請管理",
+    "auditLog": "審計記錄",
+    "userManagement": "用戶管理",
+    "applications": "申請管理",
+    "auditLog": "審計記錄",
     "logout": "登出",
     "documents": "公司文件",
     "integrations": "整合",
     "modules": "模組",
     "bankStatements": "銀行月結單",
+    "reconciliation": "對賬",
     "ledger": "總帳",
     "expenseReceipts": "消費單據",
     "todos": "待辦事項",
@@ -38,7 +45,8 @@
     "fixedAssets": "固定資產",
     "compliance": "合規儀表板",
     "pricing": "定價方案",
-    "subscription": "我的訂閱"
+    "subscription": "我的訂閱",
+    "recycleBin": "回收站"
   },
   "auth": {
     "login": "登入",

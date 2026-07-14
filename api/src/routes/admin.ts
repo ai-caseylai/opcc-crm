@@ -135,7 +135,99 @@ admin.post('/onboard', async (c) => {
   }, 201);
 });
 
-// ── Tenant data export (JSON package) ──
+// ── APPLICATION MANAGEMENT ────────────────────────────────────────────────
+
+// List all applications
+admin.get('/applications', async (c) => {
+  const adminUser = c.get('user');
+  if (adminUser.role !== 'admin') return c.json({ error: 'Admin only' }, 403);
+  const db = c.env.DB;
+  const status = c.req.query('status') || '';
+  let q = `SELECT * FROM applications ORDER BY created_at DESC`;
+  if (status) q = `SELECT * FROM applications WHERE status = '${status}' ORDER BY created_at DESC`;
+  const rows = await db.prepare(q).all();
+  return c.json({ data: rows.results });
+});
+
+// Approve application → auto-create supervisor account + send welcome email
+admin.post('/applications/:id/approve', async (c) => {
+  const adminUser = c.get('user');
+  if (adminUser.role !== 'admin') return c.json({ error: 'Admin only' }, 403);
+  const db = c.env.DB;
+  const appId = c.req.param('id');
+
+  const app = await db.prepare('SELECT * FROM applications WHERE id = ?')
+    .bind(appId).first<{ id: string; company_name: string; contact_name: string; email: string; phone: string; status: string }>();
+  if (!app) return c.json({ error: 'Application not found' }, 404);
+  if (app.status !== 'pending') return c.json({ error: 'Application is not pending' }, 400);
+
+  // Check email not already registered
+  const existing = await db.prepare('SELECT id FROM users WHERE email = ?').bind(app.email).first();
+  if (existing) return c.json({ error: 'This email is already registered' }, 409);
+
+  // Generate supervisor account
+  const userId = `u-${uuidv4().slice(0, 8)}`;
+  const tempPassword = `TCS${Math.random().toString(36).slice(2, 8).toUpperCase()}1!`;
+  const passwordHash = await hash(tempPassword, 10);
+
+  await db.prepare(
+    `INSERT INTO users (id, email, password_hash, name, company_name, role, status, must_change_password, permission_tier)
+     VALUES (?, ?, ?, ?, ?, 'supervisor', 'active', 1, 'higher')`
+  ).bind(userId, app.email, passwordHash, app.contact_name, app.company_name).run();
+
+  // Create company settings
+  await db.prepare(
+    `INSERT OR REPLACE INTO company_settings (id, user_id, name, email) VALUES (?, ?, ?, ?)`
+  ).bind(`cs-${uuidv4().slice(0, 8)}`, userId, app.company_name, app.email).run();
+
+  // Mark application as approved
+  await db.prepare(
+    `UPDATE applications SET status = 'approved', reviewed_by = ?, reviewed_at = datetime('now'),
+     created_user_id = ?, updated_at = datetime('now') WHERE id = ?`
+  ).bind(adminUser.id, userId, appId).run();
+
+  // Send welcome email (implement with your email provider)
+  const loginUrl = `https://${c.req.header('host') || 'opcc-crm.pages.dev'}/login`;
+  try {
+    if (c.env.RESEND_API_KEY) {
+      await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${c.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from: 'Tech Connect SME <noreply@techforliving.net>',
+          to: app.email,
+          subject: 'Your Tech Connect SME Account is Ready',
+          text: `Hi ${app.contact_name},\n\nWelcome to Tech Connect SME!\n\nYour account for ${app.company_name} has been approved.\n\nLogin URL: ${loginUrl}\nEmail: ${app.email}\nTemporary Password: ${tempPassword}\n\nPlease log in and change your password immediately.\n\nTech Connect SME Team`,
+        }),
+      });
+    }
+  } catch (e) { console.error('[EMAIL] Failed to send welcome email:', e); }
+
+  return c.json({
+    success: true,
+    user_id: userId,
+    email: app.email,
+    temp_password: tempPassword,
+    message: `Supervisor account created for ${app.company_name}. Welcome email sent to ${app.email}.`,
+  }, 201);
+});
+
+// Reject application
+admin.post('/applications/:id/reject', async (c) => {
+  const adminUser = c.get('user');
+  if (adminUser.role !== 'admin') return c.json({ error: 'Admin only' }, 403);
+  const db = c.env.DB;
+  const appId = c.req.param('id');
+  await db.prepare(
+    `UPDATE applications SET status = 'rejected', reviewed_by = ?, reviewed_at = datetime('now'),
+     updated_at = datetime('now') WHERE id = ?`
+  ).bind(adminUser.id, appId).run();
+  return c.json({ success: true });
+});
+
+// ── END APPLICATION MANAGEMENT ────────────────────────────────────────────
+
+// ── Tenant data export (original, restored) ──
 admin.get('/tenants/:userId/export', async (c) => {
   const adminUser = c.get('user');
   if (adminUser.role !== 'admin') return c.json({ error: 'Admin only' }, 403);

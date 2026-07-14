@@ -12,6 +12,7 @@ import Customers from './pages/Customers';
 import Suppliers from './pages/Suppliers';
 import Products from './pages/Products';
 import Invoices from './pages/Invoices';
+import InvoiceReview from './pages/InvoiceReview';
 import Quotations from './pages/Quotations';
 import PurchaseOrders from './pages/PurchaseOrders';
 import ServiceOrders from './pages/ServiceOrders';
@@ -25,6 +26,13 @@ import Documents from './pages/Documents';
 import Todos from './pages/Todos';
 import MailInbox from './pages/MailInbox';
 import BankStatements from './pages/BankStatements';
+import BankStatementReview from './pages/BankStatementReview';
+import Apply from './pages/Apply';
+import UserManagement from './pages/UserManagement';
+import AdminApplications from './pages/AdminApplications';
+import AuditLog from './pages/AuditLog';
+import Reconciliation from './pages/Reconciliation';
+import RecycleBin from './pages/RecycleBin';
 import ExpenseReceipts from './pages/ExpenseReceipts';
 import Modules from './pages/Modules';
 import Integrations from './pages/Integrations';
@@ -100,7 +108,11 @@ function AppRoutes() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/privacy" element={<PrivacyPolicy />} />
-      <Route path="/register" element={<Register />} />
+      <Route path="/apply" element={<Apply />} />
+      <Route path="/register" element={<Apply />} />
+      <Route path="/settings/users" element={<ProtectedRoute><UserManagement /></ProtectedRoute>} />
+      <Route path="/admin/applications" element={<ProtectedRoute><AdminApplications /></ProtectedRoute>} />
+      <Route path="/audit-log" element={<ProtectedRoute><AuditLog /></ProtectedRoute>} />
       <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
       <Route path="/compliance" element={<ProtectedRoute><FeatureGuard><Compliance /></FeatureGuard></ProtectedRoute>} />
       <Route path="/ai-memory" element={<ProtectedRoute><AiMemory /></ProtectedRoute>} />
@@ -110,12 +122,17 @@ function AppRoutes() {
       <Route path="/suppliers" element={<ProtectedRoute><FeatureGuard><Suppliers /></FeatureGuard></ProtectedRoute>} />
       <Route path="/products" element={<ProtectedRoute><FeatureGuard><Products /></FeatureGuard></ProtectedRoute>} />
       <Route path="/invoices" element={<ProtectedRoute><FeatureGuard><Invoices /></FeatureGuard></ProtectedRoute>} />
+      <Route path="/invoices/review/:id" element={<ProtectedRoute><InvoiceReview /></ProtectedRoute>} />
+      <Route path="/invoices/:id/edit" element={<ProtectedRoute><FeatureGuard><Invoices /></FeatureGuard></ProtectedRoute>} />
       <Route path="/quotations" element={<ProtectedRoute><FeatureGuard><Quotations /></FeatureGuard></ProtectedRoute>} />
       <Route path="/purchase-orders" element={<ProtectedRoute><FeatureGuard><PurchaseOrders /></FeatureGuard></ProtectedRoute>} />
       <Route path="/service-orders" element={<ProtectedRoute><FeatureGuard><ServiceOrders /></FeatureGuard></ProtectedRoute>} />
       <Route path="/bookkeeping" element={<ProtectedRoute><FeatureGuard><Bookkeeping /></FeatureGuard></ProtectedRoute>} />
               <Route path="/fixed-assets" element={<ProtectedRoute><FeatureGuard><FixedAssets /></FeatureGuard></ProtectedRoute>} />
       <Route path="/bank-statements" element={<ProtectedRoute><FeatureGuard><BankStatements /></FeatureGuard></ProtectedRoute>} />
+      <Route path="/bank-statements/review/:id" element={<ProtectedRoute><FeatureGuard><BankStatementReview /></FeatureGuard></ProtectedRoute>} />
+      <Route path="/reconciliation" element={<ProtectedRoute><FeatureGuard><Reconciliation /></FeatureGuard></ProtectedRoute>} />
+      <Route path="/recycle-bin" element={<ProtectedRoute><FeatureGuard><RecycleBin /></FeatureGuard></ProtectedRoute>} />
       <Route path="/todos" element={<ProtectedRoute><Todos /></ProtectedRoute>} />
       <Route path="/expense-receipts" element={<ProtectedRoute><FeatureGuard><ExpenseReceipts /></FeatureGuard></ProtectedRoute>} />
       <Route path="/import" element={<ProtectedRoute><ImportData /></ProtectedRoute>} />

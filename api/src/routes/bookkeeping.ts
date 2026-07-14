@@ -28,7 +28,7 @@ bookkeeping.get('/entries', async (c) => {
 
   let query = `SELECT je.*, SUM(jl.debit) as total_debit, SUM(jl.credit) as total_credit
     FROM journal_entries je LEFT JOIN journal_lines jl ON je.id = jl.entry_id
-    WHERE je.user_id = ?`;
+    WHERE je.user_id = ? AND je.status != 'stale'`;
   const params: any[] = [tenantId];
   if (startDate) { query += ' AND je.entry_date >= ?'; params.push(startDate); }
   if (endDate) { query += ' AND je.entry_date <= ?'; params.push(endDate); }
@@ -301,7 +301,7 @@ bookkeeping.get('/trial-balance', async (c) => {
     `SELECT jl.account_code, jl.account_name, a.account_type, a.opening_balance, SUM(jl.debit) as total_debit, SUM(jl.credit) as total_credit
      FROM journal_lines jl JOIN journal_entries je ON jl.entry_id = je.id
      LEFT JOIN accounts a ON jl.account_code = a.account_code AND je.user_id = a.user_id
-     WHERE je.user_id = ? AND je.entry_date <= ? GROUP BY jl.account_code, jl.account_name ORDER BY jl.account_code`
+     WHERE je.user_id = ? AND je.entry_date <= ? AND je.status != 'stale' GROUP BY jl.account_code, jl.account_name ORDER BY jl.account_code`
   ).bind(tenantId, asOf).all();
 
   // Compute ending balances: opening + debit - credit (for assets/expenses) or opening + credit - debit (for liabilities/equity/revenue)
@@ -354,7 +354,7 @@ bookkeeping.get('/export', auditorMiddleware, async (c) => {
   const entries = await db.prepare(
     `SELECT je.*, jl.account_code, jl.account_name, jl.description as line_description, jl.debit, jl.credit
      FROM journal_entries je JOIN journal_lines jl ON je.id = jl.entry_id
-     WHERE je.user_id = ? AND je.entry_date >= ? AND je.entry_date <= ?
+     WHERE je.user_id = ? AND je.entry_date >= ? AND je.entry_date <= ? AND je.status != 'stale'
      ORDER BY je.entry_date, je.entry_number, jl.sort_order`
   ).bind(tenantId, startDate, endDate).all();
 
@@ -381,14 +381,14 @@ bookkeeping.get('/income-statement', async (c) => {
     `SELECT COALESCE(SUM(jl.credit) - SUM(jl.debit), 0) as amount FROM journal_lines jl
      JOIN journal_entries je ON jl.entry_id = je.id
      JOIN accounts a ON jl.account_code = a.account_code AND je.user_id = a.user_id
-     WHERE je.user_id = ? AND je.entry_date >= ? AND je.entry_date <= ? AND a.account_type = 'revenue'`
+     WHERE je.user_id = ? AND je.entry_date >= ? AND je.entry_date <= ? AND a.account_type = 'revenue' AND je.status != 'stale'`
   ).bind(tenantId, startDate, endDate).first<{ amount: number }>();
 
   const expenses = await db.prepare(
     `SELECT COALESCE(SUM(jl.debit) - SUM(jl.credit), 0) as amount FROM journal_lines jl
      JOIN journal_entries je ON jl.entry_id = je.id
      JOIN accounts a ON jl.account_code = a.account_code AND je.user_id = a.user_id
-     WHERE je.user_id = ? AND je.entry_date >= ? AND je.entry_date <= ? AND a.account_type = 'expense'`
+     WHERE je.user_id = ? AND je.entry_date >= ? AND je.entry_date <= ? AND a.account_type = 'expense' AND je.status != 'stale'`
   ).bind(tenantId, startDate, endDate).first<{ amount: number }>();
 
   // If journal entries exist, use them
@@ -465,13 +465,13 @@ bookkeeping.get('/balance-sheet', async (c) => {
     `SELECT jl.account_code, jl.account_name, a.account_type, SUM(jl.debit) as total_debit, SUM(jl.credit) as total_credit
      FROM journal_lines jl JOIN journal_entries je ON jl.entry_id = je.id
      LEFT JOIN accounts a ON jl.account_code = a.account_code AND je.user_id = a.user_id
-     WHERE je.user_id = ? AND je.entry_date <= ?
+     WHERE je.user_id = ? AND je.entry_date <= ? AND je.status != 'stale'
      GROUP BY jl.account_code, jl.account_name
      ORDER BY jl.account_code`
   ).bind(tenantId, asOf).all();
 
   const jeCount = await db.prepare(
-    'SELECT COUNT(*) as cnt FROM journal_entries WHERE user_id = ? AND entry_date <= ?'
+    "SELECT COUNT(*) as cnt FROM journal_entries WHERE user_id = ? AND entry_date <= ? AND status != 'stale'"
   ).bind(tenantId, asOf).first<{ cnt: number }>();
 
   if ((jeCount?.cnt || 0) > 0 && (rows.results || []).length > 0) {
@@ -615,7 +615,7 @@ bookkeeping.get('/ledger', async (c) => {
 
   // Check if journal entries exist
   const jeCount = await db.prepare(
-    'SELECT COUNT(*) as cnt FROM journal_entries WHERE user_id = ? AND entry_date >= ? AND entry_date <= ?'
+    "SELECT COUNT(*) as cnt FROM journal_entries WHERE user_id = ? AND entry_date >= ? AND entry_date <= ? AND status != 'stale'"
   ).bind(tenantId, startDate, endDate).first<{ cnt: number }>();
 
   if ((jeCount?.cnt || 0) > 0) {
@@ -623,7 +623,7 @@ bookkeeping.get('/ledger', async (c) => {
     let query = `SELECT jl.account_code, jl.account_name, a.account_type, je.entry_date as date, je.description, jl.debit, jl.credit
       FROM journal_lines jl JOIN journal_entries je ON jl.entry_id = je.id
       LEFT JOIN accounts a ON jl.account_code = a.account_code AND je.user_id = a.user_id
-      WHERE je.user_id = ? AND je.entry_date >= ? AND je.entry_date <= ?`;
+      WHERE je.user_id = ? AND je.entry_date >= ? AND je.entry_date <= ? AND je.status != 'stale'`;
     const params: any[] = [tenantId, startDate, endDate];
     if (filterAccount) { query += ' AND jl.account_code LIKE ?'; params.push(`${filterAccount}%`); }
     query += ' ORDER BY jl.account_code, je.entry_date, jl.sort_order';
@@ -734,6 +734,7 @@ bookkeeping.post('/auto-generate-entries', bookkeeperMiddleware, async (c) => {
     `SELECT bt.*, i.invoice_number, i.supplier_id
      FROM bank_transactions bt LEFT JOIN invoices i ON bt.invoice_id = i.id
      WHERE bt.user_id = ?
+     AND bt.deleted_at IS NULL
      AND bt.description NOT LIKE '%TRANSACTION SUMMARY%'
      AND bt.description NOT LIKE '%CARRIED FORWARD%'
      AND bt.description NOT LIKE '%今期結餘%'
@@ -954,14 +955,14 @@ bookkeeping.post('/year-end-close', bookkeeperMiddleware, async (c) => {
     `SELECT COALESCE(SUM(jl.credit) - SUM(jl.debit), 0) as amount FROM journal_lines jl
      JOIN journal_entries je ON jl.entry_id = je.id
      JOIN accounts a ON jl.account_code = a.account_code AND je.user_id = a.user_id
-     WHERE je.user_id = ? AND je.entry_date <= ? AND a.account_type = 'revenue'`
+     WHERE je.user_id = ? AND je.entry_date <= ? AND a.account_type = 'revenue' AND je.status != 'stale'`
   ).bind(tenantId, fiscal_end_date).first<{ amount: number }>();
 
   const expenses = await db.prepare(
     `SELECT COALESCE(SUM(jl.debit) - SUM(jl.credit), 0) as amount FROM journal_lines jl
      JOIN journal_entries je ON jl.entry_id = je.id
      JOIN accounts a ON jl.account_code = a.account_code AND je.user_id = a.user_id
-     WHERE je.user_id = ? AND je.entry_date <= ? AND a.account_type = 'expense'`
+     WHERE je.user_id = ? AND je.entry_date <= ? AND a.account_type = 'expense' AND je.status != 'stale'`
   ).bind(tenantId, fiscal_end_date).first<{ amount: number }>();
 
   const netIncome = (revenue?.amount || 0) - (expenses?.amount || 0);
@@ -980,7 +981,7 @@ bookkeeping.post('/year-end-close', bookkeeperMiddleware, async (c) => {
     `SELECT jl.account_code, jl.account_name, SUM(jl.credit) - SUM(jl.debit) as balance
      FROM journal_lines jl JOIN journal_entries je ON jl.entry_id = je.id
      JOIN accounts a ON jl.account_code = a.account_code AND je.user_id = a.user_id
-     WHERE je.user_id = ? AND je.entry_date <= ? AND a.account_type = 'revenue'
+     WHERE je.user_id = ? AND je.entry_date <= ? AND a.account_type = 'revenue' AND je.status != 'stale'
      GROUP BY jl.account_code ORDER BY jl.account_code`
   ).bind(tenantId, fiscal_end_date).all();
 
@@ -996,7 +997,7 @@ bookkeeping.post('/year-end-close', bookkeeperMiddleware, async (c) => {
     `SELECT jl.account_code, jl.account_name, SUM(jl.debit) - SUM(jl.credit) as balance
      FROM journal_lines jl JOIN journal_entries je ON jl.entry_id = je.id
      JOIN accounts a ON jl.account_code = a.account_code AND je.user_id = a.user_id
-     WHERE je.user_id = ? AND je.entry_date <= ? AND a.account_type = 'expense'
+     WHERE je.user_id = ? AND je.entry_date <= ? AND a.account_type = 'expense' AND je.status != 'stale'
      GROUP BY jl.account_code ORDER BY jl.account_code`
   ).bind(tenantId, fiscal_end_date).all();
 
@@ -1022,7 +1023,7 @@ bookkeeping.post('/year-end-close', bookkeeperMiddleware, async (c) => {
   const bsAccounts = await db.prepare(
     `SELECT a.account_code, COALESCE(SUM(jl.debit) - SUM(jl.credit), 0) as journal_balance, a.opening_balance
      FROM accounts a LEFT JOIN journal_lines jl ON a.account_code = jl.account_code
-     LEFT JOIN journal_entries je ON jl.entry_id = je.id AND je.entry_date <= ?
+     LEFT JOIN journal_entries je ON jl.entry_id = je.id AND je.entry_date <= ? AND je.status != 'stale'
      WHERE a.user_id = ? AND a.is_active = 1 AND a.account_type IN ('asset', 'liability', 'equity')
      GROUP BY a.account_code`
   ).bind(fiscal_end_date, tenantId).all();
@@ -1052,14 +1053,14 @@ bookkeeping.post('/profits-tax-provision', bookkeeperMiddleware, async (c) => {
     `SELECT COALESCE(SUM(jl.credit) - SUM(jl.debit), 0) as amount FROM journal_lines jl
      JOIN journal_entries je ON jl.entry_id = je.id
      JOIN accounts a ON jl.account_code = a.account_code AND je.user_id = a.user_id
-     WHERE je.user_id = ? AND je.entry_date <= ? AND a.account_type = 'revenue'`
+     WHERE je.user_id = ? AND je.entry_date <= ? AND a.account_type = 'revenue' AND je.status != 'stale'`
   ).bind(tenantId, fiscal_end_date).first<{ amount: number }>();
 
   const expenses = await db.prepare(
     `SELECT COALESCE(SUM(jl.debit) - SUM(jl.credit), 0) as amount FROM journal_lines jl
      JOIN journal_entries je ON jl.entry_id = je.id
      JOIN accounts a ON jl.account_code = a.account_code AND je.user_id = a.user_id
-     WHERE je.user_id = ? AND je.entry_date <= ? AND a.account_type = 'expense'`
+     WHERE je.user_id = ? AND je.entry_date <= ? AND a.account_type = 'expense' AND je.status != 'stale'`
   ).bind(tenantId, fiscal_end_date).first<{ amount: number }>();
 
   const netIncome = (revenue?.amount || 0) - (expenses?.amount || 0);

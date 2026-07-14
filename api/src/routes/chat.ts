@@ -1541,7 +1541,7 @@ chat.post('/', async (c) => {
   if (!apiKey) return c.json({ reply: 'No LLM API key configured' });
   const useQwen = !!qwenKey;
   const callLLM = (msgs: any[], tools?: any[], force?: boolean) =>
-    useQwen ? callQwen(apiKey, msgs, tools, force) : callLLM(msgs, tools, force);
+    useQwen ? callQwen(apiKey, msgs, tools, force) : callDeepSeek(apiKey, msgs, tools, force);
 
   const db = c.env.DB;
 

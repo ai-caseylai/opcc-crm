@@ -1,8 +1,11 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
-import { Eye, Trash2, Landmark, ChevronDown, ChevronRight, FileText, Link2, Check, X, Zap, Search, Tag, Download, Upload } from 'lucide-react';
+import { Eye, Trash2, Landmark, ChevronDown, ChevronRight, FileText, Link2, Check, X, Zap, Search, Tag, Download, Upload, FilePlus, Pencil } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
+import SupervisorPasswordModal from '../components/SupervisorPasswordModal';
 
 interface Transaction {
   id: string;
@@ -25,7 +28,11 @@ interface Transaction {
 
 export default function BankStatements() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const isStaff = user?.role === 'staff' || user?.role === 'viewer';
+  const [supModal, setSupModal] = useState<{ show: boolean; onConfirm: () => void } | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [matchTxId, setMatchTxId] = useState<string | null>(null);
   const [editMode, setEditMode] = useState(false);
@@ -53,7 +60,30 @@ export default function BankStatements() {
 
   const deleteMut = useMutation({
     mutationFn: (id: string) => api(`/bank-statements/${id}`, { method: 'DELETE' }),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['bank-statements'] }); setExpandedId(null); },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
+      queryClient.invalidateQueries({ queryKey: ['bank-statements-drafts'] });
+      queryClient.invalidateQueries({ queryKey: ['bank-transactions-flat'] });
+      queryClient.invalidateQueries({ queryKey: ['file-storage'] });
+      setExpandedId(null);
+      const cascadeMsg = data?.transactions_deleted != null
+        ? `\n${data.transactions_deleted} transaction${data.transactions_deleted === 1 ? '' : 's'} also removed.`
+        : '';
+      const fileMsg = data?.file_deleted ? '\nOriginal PDF also removed from File Storage.' : '';
+      const restoreMsg = data?.restorable_until
+        ? '\n\nItem moved to Recycle Bin — can be restored within 30 days.'
+        : '';
+      if (cascadeMsg || fileMsg || restoreMsg) {
+        setTimeout(() => alert(`Statement deleted.${cascadeMsg}${fileMsg}${restoreMsg}`), 10);
+      }
+    },
+    onError: (err: any) => {
+      if (err?.status === 403 || /higher permission/i.test(err?.error || err?.message || '')) {
+        alert('Delete not allowed for your account. Only account owner or boss-level users can delete records. Please ask your admin.');
+      } else {
+        alert(`Delete failed: ${err?.error || err?.message || 'Unknown error'}`);
+      }
+    },
   });
 
   const autoMatchMut = useMutation({
@@ -89,6 +119,18 @@ export default function BankStatements() {
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['bank-statement', expandedId] }); },
   });
 
+  const createInvoiceMut = useMutation({
+    mutationFn: (txId: string) => api('/invoices/generate-from-transaction', { method: 'POST', body: { transaction_id: txId } }),
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ['bank-statement', expandedId] });
+      queryClient.invalidateQueries({ queryKey: ['invoices'] });
+      navigate(`/invoices?highlight=${data.id}`);
+    },
+    onError: (err: any) => {
+      alert(`Could not create invoice: ${err?.error || err?.message || 'Unknown error'}`);
+    },
+  });
+
   const autoCatMut = useMutation({
     mutationFn: () => api(`/bank-statements/${expandedId}/auto-categorize`, { method: 'POST' }),
     onSuccess: (data: any) => {
@@ -119,6 +161,8 @@ export default function BankStatements() {
         <h2 className="text-2xl font-bold">{t('bank.title')}</h2>
         <p className="text-muted-foreground mt-1">{t('bank.desc')}</p>
       </div>
+
+      <PendingReviewBanner />
 
       {/* Statements list */}
       <div className="bg-card border rounded-xl p-6 space-y-3">
@@ -159,10 +203,28 @@ export default function BankStatements() {
                     </div>
                   </div>
                   <div className="flex gap-2 flex-shrink-0 ml-2" onClick={e => e.stopPropagation()}>
-                    <a href={`/api/bank-statements/${s.id}/file`} target="_blank" className="p-1.5 hover:bg-muted rounded">
+                    <a href={`/api/bank-statements/${s.id}/file`} target="_blank" className="p-1.5 hover:bg-muted rounded" title="View original file">
                       <Eye className="h-4 w-4" />
                     </a>
-                    <button onClick={() => { if (confirm(t('common.confirmDelete'))) deleteMut.mutate(s.id); }}
+                    <button
+                      onClick={() => {
+                        setExpandedId(s.id);
+                        setEditMode(true);
+                        setEdits({});
+                      }}
+                      className="p-1.5 hover:bg-muted rounded"
+                      title="Edit transactions"
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </button>
+                    <button onClick={() => {
+                      const doDelete = () => deleteMut.mutate(s.id);
+                      if (isStaff) {
+                        setSupModal({ show: true, onConfirm: doDelete });
+                      } else {
+                        if (confirm(t('common.confirmDelete'))) doDelete();
+                      }
+                    }}
                       className="p-1.5 hover:bg-muted rounded text-destructive">
                       <Trash2 className="h-4 w-4" />
                     </button>
@@ -189,11 +251,13 @@ export default function BankStatements() {
                             <span>Opening: <span className="font-mono font-medium">{detail?.opening_balance?.toLocaleString(undefined, { minimumFractionDigits: 2 }) || '-'}</span></span>
                             <span>Closing: <span className="font-mono font-medium text-green-600">{detail?.closing_balance?.toLocaleString(undefined, { minimumFractionDigits: 2 }) || '-'}</span></span>
                             <div className="flex items-center gap-1">
+                              {!isStaff && (
                               <a href={`/api/bank-statements/${detail?.id}/export-csv`}
                                 className="px-2 py-1 text-xs rounded border hover:bg-muted flex items-center gap-1"
                                 title="Export CSV">
                                 <Download className="h-3 w-3" /> CSV
                               </a>
+                              )}
                               <label className="px-2 py-1 text-xs rounded border hover:bg-muted cursor-pointer flex items-center gap-1"
                                 title="Import CSV">
                                 <Upload className="h-3 w-3" /> CSV
@@ -312,16 +376,22 @@ export default function BankStatements() {
                                   </td>
                                   <td className="py-1.5 pr-3" onClick={e => e.stopPropagation()}>
                                     {tx.account_code ? (
-                                      <span className="text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded cursor-pointer hover:bg-primary/20 inline-block max-w-[200px] truncate"
-                                        onClick={() => setAcctModalTx(tx)}>
-                                        <span className="font-mono">{tx.account_code}</span>
-                                        <span className="text-muted-foreground ml-1">
-                                          {accounts.find((a: any) => a.account_code === tx.account_code)?.account_name?.slice(0, 15) || ''}
-                                        </span>
-                                      </span>
+                                      (() => {
+                                        const acc = accounts.find((a: any) => a.account_code === tx.account_code);
+                                        const name = acc?.account_name || '(unknown account)';
+                                        return (
+                                          <span
+                                            className="text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded cursor-pointer hover:bg-primary/20 inline-block max-w-[260px] truncate"
+                                            title={`${tx.account_code} · ${name}`}
+                                            onClick={() => setAcctModalTx(tx)}>
+                                            <span className="font-mono">{tx.account_code}</span>
+                                            <span className="text-muted-foreground ml-1">{name}</span>
+                                          </span>
+                                        );
+                                      })()
                                     ) : (
                                       <select
-                                        className="text-xs border rounded px-1 py-0.5 bg-background max-w-[180px] truncate cursor-pointer"
+                                        className="text-xs border rounded px-1 py-0.5 bg-background max-w-[260px] truncate cursor-pointer"
                                         value={tx.account_code || ''}
                                         onChange={e => {
                                           if (e.target.value) {
@@ -331,9 +401,9 @@ export default function BankStatements() {
                                         onClick={e => e.stopPropagation()}
                                       >
                                         <option value="" className="text-muted-foreground">-- 選科目 --</option>
-                                        {accounts.slice(0, 40).map((a: any) => (
+                                        {accounts.map((a: any) => (
                                           <option key={a.account_code} value={a.account_code}>
-                                            {a.account_code} {a.account_name?.slice(0, 25)}
+                                            {a.account_code} {a.account_name}
                                           </option>
                                         ))}
                                       </select>
@@ -364,10 +434,22 @@ export default function BankStatements() {
                                       </span>
                                     )}
                                     {tx.match_status === 'unmatched' && tx.deposit_amount > 0 && (
-                                      <button onClick={() => setMatchTxId(tx.id)}
-                                        className="text-xs text-muted-foreground hover:text-primary flex items-center gap-0.5 mx-auto" title="Link to invoice">
-                                        <Link2 className="h-3 w-3" />
-                                      </button>
+                                      <div className="flex items-center gap-1 justify-center">
+                                        <button onClick={() => setMatchTxId(tx.id)}
+                                          className="text-xs text-muted-foreground hover:text-primary flex items-center gap-0.5" title="Link to existing invoice">
+                                          <Link2 className="h-3 w-3" />
+                                        </button>
+                                        <button
+                                          onClick={() => {
+                                            if (window.confirm(`Create a draft invoice for HKD ${tx.deposit_amount.toLocaleString()} from:\n"${tx.description}"?\n\nYou can edit it in the Invoices page.`)) {
+                                              createInvoiceMut.mutate(tx.id);
+                                            }
+                                          }}
+                                          disabled={createInvoiceMut.isPending}
+                                          className="text-xs text-blue-500 hover:text-blue-700 flex items-center gap-0.5" title="Create invoice from this transaction">
+                                          <FilePlus className="h-3 w-3" />
+                                        </button>
+                                      </div>
                                     )}
                                   </td>
                                   {editMode && (
@@ -549,6 +631,14 @@ Return ONLY a JSON object with corrected fields. If nothing needs fixing, return
             </div>
           </div>
         </div>
+      )}
+
+      {supModal?.show && (
+        <SupervisorPasswordModal
+          action="delete this bank statement"
+          onConfirm={supModal.onConfirm}
+          onCancel={() => setSupModal(null)}
+        />
       )}
     </div>
   );
@@ -733,6 +823,88 @@ function ManualMatchModal({ txId, onClose, onMatch }: { txId: string; onClose: (
         <div className="flex justify-end">
           <button onClick={onClose} className="px-4 py-2 text-sm border rounded-md hover:bg-muted">Cancel</button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Pending Review Banner: shows draft statements awaiting confirmation ──
+function PendingReviewBanner() {
+  const queryClient = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ['bank-statements-drafts'],
+    queryFn: () => api('/bank-statements?only_drafts=1'),
+    refetchInterval: 5000, // poll every 5s so newly uploaded drafts appear quickly
+  });
+  const drafts: any[] = data?.data || [];
+  const dismissMut = useMutation({
+    mutationFn: (id: string) => api(`/bank-statements/${id}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['bank-statements-drafts'] });
+      queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
+      queryClient.invalidateQueries({ queryKey: ['file-storage'] });
+    },
+    onError: (err: any) => {
+      if (err?.status === 403 || /higher permission/i.test(err?.error || err?.message || '')) {
+        alert('Only account owner or boss-level users can discard drafts. Please ask your admin.');
+      } else {
+        alert(`Discard failed: ${err?.error || err?.message || 'Unknown error'}`);
+      }
+    },
+  });
+  if (drafts.length === 0) return null;
+  return (
+    <div className="rounded-lg border-2 border-yellow-400 bg-yellow-50 dark:bg-yellow-950 p-4 space-y-2">
+      <div className="flex items-start gap-3">
+        <div className="text-2xl">⚠️</div>
+        <div className="flex-1">
+          <h3 className="font-bold text-yellow-900 dark:text-yellow-100">
+            {drafts.length} statement{drafts.length === 1 ? '' : 's'} pending review
+          </h3>
+          <p className="text-sm text-yellow-800 dark:text-yellow-200">
+            The system extracted data from your uploaded file{drafts.length === 1 ? '' : 's'}.
+            Please review and confirm before saving to the database.
+          </p>
+        </div>
+      </div>
+      <div className="space-y-1 pt-2">
+        {drafts.map((d: any) => (
+          <div
+            key={d.id}
+            className="flex items-center justify-between rounded border border-yellow-300 bg-white dark:bg-yellow-900/40 px-3 py-2 hover:bg-yellow-100 dark:hover:bg-yellow-900/70 transition-colors"
+          >
+            <a
+              href={`/bank-statements/review/${d.id}`}
+              className="flex-1 text-sm"
+            >
+              <span className="font-medium">{d.bank_name || 'Statement'}</span>
+              {d.account_number && <span className="text-muted-foreground"> · {d.account_number}</span>}
+              {d.period_start && <span className="text-muted-foreground"> · {d.period_start} → {d.period_end}</span>}
+            </a>
+            <div className="flex items-center gap-2">
+              <a
+                href={`/bank-statements/review/${d.id}`}
+                className="text-sm text-yellow-900 dark:text-yellow-100 font-medium hover:underline"
+              >
+                Review →
+              </a>
+              <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (confirm('Discard this draft? It will be moved to the Recycle Bin (30-day restore) and the PDF will also be removed from File Storage.')) {
+                    dismissMut.mutate(d.id);
+                  }
+                }}
+                disabled={dismissMut.isPending}
+                className="text-xs px-2 py-1 border border-red-300 text-red-600 rounded hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50"
+                title="Discard this draft"
+              >
+                🗑 Discard
+              </button>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );

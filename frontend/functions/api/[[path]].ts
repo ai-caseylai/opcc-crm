@@ -18,7 +18,7 @@ export async function onRequest(context: any) {
 
   try {
     // Proxy to API Worker
-    const apiUrl = `https://oppc-crm-api-production.ai-caseylai.workers.dev${url.pathname}${url.search}`;
+    const apiUrl = `https://opcc-crm-api.ruhan-farhan.workers.dev${url.pathname}${url.search}`;
 
     const response = await fetch(apiUrl, {
       method: request.method,
@@ -45,3 +45,4 @@ export async function onRequest(context: any) {
     });
   }
 }
+

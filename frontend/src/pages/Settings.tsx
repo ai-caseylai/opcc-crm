@@ -13,6 +13,30 @@ export default function Settings() {
   const { data: company } = useQuery({ queryKey: ['company'], queryFn: () => api('/company') });
   const [coForm, setCoForm] = useState({ name: '', address: '', address2: '', phone: '', email: '', website: '', bank_name: '', bank_account: '', bank_swift: '', bank_address: '', signatory_name: '', tax_id: '', invoice_number_pattern: 'INV{YY}{MM}-{NNN}' });
   const [logoFile, setLogoFile] = useState<string>('');
+
+  // ── Change Password ──
+  const [pwForm, setPwForm] = useState({ current: '', newPw: '', confirm: '' });
+  const [pwMsg, setPwMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const changePwMut = useMutation({
+    mutationFn: (body: any) => api('/auth/change-password', { method: 'POST', body }),
+    onSuccess: () => {
+      setPwMsg({ type: 'success', text: 'Password changed successfully!' });
+      setPwForm({ current: '', newPw: '', confirm: '' });
+      setTimeout(() => setPwMsg(null), 3000);
+    },
+    onError: (err: any) => {
+      setPwMsg({ type: 'error', text: err?.error || err?.message || 'Failed to change password.' });
+    },
+  });
+
+  const handleChangePw = () => {
+    setPwMsg(null);
+    if (!pwForm.current) return setPwMsg({ type: 'error', text: 'Please enter your current password.' });
+    if (pwForm.newPw.length < 8) return setPwMsg({ type: 'error', text: 'New password must be at least 8 characters.' });
+    if (!/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/.test(pwForm.newPw)) return setPwMsg({ type: 'error', text: 'Password must contain uppercase, lowercase, and a number.' });
+    if (pwForm.newPw !== pwForm.confirm) return setPwMsg({ type: 'error', text: 'Passwords do not match.' });
+    changePwMut.mutate({ current_password: pwForm.current, new_password: pwForm.newPw });
+  };
   const [coSaved, setCoSaved] = useState(false);
 
   React.useEffect(() => {
@@ -165,6 +189,58 @@ export default function Settings() {
           className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm hover:opacity-90 disabled:opacity-50">
           <Save className="h-4 w-4" /> {coSaved ? '已儲存！' : '儲存公司資料'}
         </button>
+      </div>
+
+      {/* ── Change Password ── */}
+      <div className="bg-card border rounded-xl p-6 space-y-4 mt-6">
+        <h3 className="font-semibold text-base flex items-center gap-2">
+          🔒 Change Password 更改密碼
+        </h3>
+        {pwMsg && (
+          <div className={`text-sm px-3 py-2 rounded-md ${pwMsg.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
+            {pwMsg.text}
+          </div>
+        )}
+        <div className="grid grid-cols-1 gap-3 max-w-md">
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">Current Password 現有密碼</label>
+            <input
+              type="password"
+              value={pwForm.current}
+              onChange={(e) => setPwForm({ ...pwForm, current: e.target.value })}
+              className="w-full px-3 py-2 border rounded-md text-sm bg-background"
+              placeholder="Enter current password"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">New Password 新密碼</label>
+            <input
+              type="password"
+              value={pwForm.newPw}
+              onChange={(e) => setPwForm({ ...pwForm, newPw: e.target.value })}
+              className="w-full px-3 py-2 border rounded-md text-sm bg-background"
+              placeholder="Min 8 chars, uppercase, lowercase, number"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">Confirm New Password 確認新密碼</label>
+            <input
+              type="password"
+              value={pwForm.confirm}
+              onChange={(e) => setPwForm({ ...pwForm, confirm: e.target.value })}
+              className="w-full px-3 py-2 border rounded-md text-sm bg-background"
+              placeholder="Repeat new password"
+            />
+          </div>
+          <button
+            onClick={handleChangePw}
+            disabled={changePwMut.isPending}
+            className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm hover:opacity-90 disabled:opacity-50 w-fit"
+          >
+            <Save className="h-4 w-4" />
+            {changePwMut.isPending ? 'Changing…' : 'Change Password 更改密碼'}
+          </button>
+        </div>
       </div>
 
     </div>

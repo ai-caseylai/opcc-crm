@@ -9,18 +9,24 @@ export default function Dashboard() {
   const { t } = useTranslation();
   const { user } = useAuth();
 
-  const { data: customers } = useQuery({ queryKey: ['customers'], queryFn: () => api('/customers?limit=1') });
   const { data: suppliers } = useQuery({ queryKey: ['suppliers'], queryFn: () => api('/suppliers?limit=1') });
-  const { data: invoices } = useQuery({ queryKey: ['invoices'], queryFn: () => api('/invoices?limit=1') });
+  const { data: invoices } = useQuery({ queryKey: ['invoices'], queryFn: () => api('/invoices?doc_type=invoice&limit=1') });
+  const { data: purchaseInvoices } = useQuery({ queryKey: ['purchase-invoices'], queryFn: () => api('/invoices?direction=incoming&limit=1') });
   const { data: quotations } = useQuery({ queryKey: ['quotations'], queryFn: () => api('/quotations?limit=1') });
   const { data: todosData } = useQuery({ queryKey: ['todos'], queryFn: () => api('/todos?status=pending') });
   const { data: dashData } = useQuery({ queryKey: ['dashboard'], queryFn: () => api('/dashboard'), refetchInterval: 30000 });
 
+  // Count distinct customers from outgoing invoices only
+  const { data: customerCount } = useQuery({
+    queryKey: ['customer-count'],
+    queryFn: () => api('/customers?limit=1&exclude_self=true'),
+  });
+
   const crmStats = [
-    { key: 'customers', value: customers?.total || 0, icon: Users, color: 'text-blue-600' },
-    { key: 'suppliers', value: suppliers?.total || 0, icon: Truck, color: 'text-green-600' },
-    { key: 'invoices', value: invoices?.total || 0, icon: FileText, color: 'text-orange-600' },
-    { key: 'quotations', value: quotations?.total || 0, icon: FileSpreadsheet, color: 'text-purple-600' },
+    { key: 'customers', value: customerCount?.total || 0, icon: Users, color: 'text-blue-600', label: '客戶 Clients' },
+    { key: 'suppliers', value: suppliers?.total || 0, icon: Truck, color: 'text-green-600', label: '供應商 Suppliers' },
+    { key: 'invoices', value: invoices?.total || 0, icon: FileText, color: 'text-orange-600', label: '發票 Invoices' },
+    { key: 'quotations', value: quotations?.total || 0, icon: FileSpreadsheet, color: 'text-purple-600', label: '報價單 Quotations' },
   ];
 
   const d = dashData || {};
@@ -40,7 +46,7 @@ export default function Dashboard() {
             <div key={s.key} className="bg-card border rounded-xl p-4">
               <div className="flex items-center gap-2 text-sm text-muted-foreground mb-2">
                 <Icon className={`h-4 w-4 ${s.color}`} />
-                {t(`dashboard.${s.key}`)}
+                {(s as any).label || t(`dashboard.${s.key}`)}
               </div>
               <div className="text-2xl font-bold">{s.value}</div>
             </div>

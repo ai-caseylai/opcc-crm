@@ -12,46 +12,73 @@ dashboard.get('/', async (c) => {
   const today = new Date().toISOString().split('T')[0];
   const monthStart = today.slice(0, 7) + '-01';
 
-  // Cash balance (GL bank accounts)
-  const cashBalance = await db.prepare(
+  // A journal entry generated from a bank transaction is "orphaned" if that transaction
+  // has since been soft-deleted (e.g. its parent bank statement was moved to the recycle
+  // bin) but the entry itself wasn't cleaned up. Exclude those live, in addition to the
+  // status != 'stale' check above — this also self-heals any data that was orphaned
+  // before this check existed, without needing a backfill.
+  const notOrphaned = `(je.reference_type != 'bank_transaction' OR EXISTS (
+    SELECT 1 FROM bank_transactions bt2 WHERE bt2.id = je.reference_id AND bt2.deleted_at IS NULL
+  ))`;
+
+  // Cash balance from GL (journal entries against 111xx bank accounts)
+  const cashFromGL = await db.prepare(
     `SELECT COALESCE(SUM(jl.debit) - SUM(jl.credit), 0) as balance
      FROM journal_lines jl JOIN journal_entries je ON jl.entry_id = je.id
-     WHERE je.user_id = ? AND jl.account_code LIKE '111%'`
+     WHERE je.user_id = ? AND jl.account_code LIKE '111%' AND je.status != 'stale' AND ${notOrphaned}`
   ).bind(tenantId).first<{ balance: number }>();
 
-  // Accounts Receivable
+  // Cash balance from bank transactions (always computed — used as fallback or primary)
+  const cashFromBank = await db.prepare(
+    `SELECT COALESCE(SUM(deposit_amount) - SUM(withdrawal_amount), 0) as balance
+     FROM bank_transactions WHERE user_id = ? AND deleted_at IS NULL`
+  ).bind(tenantId).first<{ balance: number }>();
+
+  // Accounts Receivable from GL
   const arBalance = await db.prepare(
     `SELECT COALESCE(SUM(jl.debit) - SUM(jl.credit), 0) as balance
      FROM journal_lines jl JOIN journal_entries je ON jl.entry_id = je.id
-     WHERE je.user_id = ? AND jl.account_code LIKE '112%'`
+     WHERE je.user_id = ? AND jl.account_code LIKE '112%' AND je.status != 'stale' AND ${notOrphaned}`
   ).bind(tenantId).first<{ balance: number }>();
 
-  // Accounts Payable
+  // Accounts Payable from GL
   const apBalance = await db.prepare(
     `SELECT COALESCE(SUM(jl.credit) - SUM(jl.debit), 0) as balance
      FROM journal_lines jl JOIN journal_entries je ON jl.entry_id = je.id
-     WHERE je.user_id = ? AND jl.account_code LIKE '211%'`
+     WHERE je.user_id = ? AND jl.account_code LIKE '211%' AND je.status != 'stale' AND ${notOrphaned}`
   ).bind(tenantId).first<{ balance: number }>();
 
-  // Revenue MTD
-  const revenueMTD = await db.prepare(
+  // Revenue MTD from GL
+  const revFromGL = await db.prepare(
     `SELECT COALESCE(SUM(jl.credit) - SUM(jl.debit), 0) as amount FROM journal_lines jl
      JOIN journal_entries je ON jl.entry_id = je.id
      JOIN accounts a ON jl.account_code = a.account_code AND je.user_id = a.user_id
-     WHERE je.user_id = ? AND je.entry_date >= ? AND a.account_type = 'revenue'`
+     WHERE je.user_id = ? AND je.entry_date >= ? AND a.account_type = 'revenue' AND je.status != 'stale' AND ${notOrphaned}`
   ).bind(tenantId, monthStart).first<{ amount: number }>();
 
-  // Expenses MTD
-  const expensesMTD = await db.prepare(
+  // Expenses MTD from GL
+  const expFromGL = await db.prepare(
     `SELECT COALESCE(SUM(jl.debit) - SUM(jl.credit), 0) as amount FROM journal_lines jl
      JOIN journal_entries je ON jl.entry_id = je.id
      JOIN accounts a ON jl.account_code = a.account_code AND je.user_id = a.user_id
-     WHERE je.user_id = ? AND je.entry_date >= ? AND a.account_type = 'expense'`
+     WHERE je.user_id = ? AND je.entry_date >= ? AND a.account_type = 'expense' AND je.status != 'stale' AND ${notOrphaned}`
+  ).bind(tenantId, monthStart).first<{ amount: number }>();
+
+  // Revenue MTD from bank (deposits this month)
+  const revFromBank = await db.prepare(
+    `SELECT COALESCE(SUM(deposit_amount), 0) as amount
+     FROM bank_transactions WHERE user_id = ? AND transaction_date >= ? AND deleted_at IS NULL`
+  ).bind(tenantId, monthStart).first<{ amount: number }>();
+
+  // Expenses MTD from bank (withdrawals this month)
+  const expFromBank = await db.prepare(
+    `SELECT COALESCE(SUM(withdrawal_amount), 0) as amount
+     FROM bank_transactions WHERE user_id = ? AND transaction_date >= ? AND deleted_at IS NULL`
   ).bind(tenantId, monthStart).first<{ amount: number }>();
 
   // Unmatched bank transactions count
   const unmatchedCount = await db.prepare(
-    "SELECT COUNT(*) as cnt FROM bank_transactions WHERE user_id = ? AND account_code IS NULL"
+    "SELECT COUNT(*) as cnt FROM bank_transactions WHERE user_id = ? AND match_status = 'unmatched' AND deleted_at IS NULL"
   ).bind(tenantId).first<{ cnt: number }>();
 
   // Recent journal entries
@@ -79,29 +106,29 @@ dashboard.get('/', async (c) => {
      FROM fixed_assets WHERE user_id = ? AND is_active = 1`
   ).bind(tenantId).first<{ count: number; total_cost: number; total_acc_depn: number; total_nbv: number }>();
 
-  const netIncomeMTD = (revenueMTD?.amount || 0) - (expensesMTD?.amount || 0);
+  // Decide source: use GL figures if they exist (non-zero), otherwise fall back to bank transactions.
+  // This handles the common case where bank statements are imported but GL journals haven't been posted yet.
+  const glCash = cashFromGL?.balance || 0;
+  const bankCash = cashFromBank?.balance || 0;
+  const glRevenue = revFromGL?.amount || 0;
+  const bankRevenue = revFromBank?.amount || 0;
+  const glExpenses = expFromGL?.amount || 0;
+  const bankExpenses = expFromBank?.amount || 0;
 
-  // Check if journal entries exist; if not, fallback to bank data for cash balance
-  const jeCount = await db.prepare(
-    'SELECT COUNT(*) as cnt FROM journal_entries WHERE user_id = ?'
-  ).bind(tenantId).first<{ cnt: number }>();
-  const source = (jeCount?.cnt || 0) > 0 ? 'journal' : 'bank';
+  const useGL = glCash !== 0 || glRevenue !== 0 || glExpenses !== 0;
+  const source = useGL ? 'journal' : 'bank';
 
-  let cashBal = cashBalance?.balance || 0;
-  if (source === 'bank') {
-    const bankCash = await db.prepare(
-      `SELECT COALESCE(SUM(deposit_amount) - SUM(withdrawal_amount), 0) as balance
-       FROM bank_transactions WHERE user_id = ?`
-    ).bind(tenantId).first<{ balance: number }>();
-    cashBal = bankCash?.balance || 0;
-  }
+  const cashBal    = useGL ? glCash    : bankCash;
+  const revenueMTD = useGL ? glRevenue : bankRevenue;
+  const expensesMTD = useGL ? glExpenses : bankExpenses;
+  const netIncomeMTD = revenueMTD - expensesMTD;
 
   return c.json({
     cash_balance: cashBal,
     ar_balance: arBalance?.balance || 0,
     ap_balance: apBalance?.balance || 0,
-    revenue_mtd: revenueMTD?.amount || 0,
-    expenses_mtd: expensesMTD?.amount || 0,
+    revenue_mtd: revenueMTD,
+    expenses_mtd: expensesMTD,
     net_income_mtd: netIncomeMTD,
     unmatched_transactions: unmatchedCount?.cnt || 0,
     fixed_assets: assetSummary,

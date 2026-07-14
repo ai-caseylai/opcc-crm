@@ -1,7 +1,7 @@
 const API_BASE = '/api';
 
 // Direct Worker URL for large payloads (bypasses Pages Function body size limits)
-export const WORKER_API_BASE = 'https://oppc-crm-api-production.ai-caseylai.workers.dev/api';
+export const WORKER_API_BASE = 'https://opcc-crm-api.ruhan-farhan.workers.dev/api';
 
 interface ApiOptions {
   method?: string;
@@ -111,3 +111,4 @@ export async function streamChat(
     onError(e.message || 'Connection error');
   }
 }
+

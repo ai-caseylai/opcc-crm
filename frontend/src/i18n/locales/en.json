@@ -1,7 +1,7 @@
 {
   "app": {
-    "title": "OPCC CRM",
-    "subtitle": "One Person Company Club"
+    "title": "Tech Connect SME",
+    "subtitle": "Smart Accounting for Hong Kong SMEs"
   },
   "nav": {
     "dashboard": "Dashboard",
@@ -16,11 +16,18 @@
     "services": "Services",
     "messages": "Messages",
     "settings": "Settings",
+    "userManagement": "User Management",
+    "applications": "Applications",
+    "auditLog": "Audit Log",
+    "userManagement": "User Management",
+    "applications": "Applications",
+    "auditLog": "Audit Log",
     "logout": "Logout",
     "documents": "Company Docs",
     "integrations": "Integrations",
     "modules": "Modules",
     "bankStatements": "Bank Statements",
+    "reconciliation": "Reconciliation",
     "ledger": "General Ledger",
     "expenseReceipts": "Expense Receipts",
     "todos": "Todo List",
@@ -36,7 +43,8 @@
     "fixedAssets": "Fixed Assets",
     "compliance": "Compliance",
     "pricing": "Pricing",
-    "subscription": "Subscription"
+    "subscription": "Subscription",
+    "recycleBin": "Recycle Bin"
   },
   "auth": {
     "login": "Login",

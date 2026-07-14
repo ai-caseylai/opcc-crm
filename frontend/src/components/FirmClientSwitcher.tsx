@@ -33,8 +33,8 @@ export default function FirmClientSwitcher() {
       </button>
       {open && (
         <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute left-3 right-3 top-full mt-1 z-20 bg-card border rounded-lg shadow-lg max-h-60 overflow-y-auto">
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute left-3 right-3 top-full mt-1 z-50 bg-card border rounded-lg shadow-lg max-h-96 overflow-y-auto">
             {firmClients.map((client) => (
               <button key={client.id}
                 onClick={() => handleSwitch(client)}

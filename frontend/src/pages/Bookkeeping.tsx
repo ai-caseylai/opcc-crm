@@ -2,8 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { Plus, Calculator, Download, Save } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function Bookkeeping() {
+  const { user } = useAuth();
+  const isStaff = user?.role === 'staff' || user?.role === 'viewer';
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<'entries' | 'accounts' | 'trial' | 'pl' | 'bs' | 'ledger' | 'export'>('entries');
   const [startDate, setStartDate] = useState('');
@@ -402,10 +405,12 @@ export default function Bookkeeping() {
             <span className="text-muted-foreground">至</span>
             <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)}
               className="px-3 py-2 border rounded-md bg-background text-sm" />
+            {!isStaff && (
             <button onClick={exportCSV}
               className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm hover:opacity-90">
               <Download className="h-4 w-4" /> 導出 CSV
             </button>
+            )}
           </div>
         </div>
       )}

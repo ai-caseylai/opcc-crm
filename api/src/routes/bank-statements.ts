@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import { v4 as uuidv4 } from 'uuid';
 import { verify as jwtVerify } from 'jsonwebtoken';
 import { Bindings, Variables } from '../types';
-import { authMiddleware } from '../middleware/auth';
+import { authMiddleware, requireHigherTier } from '../middleware/auth';
 
 const bank = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -48,7 +48,18 @@ bank.get('/:id/file', async (c) => {
     'SELECT file_data, r2_key, file_type, file_name, user_id FROM bank_statements WHERE id = ?'
   ).bind(c.req.param('id')).first<{ file_data: string; r2_key: string | null; file_type: string; file_name: string; user_id: string }>();
   if (!row) return c.json({ error: 'Not found' }, 404);
-  if (row.user_id !== userId) return c.json({ error: 'Not found' }, 404);
+
+  // Allow direct owner OR firm admin who has this user as an active client
+  let hasAccess = row.user_id === userId;
+  if (!hasAccess) {
+    const link = await c.env.DB.prepare(
+      `SELECT 1 FROM firm_clients fc
+       JOIN firm_members fm ON fm.firm_id = fc.firm_id
+       WHERE fc.client_user_id = ? AND fm.user_id = ? AND fc.status = 'active' AND fm.is_active = 1`
+    ).bind(row.user_id, userId).first();
+    hasAccess = !!link;
+  }
+  if (!hasAccess) return c.json({ error: 'Not found' }, 404);
 
   if (row.r2_key && c.env.FILE_BUCKET) {
     const obj = await c.env.FILE_BUCKET.get(row.r2_key);
@@ -118,15 +129,70 @@ bank.get('/', async (c) => {
   const user = c.get('user');
   const tenantId = c.get('client_user_id') || user.id;
   const year = c.req.query('year') || '';
+  const showDrafts = c.req.query('show_drafts') === '1';
+  const onlyDrafts = c.req.query('only_drafts') === '1';
   let q = `SELECT id, file_name, bank_name, account_number, branch, currency, account_type,
            statement_year, statement_month, period_start, period_end,
            opening_balance, closing_balance, page_count, ocr_text, status, created_at
-           FROM bank_statements WHERE user_id = ?`;
+           FROM bank_statements WHERE user_id = ? AND deleted_at IS NULL`;
   const p: any[] = [tenantId];
+  if (onlyDrafts) {
+    q += " AND status = 'draft'";
+  } else if (!showDrafts) {
+    q += " AND (status IS NULL OR status != 'draft')";
+  }
   if (year) { q += ' AND statement_year = ?'; p.push(parseInt(year)); }
   q += ' ORDER BY statement_year DESC, statement_month DESC';
   const rows = await c.env.DB.prepare(q).bind(...p).all();
   return c.json({ data: rows.results });
+});
+
+// ── Confirm draft → active (Step 4 of review-before-save flow) ──
+bank.post('/:id/confirm', async (c) => {
+  const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
+  const id = c.req.param('id');
+  const existing = await c.env.DB.prepare(
+    'SELECT id, status FROM bank_statements WHERE id = ? AND user_id = ?'
+  ).bind(id, tenantId).first<{ id: string; status: string }>();
+  if (!existing) return c.json({ error: 'Not found' }, 404);
+  if (existing.status !== 'draft') return c.json({ error: 'Already confirmed', status: existing.status }, 400);
+  await c.env.DB.prepare(
+    "UPDATE bank_statements SET status = 'active', updated_at = datetime('now') WHERE id = ?"
+  ).bind(id).run();
+  return c.json({ success: true, id, status: 'active' });
+});
+
+// ── Edit statement header fields (used during review) ──
+bank.patch('/:id', async (c) => {
+  const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
+  const id = c.req.param('id');
+  const body = await c.req.json();
+
+  const existing = await c.env.DB.prepare(
+    'SELECT id FROM bank_statements WHERE id = ? AND user_id = ?'
+  ).bind(id, tenantId).first();
+  if (!existing) return c.json({ error: 'Not found' }, 404);
+
+  const allowed = ['bank_name', 'account_number', 'branch', 'currency', 'account_type',
+    'statement_year', 'statement_month', 'period_start', 'period_end',
+    'opening_balance', 'closing_balance', 'file_name'];
+  const sets: string[] = [];
+  const params: any[] = [];
+  for (const [k, v] of Object.entries(body)) {
+    if (allowed.includes(k)) {
+      sets.push(`${k} = ?`);
+      params.push(v);
+    }
+  }
+  if (sets.length === 0) return c.json({ error: 'No valid fields' }, 400);
+  sets.push("updated_at = datetime('now')");
+  params.push(id, tenantId);
+  await c.env.DB.prepare(
+    `UPDATE bank_statements SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`
+  ).bind(...params).run();
+  return c.json({ success: true });
 });
 
 // ── Auto-match bank deposits to invoices ──
@@ -238,7 +304,7 @@ bank.patch('/transactions/:id', async (c) => {
     .bind(txId, tenantId).first();
   if (!tx) return c.json({ error: 'Transaction not found' }, 404);
 
-  const allowedFields = ['transaction_date', 'description', 'deposit_amount', 'withdrawal_amount', 'balance', 'reference', 'account_code'];
+  const allowedFields = ['transaction_date', 'description', 'deposit_amount', 'withdrawal_amount', 'balance', 'reference', 'account_code', 'account_type'];
   const sets: string[] = [];
   const params: any[] = [];
   for (const [k, v] of Object.entries(body)) {
@@ -266,6 +332,20 @@ bank.patch('/transactions/:id', async (c) => {
   return c.json(row);
 });
 
+// ── Delete a single transaction (used during review) ──
+bank.delete('/transactions/:id', async (c) => {
+  const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
+  const db = c.env.DB;
+  const txId = c.req.param('id');
+  const tx = await db.prepare('SELECT id FROM bank_transactions WHERE id = ? AND user_id = ?')
+    .bind(txId, tenantId).first();
+  if (!tx) return c.json({ error: 'Transaction not found' }, 404);
+  await db.prepare('DELETE FROM bank_transactions WHERE id = ? AND user_id = ?').bind(txId, tenantId).run();
+  await auditLog(db, user.id, 'delete', 'bank_transaction', txId, {});
+  return c.json({ success: true });
+});
+
 // ── Confirm or unlink a match ──
 bank.patch('/transactions/:id/match', async (c) => {
   const user = c.get('user');
@@ -273,21 +353,27 @@ bank.patch('/transactions/:id/match', async (c) => {
   const db = c.env.DB;
   const txId = c.req.param('id');
   const body = await c.req.json();
-  const { invoice_id, action } = body;
+  const { action } = body;
+  let { invoice_id } = body;
 
   const tx = await db.prepare(
-    'SELECT id, transaction_date FROM bank_transactions WHERE id = ? AND user_id = ?'
-  ).bind(txId, tenantId).first<{ id: string; transaction_date: string }>();
+    'SELECT id, transaction_date, invoice_id as current_invoice_id FROM bank_transactions WHERE id = ? AND user_id = ?'
+  ).bind(txId, tenantId).first<{ id: string; transaction_date: string; current_invoice_id: string | null }>();
   if (!tx) return c.json({ error: 'Transaction not found' }, 404);
 
-  if (action === 'confirm' && invoice_id) {
+  // For 'confirm': if no invoice_id passed, use the one already set on the tx (from auto-match suggestion)
+  if (action === 'confirm' && !invoice_id) invoice_id = tx.current_invoice_id || undefined;
+  // For 'link': alias for confirm with an explicit invoice_id (manual linking)
+  const effectiveAction = action === 'link' ? 'confirm' : action;
+
+  if (effectiveAction === 'confirm' && invoice_id) {
     const inv = await db.prepare(
       'SELECT id FROM invoices WHERE id = ? AND user_id = ?'
     ).bind(invoice_id, tenantId).first();
     if (!inv) return c.json({ error: 'Invoice not found' }, 404);
 
     await db.prepare(
-      `UPDATE bank_transactions SET invoice_id = ?, match_confidence = 'manual', match_status = 'confirmed' WHERE id = ?`
+      `UPDATE bank_transactions SET invoice_id = ?, match_confidence = 'manual', match_status = 'matched' WHERE id = ?`
     ).bind(invoice_id, txId).run();
 
     await db.prepare(
@@ -298,15 +384,29 @@ bank.patch('/transactions/:id/match', async (c) => {
     return c.json({ success: true, invoice_status: 'paid', paid_date: tx.transaction_date });
   }
 
-  if (action === 'unlink') {
+  // reject/unlink: same behavior
+  if (effectiveAction === 'reject' || effectiveAction === 'unlink') {
     await db.prepare(
       `UPDATE bank_transactions SET invoice_id = NULL, match_confidence = NULL, match_status = 'unmatched' WHERE id = ?`
     ).bind(txId).run();
-    await auditLog(db, user.id, 'unlink_match', 'bank_transaction', txId, { action: 'unlink' });
+    await auditLog(db, user.id, 'unlink_match', 'bank_transaction', txId, { action: effectiveAction });
     return c.json({ success: true });
   }
 
-  return c.json({ error: 'action must be confirm or unlink' }, 400);
+  return c.json({ error: 'action must be confirm, link, reject, or unlink' }, 400);
+});
+
+// ── Flat transactions list (all transactions for tenant, for reconciliation view) ──
+bank.get('/transactions', async (c) => {
+  const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
+  const rows = await c.env.DB.prepare(
+    `SELECT id, bank_statement_id, transaction_date, description, deposit_amount, withdrawal_amount,
+            balance, account_type, account_code, reference, invoice_id, match_status, match_confidence
+     FROM bank_transactions WHERE user_id = ? AND deleted_at IS NULL
+     ORDER BY transaction_date DESC, sort_order DESC`
+  ).bind(tenantId).all();
+  return c.json({ data: rows.results });
 });
 
 // ── Get single (with transactions) ──
@@ -455,17 +555,70 @@ bank.post('/upload', async (c) => {
   return c.json({ ...row, ocr_used: c.env.AI ? !!ocrText && ocrText.length > 20 : false }, 201);
 });
 
-// ── Delete ──
+// ── Delete (SOFT DELETE — sets deleted_at) ──
+// Requires 'higher' permission tier. Cascades soft-delete to child transactions + linked file.
+// Items can be restored within 30 days via /recycle/:id/restore, then purged automatically.
 bank.delete('/:id', async (c) => {
   const user = c.get('user');
   const tenantId = c.get('client_user_id') || user.id;
-  const existing = await c.env.DB.prepare('SELECT id FROM bank_statements WHERE id = ? AND user_id = ?')
-    .bind(c.req.param('id'), tenantId).first();
+  const db = c.env.DB;
+  const stmtId = c.req.param('id');
+
+  // Permission gate: only 'higher' tier can delete
+  if (!await requireHigherTier(c)) {
+    return c.json({
+      error: 'Only account owner or boss-level users can delete records',
+      hint: 'Ask your admin to grant you higher permission, or ask them to perform the delete.',
+    }, 403);
+  }
+
+  const existing = await db.prepare(
+    'SELECT id, file_name, r2_key FROM bank_statements WHERE id = ? AND user_id = ? AND deleted_at IS NULL'
+  ).bind(stmtId, tenantId).first<{ id: string; file_name: string; r2_key: string | null }>();
   if (!existing) return c.json({ error: 'Not found' }, 404);
-  await c.env.DB.prepare('DELETE FROM bank_statements WHERE id = ? AND user_id = ?')
-    .bind(c.req.param('id'), tenantId).run();
-  await auditLog(c.env.DB, user.id, 'delete', 'bank_statement', c.req.param('id'));
-  return c.json({ success: true });
+
+  const now = new Date().toISOString();
+
+  // 1) Soft-delete all transactions belonging to this statement
+  const txDel = await db.prepare(
+    'UPDATE bank_transactions SET deleted_at = ? WHERE bank_statement_id = ? AND user_id = ? AND deleted_at IS NULL'
+  ).bind(now, stmtId, tenantId).run();
+
+  // 1b) Mark any journal entries auto-generated from those transactions as stale, so they
+  // stop being counted on the dashboard/ledger. They aren't deleted outright so a restore
+  // (within the 30-day recycle window) can bring them back to normal status.
+  const jeStaled = await db.prepare(
+    `UPDATE journal_entries SET status = 'stale', updated_at = ?
+     WHERE user_id = ? AND reference_type = 'bank_transaction' AND status != 'stale'
+     AND reference_id IN (SELECT id FROM bank_transactions WHERE bank_statement_id = ? AND user_id = ?)`
+  ).bind(now, tenantId, stmtId, tenantId).run();
+
+  // 2) Soft-delete the linked file_record row
+  let fileDel = false;
+  if (existing.r2_key) {
+    const fRes = await db.prepare(
+      "UPDATE file_records SET deleted_at = ?, deleted_by = ? WHERE r2_key = ? AND user_id = ? AND deleted_at IS NULL"
+    ).bind(now, user.id, existing.r2_key, tenantId).run();
+    fileDel = (fRes.meta?.changes || 0) > 0;
+  }
+
+  // 3) Soft-delete the statement itself
+  await db.prepare(
+    'UPDATE bank_statements SET deleted_at = ?, deleted_by = ? WHERE id = ? AND user_id = ?'
+  ).bind(now, user.id, stmtId, tenantId).run();
+
+  await auditLog(c.env.DB, user.id, 'soft_delete', 'bank_statement', stmtId, {
+    transactions_deleted: txDel.meta?.changes || 0,
+    journal_entries_staled: jeStaled.meta?.changes || 0,
+    file_deleted: fileDel,
+    restorable_until: new Date(Date.now() + 30 * 86400_000).toISOString(),
+  });
+  return c.json({
+    success: true,
+    transactions_deleted: txDel.meta?.changes || 0,
+    file_deleted: fileDel,
+    restorable_until: new Date(Date.now() + 30 * 86400_000).toISOString(),
+  });
 });
 
 // ── Auto-categorize transactions by description patterns ──
@@ -707,6 +860,206 @@ bank.get('/reconciliations/list', async (c) => {
      ORDER BY br.created_at DESC`
   ).bind(tenantId).all();
   return c.json({ data: rows.results });
+});
+
+// ── RECYCLE BIN ──────────────────────────────────────────────────────
+// GET /recycle — list soft-deleted items for tenant (30-day retention).
+// POST /recycle/:type/:id/restore — restore a soft-deleted item.
+// DELETE /recycle/:type/:id — permanently delete right now.
+// All require 'higher' permission tier.
+
+bank.get('/recycle/list', async (c) => {
+  const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
+  if (!await requireHigherTier(c)) return c.json({ error: 'Higher permission tier required' }, 403);
+  const db = c.env.DB;
+  const cutoff = new Date(Date.now() - 30 * 86400_000).toISOString();
+  // Statements
+  const stmts = await db.prepare(
+    `SELECT id, file_name, bank_name, account_number, statement_year, statement_month,
+            opening_balance, closing_balance, deleted_at, deleted_by
+     FROM bank_statements WHERE user_id = ? AND deleted_at IS NOT NULL AND deleted_at > ?
+     ORDER BY deleted_at DESC`
+  ).bind(tenantId, cutoff).all();
+  // Files
+  const files = await db.prepare(
+    `SELECT id, filename, original_name, folder, category, deleted_at, deleted_by
+     FROM file_records WHERE user_id = ? AND deleted_at IS NOT NULL AND deleted_at > ?
+     ORDER BY deleted_at DESC`
+  ).bind(tenantId, cutoff).all();
+  return c.json({
+    bank_statements: stmts.results,
+    files: files.results,
+    retention_days: 30,
+  });
+});
+
+bank.post('/recycle/:type/:id/restore', async (c) => {
+  const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
+  if (!await requireHigherTier(c)) return c.json({ error: 'Higher permission tier required' }, 403);
+  const db = c.env.DB;
+  const type = c.req.param('type');
+  const id = c.req.param('id');
+
+  if (type === 'bank_statement') {
+    const r = await db.prepare(
+      'UPDATE bank_statements SET deleted_at = NULL, deleted_by = NULL WHERE id = ? AND user_id = ? AND deleted_at IS NOT NULL'
+    ).bind(id, tenantId).run();
+    if (!(r.meta?.changes)) return c.json({ error: 'Not found in recycle bin' }, 404);
+    // Restore transactions too
+    await db.prepare(
+      'UPDATE bank_transactions SET deleted_at = NULL WHERE bank_statement_id = ? AND user_id = ?'
+    ).bind(id, tenantId).run();
+    // Un-stale any journal entries that were auto-generated from those transactions
+    // and got marked stale when the statement was deleted.
+    await db.prepare(
+      `UPDATE journal_entries SET status = 'posted', updated_at = ?
+       WHERE user_id = ? AND reference_type = 'bank_transaction' AND status = 'stale'
+       AND reference_id IN (SELECT id FROM bank_transactions WHERE bank_statement_id = ? AND user_id = ?)`
+    ).bind(new Date().toISOString(), tenantId, id, tenantId).run();
+    // Restore linked file record too
+    const stmt = await db.prepare(
+      'SELECT r2_key FROM bank_statements WHERE id = ? AND user_id = ?'
+    ).bind(id, tenantId).first<{ r2_key: string | null }>();
+    if (stmt?.r2_key) {
+      await db.prepare(
+        'UPDATE file_records SET deleted_at = NULL, deleted_by = NULL WHERE r2_key = ? AND user_id = ?'
+      ).bind(stmt.r2_key, tenantId).run();
+    }
+    await auditLog(db, user.id, 'restore', 'bank_statement', id);
+    return c.json({ success: true });
+  }
+
+  if (type === 'file') {
+    const r = await db.prepare(
+      'UPDATE file_records SET deleted_at = NULL, deleted_by = NULL WHERE id = ? AND user_id = ? AND deleted_at IS NOT NULL'
+    ).bind(id, tenantId).run();
+    if (!(r.meta?.changes)) return c.json({ error: 'Not found in recycle bin' }, 404);
+    await auditLog(db, user.id, 'restore', 'file_record', id);
+    return c.json({ success: true });
+  }
+
+  return c.json({ error: 'Unknown type. Use bank_statement or file.' }, 400);
+});
+
+bank.delete('/recycle/:type/:id', async (c) => {
+  const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
+  if (!await requireHigherTier(c)) return c.json({ error: 'Higher permission tier required' }, 403);
+  const db = c.env.DB;
+  const type = c.req.param('type');
+  const id = c.req.param('id');
+
+  if (type === 'bank_statement') {
+    // Ensure it's actually in the bin
+    const s = await db.prepare(
+      'SELECT id, r2_key FROM bank_statements WHERE id = ? AND user_id = ? AND deleted_at IS NOT NULL'
+    ).bind(id, tenantId).first<{ id: string; r2_key: string | null }>();
+    if (!s) return c.json({ error: 'Not found in recycle bin' }, 404);
+    // Hard delete: bank_transactions, bank_statement, file_record, R2 blob
+    await db.prepare('DELETE FROM bank_transactions WHERE bank_statement_id = ? AND user_id = ?').bind(id, tenantId).run();
+    if (s.r2_key) {
+      await db.prepare('DELETE FROM file_records WHERE r2_key = ? AND user_id = ?').bind(s.r2_key, tenantId).run();
+      try { await c.env.FILE_BUCKET.delete(s.r2_key); } catch {}
+    }
+    await db.prepare('DELETE FROM bank_statements WHERE id = ? AND user_id = ?').bind(id, tenantId).run();
+    await auditLog(db, user.id, 'purge', 'bank_statement', id);
+    return c.json({ success: true });
+  }
+
+  if (type === 'file') {
+    const f = await db.prepare(
+      'SELECT id, r2_key FROM file_records WHERE id = ? AND user_id = ? AND deleted_at IS NOT NULL'
+    ).bind(id, tenantId).first<{ id: string; r2_key: string | null }>();
+    if (!f) return c.json({ error: 'Not found in recycle bin' }, 404);
+    // Hard-delete any invoices linked to this file (invoice_items cascade via FK)
+    await db.prepare('DELETE FROM invoices WHERE file_id = ? AND user_id = ?').bind(id, tenantId).run();
+    if (f.r2_key) { try { await c.env.FILE_BUCKET.delete(f.r2_key); } catch {} }
+    await db.prepare('DELETE FROM file_records WHERE id = ? AND user_id = ?').bind(id, tenantId).run();
+    await auditLog(db, user.id, 'purge', 'file_record', id);
+    return c.json({ success: true });
+  }
+
+  return c.json({ error: 'Unknown type. Use bank_statement or file.' }, 400);
+});
+
+// Auto-purge items older than 30 days. Callable manually; can also be wired to a cron.
+bank.post('/recycle/purge-old', async (c) => {
+  const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
+  if (!await requireHigherTier(c)) return c.json({ error: 'Higher permission tier required' }, 403);
+  const db = c.env.DB;
+  const cutoff = new Date(Date.now() - 30 * 86400_000).toISOString();
+  // Hard-delete invoices linked to files being purged (no deleted_at on invoices table)
+  const deletedFileIds = await db.prepare(
+    `SELECT id FROM file_records WHERE user_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?`
+  ).bind(tenantId, cutoff).all<{ id: string }>();
+  for (const row of deletedFileIds.results) {
+    await db.prepare('DELETE FROM invoices WHERE file_id = ? AND user_id = ?').bind(row.id, tenantId).run();
+  }
+  // Hard-delete stale journal entries tied to bank transactions about to be purged
+  // (must run before the bank_transactions themselves are deleted, since the lookup
+  // below joins on them; journal_lines cascade automatically via FK).
+  const je = await db.prepare(
+    `DELETE FROM journal_entries WHERE user_id = ? AND reference_type = 'bank_transaction' AND status = 'stale'
+     AND reference_id IN (SELECT id FROM bank_transactions WHERE user_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?)`
+  ).bind(tenantId, tenantId, cutoff).run();
+  const s = await db.prepare(
+    `DELETE FROM bank_statements WHERE user_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?`
+  ).bind(tenantId, cutoff).run();
+  const t = await db.prepare(
+    `DELETE FROM bank_transactions WHERE user_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?`
+  ).bind(tenantId, cutoff).run();
+  const f = await db.prepare(
+    `DELETE FROM file_records WHERE user_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?`
+  ).bind(tenantId, cutoff).run();
+  return c.json({
+    success: true,
+    purged: {
+      statements: s.meta?.changes || 0,
+      transactions: t.meta?.changes || 0,
+      files: f.meta?.changes || 0,
+      journal_entries: je.meta?.changes || 0,
+    },
+    older_than: cutoff,
+  });
+});
+
+// Create a new transaction on a statement (used by "Add Row" on the review page,
+// especially when OCR failed and the user enters transactions manually).
+bank.post('/:id/transactions', async (c) => {
+  const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
+  const stmtId = c.req.param('id');
+  const body = await c.req.json();
+
+  const stmt = await c.env.DB.prepare(
+    'SELECT id FROM bank_statements WHERE id = ? AND user_id = ? AND deleted_at IS NULL'
+  ).bind(stmtId, tenantId).first();
+  if (!stmt) return c.json({ error: 'Statement not found' }, 404);
+
+  // Determine next sort_order
+  const cnt = await c.env.DB.prepare(
+    'SELECT COUNT(*) as n FROM bank_transactions WHERE bank_statement_id = ?'
+  ).bind(stmtId).first<{ n: number }>();
+  const sortOrder = (cnt?.n || 0);
+
+  const txId = `tx-${crypto.randomUUID().slice(0, 12)}`;
+  await c.env.DB.prepare(
+    `INSERT INTO bank_transactions (id, bank_statement_id, user_id, transaction_date, description,
+     deposit_amount, withdrawal_amount, balance, sort_order)
+     VALUES (?,?,?,?,?,?,?,?,?)`
+  ).bind(
+    txId, stmtId, tenantId,
+    body.transaction_date || null,
+    body.description || '',
+    Number(body.deposit_amount) || 0,
+    Number(body.withdrawal_amount) || 0,
+    body.balance != null ? Number(body.balance) : null,
+    sortOrder
+  ).run();
+  return c.json({ success: true, id: txId });
 });
 
 export { bank as bankStatementRoutes };

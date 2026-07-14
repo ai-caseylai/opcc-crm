@@ -17,8 +17,13 @@ todos.get('/', async (c) => {
   const p: any[] = [user.id];
   if (status) { q += ' AND status = ?'; p.push(status); }
   q += ' ORDER BY sort_order, created_at DESC';
-  const rows = await c.env.DB.prepare(q).bind(...p).all();
-  return c.json({ data: rows.results });
+  try {
+    const rows = await c.env.DB.prepare(q).bind(...p).all();
+    return c.json({ data: rows.results });
+  } catch (e: any) {
+    if (/no such table/i.test(e?.message || '')) return c.json({ data: [] });
+    throw e;
+  }
 });
 
 // ── Create ──

@@ -8,9 +8,9 @@ import { Bindings, Variables } from '../types';
 
 // Default company config — used as fallback when no DB row exists
 const DEFAULT_COMPANY = {
-  name: 'OPCC',
-  legal_name: 'OPCC Company Limited',
-  short_name: 'OPCC',
+  name: 'Tech Connect SME',
+  legal_name: 'Tech Connect SME Limited',
+  short_name: 'Tech Connect SME',
   tagline: 'One Person Company Club',
   address: 'Hong Kong',
   phone: '',
@@ -114,21 +114,17 @@ company.put('/', authMiddleware, zValidator('json', updateSchema), async (c) => 
     params.push(tenantId);
     await db.prepare(`UPDATE company_settings SET ${sets.join(', ')} WHERE user_id = ?`).bind(...params).run();
   } else {
+    const newId = `cs-${Math.random().toString(36).slice(2, 10)}`;
     await db.prepare(
-      `INSERT INTO company_settings (user_id, name, legal_name, short_name, tagline, address, address2, phone, email, website, bank_name, bank_account, bank_swift, bank_address, signatory_name, tax_id, invoice_number_pattern)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-    ).bind(tenantId, data.name || 'OPCC', data.legal_name || null, data.short_name || null,
-      `INSERT INTO company_settings (user_id, name, legal_name, short_name, tagline, address, address2, phone, email, website, bank_name, bank_account, bank_swift, bank_address, signatory_name, tax_id, invoice_number_pattern, br_number, br_expiry_date, ci_number, industry, employee_count, fiscal_year_end, secretary_name, secretary_contact, auditor_name, auditor_contact)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-    ).bind(user.id, data.name || 'OPCC', data.legal_name || null, data.short_name || null,
-      data.tagline || null, data.address || 'Hong Kong', data.address2 || null,
-      data.phone || null, data.email || null, data.website || null, data.bank_name || null,
-      data.bank_account || null, data.bank_swift || null, data.bank_address || null,
-      data.signatory_name || null, data.tax_id || null, data.invoice_number_pattern || null,
-      data.br_number || null, data.br_expiry_date || null, data.ci_number || null,
-      data.industry || 'general', String(data.employee_count || 0), data.fiscal_year_end || '03-31',
-      data.secretary_name || null, data.secretary_contact || null,
-      data.auditor_name || null, data.auditor_contact || null).run();
+      `INSERT INTO company_settings (id, user_id, name, legal_name, short_name, tagline, address, address2, phone, email, website, bank_name, bank_account, bank_swift, bank_address, signatory_name, tax_id, invoice_number_pattern, features)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'{}')` 
+    ).bind(newId, tenantId,
+      data.name || 'My Company', data.legal_name || null, data.short_name || null,
+      data.tagline || null, data.address || null, data.address2 || null,
+      data.phone || null, data.email || null, data.website || null,
+      data.bank_name || null, data.bank_account || null, data.bank_swift || null,
+      data.bank_address || null, data.signatory_name || null, data.tax_id || null,
+      data.invoice_number_pattern || null).run();
   }
   const row = await db.prepare('SELECT * FROM company_settings WHERE user_id = ?').bind(tenantId).first();
   return c.json(row);
@@ -183,9 +179,15 @@ company.post('/pdf-stamp', authMiddleware, zValidator('json', pdfImageSchema), a
 company.get('/by-domain', async (c) => {
   const host = (c.req.query('host') || c.req.header('Host') || '').replace(/:\d+$/, '');
   const db = c.env.DB;
-  const row = await db.prepare(
-    `SELECT cs.*, d.domain FROM company_settings cs JOIN domains d ON d.user_id = cs.user_id WHERE d.domain = ? LIMIT 1`
-  ).bind(host).first();
+  let row: any = null;
+  try {
+    row = await db.prepare(
+      `SELECT cs.*, d.domain FROM company_settings cs JOIN domains d ON d.user_id = cs.user_id WHERE d.domain = ? LIMIT 1`
+    ).bind(host).first();
+  } catch (e: any) {
+    // domains table may not exist in some deployments — fall back to default
+    if (!/no such table/i.test(e?.message || '')) throw e;
+  }
   if (!row) {
     const def = { ...DEFAULT_COMPANY };
     try { def.features = JSON.parse(DEFAULT_COMPANY.features); } catch { /* keep string */ }
@@ -196,3 +198,4 @@ company.get('/by-domain', async (c) => {
 });
 
 export { company as companyRoutes };
+

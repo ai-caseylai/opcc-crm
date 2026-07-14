@@ -45,7 +45,7 @@ const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 // Middleware
 app.use('*', cors({
-  origin: ['http://localhost:5173', 'https://opcc-crm.techforliving.net', 'https://oppc-crm.techforliving.net', 'https://secondact.hk', 'https://www.secondact.hk', 'https://secondact.techforliving.net', 'https://secondact-landing.pages.dev'],
+  origin: (origin) => origin || '*',
   credentials: true,
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowHeaders: ['Content-Type', 'Authorization', 'X-Active-Client'],
@@ -194,3 +194,4 @@ app.onError((err, c) => {
 });
 
 export default app;
+

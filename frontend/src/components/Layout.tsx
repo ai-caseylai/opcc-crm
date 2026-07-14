@@ -9,7 +9,7 @@ import CookieConsent from './CookieConsent';
 import FirmClientSwitcher from './FirmClientSwitcher';
 import {
   LayoutDashboard, Users, Truck, Package, FileText, FileSpreadsheet, Mail,
-  Calculator, Upload, Settings, LogOut, Menu, X, MessageCircle, Calendar, Briefcase, FolderOpen, Plug, SlidersHorizontal, Landmark, Receipt, CheckSquare, Globe, CreditCard, Smartphone, HardDrive, ShoppingCart, ClipboardList, AlertCircle, BookOpen, ChevronLeft, ChevronRight, Building2, Shield, Tag, Bot,
+  Calculator, Upload, Settings, LogOut, Menu, X, MessageCircle, Calendar, Briefcase, FolderOpen, Plug, SlidersHorizontal, Landmark, Receipt, CheckSquare, Globe, CreditCard, Smartphone, HardDrive, ShoppingCart, ClipboardList, AlertCircle, BookOpen, ChevronLeft, ChevronRight, Building2, Shield, Tag, Bot, Link2, Trash2, ClipboardCheck, UserCog,
 } from 'lucide-react';
 
 const navGroups = [
@@ -27,7 +27,10 @@ const navGroups = [
     label: '文件處理',
     items: [
       { to: '/bank-statements', icon: Landmark, key: 'bankStatements' },
+      { to: '/invoices', icon: FileText, key: 'invoices' },
       { to: '/expense-receipts', icon: Receipt, key: 'expenseReceipts' },
+      { to: '/reconciliation', icon: Link2, key: 'reconciliation' },
+      { to: '/recycle-bin', icon: Trash2, key: 'recycleBin' },
     ],
   },
   {
@@ -43,7 +46,6 @@ const navGroups = [
     items: [
       { to: '/customers', icon: Users, key: 'customers' },
       { to: '/suppliers', icon: Truck, key: 'suppliers' },
-      { to: '/invoices', icon: FileText, key: 'invoices' },
       { to: '/quotations', icon: FileSpreadsheet, key: 'quotations' },
     ],
   },
@@ -85,6 +87,9 @@ const navGroups = [
     label: '',
     items: [
       { to: '/settings', icon: Settings, key: 'settings' },
+      { to: '/settings/users', icon: UserCog, key: 'userManagement' },
+      { to: '/admin/applications', icon: ClipboardCheck, key: 'applications' },
+      { to: '/audit-log', icon: BookOpen, key: 'auditLog' },
     ],
   },
   {
@@ -249,6 +254,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           const visibleItems = group.items.filter(item => {
             if ((item as any).hidden && !showAll) return false;
             if (item.key === 'firmManagement') return isFirmUser;
+            if (item.key === 'applications') return user?.role === 'admin';
+            if (item.key === 'userManagement') return ['admin', 'supervisor', 'accountant'].includes(user?.role || '');
+            if (item.key === 'settings') return !['staff', 'viewer'].includes(user?.role || '');
+            if (item.key === 'auditLog') return ['admin', 'supervisor', 'accountant'].includes(user?.role || '');
             const featKey = NAV_FEATURE_MAP[item.key];
             if (!featKey) return true;
             return features[featKey] !== false;
