@@ -114,6 +114,30 @@ const languages = [
   { code: 'en', label: 'EN' },
 ];
 
+// Admin sees a completely different sidebar
+const adminNavGroups = [
+  {
+    label: '',
+    items: [
+      { to: '/', icon: LayoutDashboard, key: 'dashboard' },
+    ],
+  },
+  {
+    label: 'administration',
+    items: [
+      { to: '/admin/applications', icon: ClipboardCheck, key: 'applications' },
+      { to: '/settings/users', icon: UserCog, key: 'userManagement' },
+      { to: '/audit-log', icon: BookOpen, key: 'auditLog' },
+    ],
+  },
+  {
+    label: '',
+    items: [
+      { to: '/settings', icon: Settings, key: 'settings' },
+    ],
+  },
+];
+
 // Nav key → feature flag mapping
 const NAV_FEATURE_MAP: Record<string, string> = {
   customers: 'customers',
@@ -213,18 +237,32 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       {/* Company header */}
       {collapsed ? (
         <div className="border-b flex justify-center w-16 py-3">
-          <div className="w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-sm font-bold">
-            {(activeCompany?.name || 'O').charAt(0)}
+          <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
+            user?.role === 'admin' ? 'bg-red-600 text-white' : 'bg-primary text-primary-foreground'
+          }`}>
+            {user?.role === 'admin' ? '⚙' : (activeCompany?.name || 'O').charAt(0)}
           </div>
         </div>
       ) : (
         <div className="p-6 border-b">
-          <h1 className="text-xl font-bold text-primary">
-            {activeClient?.display_name || activeClient?.company_name || activeCompany?.name || t('app.title')}
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            {activeClient ? (activeCompany?.name || user?.company_name || 'Firm') : (activeCompany?.domain || user?.company_name || user?.name)}
-          </p>
+          {user?.role === 'admin' ? (
+            <>
+              <h1 className="text-xl font-bold text-primary">{t('app.title')}</h1>
+              <p className="text-sm text-muted-foreground mt-1 flex items-center gap-1.5">
+                <Shield className="h-3.5 w-3.5 text-red-500" />
+                {i18n.language === 'en' ? 'Platform Admin' : '平台管理員'}
+              </p>
+            </>
+          ) : (
+            <>
+              <h1 className="text-xl font-bold text-primary">
+                {activeClient?.display_name || activeClient?.company_name || activeCompany?.name || t('app.title')}
+              </h1>
+              <p className="text-sm text-muted-foreground mt-1">
+                {activeClient ? (activeCompany?.name || user?.company_name || 'Firm') : (activeCompany?.domain || user?.company_name || user?.name)}
+              </p>
+            </>
+          )}
         </div>
       )}
 
@@ -250,9 +288,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
       {/* Navigation */}
       <nav className={`flex-1 space-y-0.5 overflow-y-auto ${collapsed ? 'p-0' : 'p-2'}`}>
-        {navGroups.map((group, gi) => {
+        {(user?.role === 'admin' ? adminNavGroups : navGroups).map((group, gi) => {
+          const activeNavGroups = user?.role === 'admin' ? adminNavGroups : navGroups;
           const visibleItems = group.items.filter(item => {
             if ((item as any).hidden && !showAll) return false;
+            if (user?.role === 'admin') return true; // admin sidebar items are always visible
             if (item.key === 'firmManagement') return isFirmUser;
             if (item.key === 'applications') return user?.role === 'admin';
             if (item.key === 'userManagement') return ['admin', 'supervisor', 'accountant'].includes(user?.role || '');
@@ -271,6 +311,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   {group.label === 'fileProcessing' ? (i18n.language === 'en' ? 'FILE PROCESSING' : '文件處理') :
                    group.label === 'accounting' ? (i18n.language === 'en' ? 'ACCOUNTING' : '會計') :
                    group.label === 'firmManagement' ? (i18n.language === 'en' ? 'FIRM' : '會計師樓') :
+                   group.label === 'administration' ? (i18n.language === 'en' ? 'ADMINISTRATION' : '管理') :
                    group.label}
                 </div>
               )}
@@ -299,7 +340,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   </Link>
                 );
               })}
-              {!collapsed && gi < navGroups.length - 1 && group.label && visibleItems.length > 0 && (
+              {!collapsed && gi < activeNavGroups.length - 1 && group.label && visibleItems.length > 0 && (
                 <div className="mx-3 mt-2 border-b border-border/50" />
               )}
             </div>

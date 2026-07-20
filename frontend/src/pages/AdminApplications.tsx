@@ -90,10 +90,12 @@ export default function AdminApplications() {
       </div>
 
       {/* Approved credentials popup */}
-      {approvedCreds && (
+      {approvedCreds && (() => {
+        const credText = `Email: ${approvedCreds.email}\nTemporary Password: ${approvedCreds.temp_password}\nLogin URL: https://sme.techforliving.net/login\n\nPlease change your password on first login.`;
+        return (
         <div className="bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded-xl p-5">
           <div className="flex items-start justify-between">
-            <div>
+            <div className="flex-1">
               <div className="font-semibold text-green-800 dark:text-green-300 mb-1">
                 ✅ {approvedCreds.company} — Account Created
               </div>
@@ -103,7 +105,24 @@ export default function AdminApplications() {
               <div className="bg-white dark:bg-green-900/20 rounded-lg p-3 font-mono text-sm space-y-1 border border-green-200">
                 <div>Email: <strong>{approvedCreds.email}</strong></div>
                 <div>Temporary Password: <strong>{approvedCreds.temp_password}</strong></div>
-                <div>Login URL: <strong>https://1ef6f9fa.opcc-crm.pages.dev/login</strong></div>
+                <div>Login URL: <strong>https://sme.techforliving.net/login</strong></div>
+              </div>
+              <div className="flex gap-2 mt-3">
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(credText);
+                    alert('Credentials copied to clipboard! You can paste them in WhatsApp or email.');
+                  }}
+                  className="bg-green-600 text-white px-4 py-1.5 rounded-md text-sm font-medium hover:bg-green-700"
+                >
+                  📋 Copy Credentials
+                </button>
+                <a
+                  href={`mailto:${approvedCreds.email}?subject=Your Tech Connect SME Account&body=${encodeURIComponent(credText)}`}
+                  className="border border-green-400 text-green-700 px-4 py-1.5 rounded-md text-sm font-medium hover:bg-green-100"
+                >
+                  ✉️ Send via Email
+                </a>
               </div>
             </div>
             <button
@@ -114,7 +133,8 @@ export default function AdminApplications() {
             </button>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Filter tabs */}
       <div className="flex gap-1 border-b border-border">

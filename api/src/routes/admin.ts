@@ -17,8 +17,7 @@ admin.get('/users', async (c) => {
     `SELECT u.id, u.email, u.name, u.company_name, u.role, u.created_at,
             (SELECT COUNT(*) FROM customers WHERE user_id = u.id) as customer_count,
             (SELECT COUNT(*) FROM invoices WHERE user_id = u.id) as invoice_count,
-            (SELECT COUNT(*) FROM quotations WHERE user_id = u.id) as quotation_count,
-            (SELECT d.domain FROM domains d WHERE d.user_id = u.id AND d.is_primary = 1) as primary_domain
+            (SELECT COUNT(*) FROM quotations WHERE user_id = u.id) as quotation_count
      FROM users u ORDER BY u.created_at DESC`
   ).all();
   return c.json({ data: rows.results });
@@ -64,34 +63,42 @@ admin.post('/onboard', async (c) => {
   if (adminUser.role !== 'admin') return c.json({ error: 'Admin only' }, 403);
 
   const body = await c.req.json();
-  const { domain, company_name, email, password, name } = body;
-  if (!domain || !company_name || !email || !password) {
-    return c.json({ error: 'Missing required fields: domain, company_name, email, password' }, 400);
+  const { domain, company_name, email, name } = body;
+  if (!domain || !company_name || !email) {
+    return c.json({ error: 'Missing required fields: domain, company_name, email' }, 400);
   }
   const db = c.env.DB;
   const steps: string[] = [];
 
-  // 1. Create user
+  // Check email not already registered
+  const existingUser = await db.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
+  if (existingUser) return c.json({ error: 'This email is already registered.' }, 409);
+
+  // Auto-generate secure temporary password
+  const tempPassword = `TCS${Math.random().toString(36).slice(2, 8).toUpperCase()}1!`;
+
+  // 1. Create user as SUPERVISOR (not admin — only the platform owner is admin)
   const userId = `u-${uuidv4().slice(0, 8)}`;
-  const passwordHash = await hash(password, 10);
+  const passwordHash = await hash(tempPassword, 10);
   await db.prepare(
-    'INSERT INTO users (id, email, password_hash, name, company_name, role) VALUES (?,?,?,?,?,?)'
-  ).bind(userId, email, passwordHash, name || company_name, company_name, 'admin').run();
-  steps.push('✅ 用戶已創建');
+    `INSERT INTO users (id, email, password_hash, name, company_name, role, status, must_change_password, permission_tier)
+     VALUES (?,?,?,?,?,?, 'active', 1, 'higher')`
+  ).bind(userId, email, passwordHash, name || company_name, company_name, 'supervisor').run();
+  steps.push('User account created (supervisor)');
 
   // 2. Create company_settings  
   await db.prepare(
     `INSERT OR REPLACE INTO company_settings (user_id, name, email, website, address)
      VALUES (?, ?, ?, ?, ?)`
   ).bind(userId, company_name, email, `https://${domain}`, 'Hong Kong').run();
-  steps.push('✅ 公司資料已設定');
+  steps.push('Company settings configured');
 
   // 3. Insert domain mapping
   const dmId = `dm-${uuidv4().slice(0, 8)}`;
   await db.prepare(
     'INSERT INTO domains (id, user_id, domain, is_primary) VALUES (?,?,?,1)'
   ).bind(dmId, userId, domain).run();
-  steps.push('✅ 域名已映射');
+  steps.push('Domain mapping created');
 
   // 4. Try Cloudflare API: DNS + Pages domain
   const cfToken = c.env.CF_API_TOKEN || '';
@@ -107,8 +114,8 @@ admin.post('/onboard', async (c) => {
         body: JSON.stringify({ type: 'CNAME', name: domain.split('.')[0], content: 'oppc-crm.pages.dev', ttl: 1, proxied: true }),
       });
       const dnsJson: any = await dnsRes.json();
-      if (dnsJson.success) steps.push('✅ DNS CNAME 已創建');
-      else steps.push(`⚠️ DNS: ${dnsJson.errors?.[0]?.message || 'unknown error'}`);
+      if (dnsJson.success) steps.push('DNS CNAME created');
+      else steps.push(`DNS warning: ${dnsJson.errors?.[0]?.message || 'unknown error'}`);
     } catch (e: any) { steps.push(`⚠️ DNS failed: ${e.message}`); }
 
     // Pages domain
@@ -119,18 +126,18 @@ admin.post('/onboard', async (c) => {
         body: JSON.stringify({ name: domain }),
       });
       const pagesJson: any = await pagesRes.json();
-      if (pagesJson.success) steps.push('✅ Pages 域名已添加');
-      else steps.push(`⚠️ Pages: ${pagesJson.errors?.[0]?.message || 'unknown error'}`);
+      if (pagesJson.success) steps.push('Pages domain added');
+      else steps.push(`Pages warning: ${pagesJson.errors?.[0]?.message || 'unknown error'}`);
     } catch (e: any) { steps.push(`⚠️ Pages failed: ${e.message}`); }
   } else {
-    steps.push('ℹ️ 未設定 CF_API_TOKEN，DNS/Pages 需手動添加');
+    steps.push('CF_API_TOKEN not configured. DNS/Pages must be added manually.');
   }
 
   return c.json({
     success: true,
     user: { id: userId, email, name: name || company_name, company: company_name },
     domain: `https://${domain}`,
-    password,
+    temp_password: tempPassword,
     steps,
   }, 201);
 });
@@ -187,7 +194,7 @@ admin.post('/applications/:id/approve', async (c) => {
   ).bind(adminUser.id, userId, appId).run();
 
   // Send welcome email (implement with your email provider)
-  const loginUrl = `https://${c.req.header('host') || 'opcc-crm.pages.dev'}/login`;
+  const loginUrl = 'https://sme.techforliving.net/login';
   try {
     if (c.env.RESEND_API_KEY) {
       await fetch('https://api.resend.com/emails', {
@@ -348,8 +355,8 @@ admin.get('/tenants/:userId/summary', async (c) => {
 
   const counts: Record<string, number> = {};
   const countTables = ['customers','suppliers','products','invoices','quotations',
-    'journal_entries','calendar_events','services','service_bookings',
-    'conversations','messages','domains','documents'];
+    'journal_entries','calendar_events',
+    'conversations','messages','documents'];
   for (const t of countTables) {
     try {
       const r = await db.prepare(`SELECT COUNT(*) as cnt FROM ${t} WHERE user_id = ?`)
@@ -359,6 +366,119 @@ admin.get('/tenants/:userId/summary', async (c) => {
   }
 
   return c.json({ user: userRow, counts });
+});
+
+// ── DEREGISTER COMPANY (delete all data + user) ──────────────────────────
+admin.delete('/tenants/:userId', async (c) => {
+  const adminUser = c.get('user');
+  if (adminUser.role !== 'admin') return c.json({ error: 'Admin only' }, 403);
+
+  const targetUserId = c.req.param('userId');
+  const db = c.env.DB;
+
+  // Verify user exists and is not admin
+  const targetUser = await db.prepare(
+    'SELECT id, email, name, company_name, role FROM users WHERE id = ?'
+  ).bind(targetUserId).first<{ id: string; email: string; name: string; company_name: string; role: string }>();
+
+  if (!targetUser) return c.json({ error: 'User not found' }, 404);
+  if (targetUser.role === 'admin') return c.json({ error: 'Cannot delete admin accounts' }, 403);
+
+  const deleted: string[] = [];
+
+  // Delete all data in user-scoped tables (children first, then parents)
+  const tables = [
+    // Children first (foreign key dependents)
+    'journal_lines', 'invoice_items', 'quotation_items', 'purchase_order_items',
+    'service_order_items', 'chat_messages', 'bank_transactions',
+    // Then parents
+    'journal_entries', 'accounts', 'bank_statements', 'invoices',
+    'expense_receipts', 'file_records', 'customers', 'suppliers',
+    'products', 'quotations', 'purchase_orders', 'service_orders',
+    'chat_sessions', 'calendar_events', 'messages', 'conversations',
+    'company_settings', 'audit_log', 'fixed_assets', 'closed_periods',
+    'bank_reconciliations', 'todos', 'documents', 'subscriptions',
+  ];
+
+  for (const table of tables) {
+    try {
+      const result = await db.prepare(`DELETE FROM ${table} WHERE user_id = ?`).bind(targetUserId).run();
+      if ((result?.meta?.changes || 0) > 0) deleted.push(`${table}: ${result.meta.changes} rows`);
+    } catch { /* table may not exist */ }
+  }
+
+  // Clear application references to this user
+  try {
+    await db.prepare(
+      `UPDATE applications SET created_user_id = NULL WHERE created_user_id = ?`
+    ).bind(targetUserId).run();
+  } catch { /* ignore */ }
+
+  // Delete staff accounts under this company
+  try {
+    await db.prepare('PRAGMA foreign_keys = OFF').run();
+  } catch { /* D1 might not support this */ }
+
+  try {
+    const staffResult = await db.prepare('DELETE FROM users WHERE parent_user_id = ?').bind(targetUserId).run();
+    if ((staffResult?.meta?.changes || 0) > 0) deleted.push(`staff accounts: ${staffResult.meta.changes}`);
+  } catch { /* ignore */ }
+
+  // Delete the user account itself
+  try {
+    await db.prepare('DELETE FROM users WHERE id = ?').bind(targetUserId).run();
+    deleted.push('user account deleted');
+  } catch {
+    // If FK still blocks, null out references and retry
+    try {
+      await db.prepare(`UPDATE users SET parent_user_id = NULL WHERE parent_user_id = ?`).bind(targetUserId).run();
+      await db.prepare('DELETE FROM users WHERE id = ?').bind(targetUserId).run();
+      deleted.push('user account deleted (retry)');
+    } catch (e: any) {
+      deleted.push(`user delete failed: ${e?.message || 'FK constraint'}`);
+    }
+  }
+
+  try {
+    await db.prepare('PRAGMA foreign_keys = ON').run();
+  } catch { /* ignore */ }
+  try {
+    const fileRecords = await db.prepare(
+      'SELECT r2_key FROM file_records WHERE user_id = ?'
+    ).bind(targetUserId).all();
+    const r2Keys = (fileRecords.results || []).map((r: any) => r.r2_key).filter(Boolean);
+    for (const key of r2Keys) {
+      try { await c.env.FILE_BUCKET.delete(key); } catch { /* ignore */ }
+    }
+    if (r2Keys.length > 0) deleted.push(`R2 files: ${r2Keys.length}`);
+  } catch { /* ignore */ }
+
+  // Delete the user account itself
+  await db.prepare('DELETE FROM users WHERE id = ?').bind(targetUserId).run();
+  deleted.push('user account deleted');
+
+  // Mark any related applications as deregistered
+  try {
+    await db.prepare(
+      `UPDATE applications SET status = 'deregistered', updated_at = datetime('now') WHERE email = ?`
+    ).bind(targetUser.email).run();
+  } catch { /* ignore */ }
+
+  // Audit log (on admin's account since tenant is gone)
+  try {
+    await db.prepare(
+      'INSERT INTO audit_log (id, user_id, action, entity_type, entity_id, changes) VALUES (?, ?, ?, ?, ?, ?)'
+    ).bind(
+      `al-${crypto.randomUUID().slice(0, 8)}`, adminUser.id, 'deregister_company', 'user', targetUserId,
+      JSON.stringify({ company: targetUser.company_name, email: targetUser.email, deleted })
+    ).run();
+  } catch { /* ignore */ }
+
+  return c.json({
+    success: true,
+    message: `Company "${targetUser.company_name}" (${targetUser.email}) has been deregistered. All data has been permanently deleted.`,
+    deleted,
+  });
 });
 
 export { admin as adminRoutes };

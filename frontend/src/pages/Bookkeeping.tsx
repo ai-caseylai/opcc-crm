@@ -81,10 +81,18 @@ export default function Bookkeeping() {
   });
 
   const exportCSV = async () => {
-    const csv = await api(`/bookkeeping/export?format=csv&start_date=${startDate}&end_date=${endDate}`);
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = 'bookkeeping-export.csv'; a.click();
+    try {
+      const token = localStorage.getItem('token') || '';
+      const res = await fetch(`https://opcc-crm-api.ruhan-farhan.workers.dev/api/bookkeeping/export?format=csv&start_date=${startDate}&end_date=${endDate}`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (!res.ok) { alert('Export failed'); return; }
+      const csv = await res.text();
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = 'bookkeeping-export.csv'; a.click();
+      URL.revokeObjectURL(url);
+    } catch (e: any) { alert('Export error: ' + (e?.message || 'unknown')); }
   };
 
   function addLine() {
@@ -399,8 +407,8 @@ export default function Bookkeeping() {
       {/* Export Tab */}
       {tab === 'export' && (
         <div className="bg-card border rounded-xl p-6 space-y-4">
-          <h3 className="font-semibold">導出給審計師 Export for Auditor</h3>
-          <p className="text-sm text-muted-foreground">選擇日期範圍後導出 CSV 檔案</p>
+          <h3 className="font-semibold">{i18n.language === 'en' ? 'Export for Auditor' : '導出給審計師 Export for Auditor'}</h3>
+          <p className="text-sm text-muted-foreground">{i18n.language === 'en' ? 'Select a date range and export CSV file' : '選擇日期範圍後導出 CSV 檔案'}</p>
           <div className="flex gap-3 items-center">
             <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)}
               className="px-3 py-2 border rounded-md bg-background text-sm" />
@@ -410,7 +418,7 @@ export default function Bookkeeping() {
             {!isStaff && (
             <button onClick={exportCSV}
               className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm hover:opacity-90">
-              <Download className="h-4 w-4" /> 導出 CSV
+              <Download className="h-4 w-4" /> {i18n.language === 'en' ? 'Export CSV' : '導出 CSV'}
             </button>
             )}
           </div>

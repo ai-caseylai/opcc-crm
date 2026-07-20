@@ -4,10 +4,14 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 import { Users, Truck, FileText, FileSpreadsheet, TrendingUp, Calculator, CheckSquare, ArrowRight, Landmark, Receipt, Package } from 'lucide-react';
+import AdminDashboard from './AdminDashboard';
 
 export default function Dashboard() {
   const { t, i18n } = useTranslation();
   const { user } = useAuth();
+
+  // Admin gets a completely different dashboard
+  if (user?.role === 'admin') return <AdminDashboard />;
 
   const { data: customers } = useQuery({ queryKey: ['customers'], queryFn: () => api('/customers?limit=1') });
   const { data: suppliers } = useQuery({ queryKey: ['suppliers'], queryFn: () => api('/suppliers?limit=1') });
@@ -23,7 +27,7 @@ export default function Dashboard() {
   });
 
   const crmStats = [
-    { key: 'customers', value: invoiceCustomers?.total || 0, icon: Users, color: 'text-blue-600', label: i18n.language === 'en' ? 'Clients' : '客戶 Clients' },
+    { key: 'customers', value: customers?.total || 0, icon: Users, color: 'text-blue-600', label: i18n.language === 'en' ? 'Clients' : '客戶 Clients' },
     { key: 'suppliers', value: suppliers?.total || 0, icon: Truck, color: 'text-green-600', label: i18n.language === 'en' ? 'Suppliers' : '供應商 Suppliers' },
     { key: 'invoices', value: invoices?.total || 0, icon: FileText, color: 'text-orange-600', label: i18n.language === 'en' ? 'Invoices' : '發票 Invoices' },
     { key: 'quotations', value: quotations?.total || 0, icon: FileSpreadsheet, color: 'text-purple-600', label: i18n.language === 'en' ? 'Quotations' : '報價單 Quotations' },

@@ -58,39 +58,9 @@ auth.post('/apply', authRateLimiter, zValidator('json', applySchema), async (c) 
   }, 201);
 });
 
-// ── LEGACY REGISTER (kept for first-time admin setup only) ───────────────
-const registerSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(8).regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/, 'Password must contain uppercase, lowercase, and number'),
-  name: z.string().min(1),
-  company_name: z.string().optional(),
-});
-
-auth.post('/register', authRateLimiter, zValidator('json', registerSchema), async (c) => {
-  const { email, password, name, company_name } = c.req.valid('json');
-  const db = c.env.DB;
-  const jwtSecret = getJwtSecret(c.env);
-
-  const existing = await db.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
-  if (existing) return c.json({ error: 'Email already registered' }, 409);
-
-  const id = `u-${uuidv4().slice(0, 8)}`;
-  const passwordHash = await hash(password, 12);
-
-  // First user ever → admin; all others must go through /apply flow
-  const countRow = await db.prepare('SELECT COUNT(*) as cnt FROM users').first<{ cnt: number }>();
-  if ((countRow?.cnt || 0) > 0) {
-    return c.json({ error: 'Registration is by invitation only. Please use the Apply form.' }, 403);
-  }
-  const role = 'admin';
-
-  await db.prepare(
-    'INSERT INTO users (id, email, password_hash, name, company_name, role, status) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  ).bind(id, email, passwordHash, name, company_name || null, role, 'active').run();
-
-  const user: AuthUser = { id, email, name, role, company_name };
-  const token = sign(user, jwtSecret, { expiresIn: '24h' });
-  return c.json({ user, token }, 201);
+// ── LEGACY REGISTER (disabled — all registration goes through /apply + admin approval) ──
+auth.post('/register', authRateLimiter, async (c) => {
+  return c.json({ error: 'Registration is by invitation only. Please use the Apply form at /apply.' }, 403);
 });
 
 // ── LOGIN ────────────────────────────────────────────────────────────────

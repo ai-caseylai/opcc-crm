@@ -750,8 +750,8 @@ export default function BankStatementReview() {
               <button
                 onClick={() => {
                   if (confirm(i18n.language === 'en'
-                    ? 'Discard this statement? The extracted data will be permanently deleted.'
-                    : '放棄此月結單？提取的數據將被永久刪除。')) {
+                    ? 'Discard this statement? It will be moved to the Recycle Bin where it can be restored within 30 days.'
+                    : '放棄此月結單？將移至回收站，可在30天內還原。')) {
                     discardMut.mutate();
                   }
                 }}

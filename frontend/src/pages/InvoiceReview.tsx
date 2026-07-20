@@ -52,6 +52,7 @@ export default function InvoiceReview() {
       invoice_number: invoiceData.receipt_number || invoiceData.invoice_number || '',
       vendor_name: invoiceData.vendor_name || '',
       customer_id: invoiceData.customer_id || '',
+      supplier_id: invoiceData.supplier_id || '',
       issue_date: invoiceData.issue_date || '',
       due_date: invoiceData.due_date || '',
       currency: invoiceData.currency || 'HKD',
@@ -171,6 +172,26 @@ export default function InvoiceReview() {
     : (i18n.language === 'en' ? 'Invoice' : 'Invoice 發票');
   const customers: any[] = invoiceData?.customers || [];
 
+  // For incoming invoices, also fetch suppliers for the link dropdown
+  const { data: suppliersData } = useQuery({
+    queryKey: ['suppliers-list'],
+    queryFn: () => api('/suppliers?limit=200'),
+    enabled: isIncomingInvoice,
+  });
+  const suppliers: any[] = (suppliersData?.data || []) as any[];
+
+  // Auto-link supplier by matching vendor_name
+  useEffect(() => {
+    if (!isIncomingInvoice || !form || !suppliers.length || form.supplier_id) return;
+    const vendorName = (form.vendor_name || '').toLowerCase().replace(/\b(limited|ltd|inc|co\.?|company|corp)\b/g, '').replace(/[^a-z0-9]/g, '').trim();
+    if (!vendorName) return;
+    const match = suppliers.find((s: any) => {
+      const n = (s.name || '').toLowerCase().replace(/\b(limited|ltd|inc|co\.?|company|corp)\b/g, '').replace(/[^a-z0-9]/g, '').trim();
+      return n === vendorName || n.includes(vendorName) || vendorName.includes(n);
+    });
+    if (match) setForm((prev: any) => prev ? { ...prev, supplier_id: match.id } : prev);
+  }, [suppliers, form?.vendor_name, isIncomingInvoice]);
+
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)]">
       {/* ── Top bar ── */}
@@ -283,13 +304,23 @@ export default function InvoiceReview() {
                     : (i18n.language === 'en' ? 'Link to Customer Record' : 'Link to Customer Record 關聯客戶')}
                   {' '}<span className="text-muted-foreground">({i18n.language === 'en' ? 'optional' : '可選'})</span>
                 </label>
-                <select value={form.customer_id} onChange={(e) => setForm({ ...form, customer_id: e.target.value })}
-                  className="w-full px-2 py-1.5 border rounded text-sm bg-background">
-                  <option value="">{i18n.language === 'en' ? '— Select customer —' : '— 選擇客戶 —'}</option>
-                  {customers.map((c: any) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
+                {isIncomingInvoice ? (
+                  <select value={form.supplier_id || ''} onChange={(e) => setForm({ ...form, supplier_id: e.target.value })}
+                    className="w-full px-2 py-1.5 border rounded text-sm bg-background">
+                    <option value="">{i18n.language === 'en' ? '— Select supplier —' : '— 選擇供應商 —'}</option>
+                    {suppliers.map((s: any) => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <select value={form.customer_id} onChange={(e) => setForm({ ...form, customer_id: e.target.value })}
+                    className="w-full px-2 py-1.5 border rounded text-sm bg-background">
+                    <option value="">{i18n.language === 'en' ? '— Select customer —' : '— 選擇客戶 —'}</option>
+                    {customers.map((c: any) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                )}
                 <p className="text-[10px] text-muted-foreground mt-0.5">
                   {i18n.language === 'en'
                     ? "If the vendor is a new contact, leave blank — they'll be created automatically."

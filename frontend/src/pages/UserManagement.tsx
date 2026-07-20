@@ -6,7 +6,9 @@
  */
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
+import { useAuth } from '../contexts/AuthContext';
 
 interface StaffUser {
   id: string;
@@ -15,9 +17,98 @@ interface StaffUser {
   role: string;
   status: string;
   created_at: string;
+  company_name?: string;
+  invoice_count?: number;
 }
 
 export default function UserManagement() {
+  const { user } = useAuth();
+  // Admin sees all platform users; others see their own staff
+  if (user?.role === 'admin') return <AdminUserManagement />;
+  return <CompanyStaffManagement />;
+}
+
+// ── Admin: all users across the platform ──
+function AdminUserManagement() {
+  const { i18n } = useTranslation();
+  const en = i18n.language === 'en';
+  const [search, setSearch] = useState('');
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['admin-users'],
+    queryFn: () => api('/admin/users'),
+  });
+
+  const allUsers: StaffUser[] = (data?.data || []) as StaffUser[];
+  const filtered = allUsers.filter(u => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return u.name?.toLowerCase().includes(q) || u.email?.toLowerCase().includes(q) ||
+           (u.company_name || '').toLowerCase().includes(q);
+  });
+
+  const roleBadge = (role: string) => {
+    const map: Record<string, string> = {
+      admin: 'bg-red-100 text-red-700',
+      supervisor: 'bg-blue-100 text-blue-700',
+      accountant: 'bg-purple-100 text-purple-700',
+      staff: 'bg-gray-100 text-gray-600',
+      viewer: 'bg-gray-50 text-gray-500',
+    };
+    return `inline-block px-2 py-0.5 rounded text-xs font-medium ${map[role] || 'bg-gray-100 text-gray-600'}`;
+  };
+
+  return (
+    <div className="max-w-5xl space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold">{en ? 'All Platform Users' : '所有平台用戶'}</h2>
+          <p className="text-sm text-muted-foreground">
+            {en ? `${allUsers.length} users across all companies` : `所有公司共 ${allUsers.length} 個用戶`}
+          </p>
+        </div>
+        <input
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder={en ? 'Search users...' : '搜尋用戶...'}
+          className="border rounded-md px-3 py-1.5 text-sm bg-background w-56"
+        />
+      </div>
+
+      {isLoading ? (
+        <p className="text-sm text-muted-foreground">{en ? 'Loading...' : '載入中...'}</p>
+      ) : (
+        <div className="border rounded-lg overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/50">
+              <tr>
+                <th className="text-left px-4 py-2.5 text-xs font-medium">{en ? 'Name' : '名稱'}</th>
+                <th className="text-left px-4 py-2.5 text-xs font-medium">{en ? 'Email' : '電郵'}</th>
+                <th className="text-left px-4 py-2.5 text-xs font-medium">{en ? 'Company' : '公司'}</th>
+                <th className="text-left px-4 py-2.5 text-xs font-medium">{en ? 'Role' : '角色'}</th>
+                <th className="text-left px-4 py-2.5 text-xs font-medium">{en ? 'Created' : '建立'}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map(u => (
+                <tr key={u.id} className="border-t hover:bg-muted/30">
+                  <td className="px-4 py-3 font-medium">{u.name}</td>
+                  <td className="px-4 py-3 text-muted-foreground">{u.email}</td>
+                  <td className="px-4 py-3 text-muted-foreground">{u.company_name || '-'}</td>
+                  <td className="px-4 py-3"><span className={roleBadge(u.role)}>{u.role}</span></td>
+                  <td className="px-4 py-3 text-xs text-muted-foreground">{u.created_at?.slice(0, 10)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Company: staff management (original) ──
+function CompanyStaffManagement() {
   const queryClient = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({ name: '', email: '', role: 'staff' as 'staff' | 'viewer' });

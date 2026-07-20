@@ -30,6 +30,7 @@ import BankStatementReview from './pages/BankStatementReview';
 import Apply from './pages/Apply';
 import UserManagement from './pages/UserManagement';
 import AdminApplications from './pages/AdminApplications';
+import AdminCompanyView from './pages/AdminCompanyView';
 import AuditLog from './pages/AuditLog';
 import Reconciliation from './pages/Reconciliation';
 import RecycleBin from './pages/RecycleBin';
@@ -112,6 +113,7 @@ function AppRoutes() {
       <Route path="/register" element={<Apply />} />
       <Route path="/settings/users" element={<ProtectedRoute><UserManagement /></ProtectedRoute>} />
       <Route path="/admin/applications" element={<ProtectedRoute><AdminApplications /></ProtectedRoute>} />
+      <Route path="/admin/company/:userId" element={<ProtectedRoute><AdminCompanyView /></ProtectedRoute>} />
       <Route path="/audit-log" element={<ProtectedRoute><AuditLog /></ProtectedRoute>} />
       <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
       <Route path="/compliance" element={<ProtectedRoute><FeatureGuard><Compliance /></FeatureGuard></ProtectedRoute>} />

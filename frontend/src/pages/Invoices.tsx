@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import { api, WORKER_API_BASE } from '../lib/api';
 import { Plus, Search, FileText, Eye, Trash2, Download, Pencil } from 'lucide-react';
 
@@ -29,10 +30,13 @@ async function downloadInvoicePDF(invoiceId: string, invoiceNumber: string) {
 }
 
 export default function Invoices() {
+  const { i18n } = useTranslation();
+  const en = i18n.language === 'en';
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
+  const [directionFilter, setDirectionFilter] = useState<'all' | 'outgoing' | 'incoming'>('all');
   const [page, setPage] = useState(1);
   const [showForm, setShowForm] = useState(false);
   const [viewId, setViewId] = useState<string | null>(null);
@@ -100,7 +104,13 @@ export default function Invoices() {
     createMut.mutate(form);
   }
 
-  const invoices = data?.data || [];
+  const allInvoices = data?.data || [];
+  const invoices = directionFilter === 'all' ? allInvoices
+    : allInvoices.filter((inv: any) =>
+        directionFilter === 'incoming'
+          ? (inv.direction === 'incoming' || inv.direction === 'expense')
+          : (inv.direction === 'outgoing' || inv.direction === 'income')
+      );
   const statusLabel = (s: string) => {
     const labels: Record<string, string> = { draft: '草稿', sent: '應收', paid: '已收', overdue: '逾期未收', cancelled: '已取消' };
     return labels[s] || s;
@@ -114,28 +124,58 @@ export default function Invoices() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold">發票 Invoices</h2>
-          <p className="text-muted-foreground mt-1">管理銷售發票</p>
+          <h2 className="text-2xl font-bold">{en ? 'Invoices' : '發票 Invoices'}</h2>
+          <p className="text-muted-foreground mt-1">{en ? 'Manage sales invoices and supplier bills' : '管理銷售發票和供應商帳單'}</p>
         </div>
         <button onClick={() => setShowForm(true)}
           className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:opacity-90">
-          <Plus className="h-4 w-4" /> 建立發票
+          <Plus className="h-4 w-4" /> {en ? 'Create Invoice' : '建立發票'}
         </button>
+      </div>
+
+      {/* Direction tabs: All / Receivable (AR) / Payable (AP) */}
+      <div className="flex gap-1 bg-muted/50 rounded-lg p-1 w-fit">
+        {([
+          { key: 'all', label: en ? 'All Invoices' : '全部' },
+          { key: 'outgoing', label: en ? 'Receivable (AR)' : '應收帳款 AR' },
+          { key: 'incoming', label: en ? 'Payable (AP)' : '應付帳款 AP' },
+        ] as const).map(t => (
+          <button
+            key={t.key}
+            onClick={() => { setDirectionFilter(t.key); setPage(1); }}
+            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+              directionFilter === t.key
+                ? 'bg-background shadow-sm text-foreground'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            {t.label}
+            {t.key !== 'all' && (
+              <span className="ml-1.5 text-xs text-muted-foreground">
+                ({allInvoices.filter((inv: any) =>
+                  t.key === 'incoming'
+                    ? (inv.direction === 'incoming' || inv.direction === 'expense')
+                    : (inv.direction === 'outgoing' || inv.direction === 'income')
+                ).length})
+              </span>
+            )}
+          </button>
+        ))}
       </div>
 
       <div className="flex gap-3">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
           <input value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-            placeholder="搜尋發票..." className="w-full pl-10 pr-4 py-2 border rounded-md bg-background text-sm" />
+            placeholder={en ? 'Search invoices...' : '搜尋發票...'} className="w-full pl-10 pr-4 py-2 border rounded-md bg-background text-sm" />
         </div>
         <select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}
           className="px-3 py-2 border rounded-md bg-background text-sm">
-          <option value="">全部狀態</option>
-          <option value="draft">草稿</option>
-          <option value="sent">應收</option>
-          <option value="paid">已收</option>
-          <option value="overdue">逾期未收</option>
+          <option value="">{en ? 'All Status' : '全部狀態'}</option>
+          <option value="draft">{en ? 'Draft' : '草稿'}</option>
+          <option value="sent">{en ? 'Receivable' : '應收'}</option>
+          <option value="paid">{en ? 'Paid' : '已收'}</option>
+          <option value="overdue">{en ? 'Overdue' : '逾期未收'}</option>
         </select>
       </div>
 
@@ -145,12 +185,13 @@ export default function Invoices() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-muted/50">
-                <th className="text-left p-3">發票號碼</th>
-                <th className="text-left p-3 hidden md:table-cell">客戶</th>
-                <th className="text-left p-3">狀態</th>
-                <th className="text-right p-3 hidden lg:table-cell">金額</th>
-                <th className="text-left p-3 hidden lg:table-cell">日期</th>
-                <th className="text-right p-3">操作</th>
+                <th className="text-left p-3">{en ? 'Invoice No.' : '發票號碼'}</th>
+                <th className="text-left p-3 hidden md:table-cell">{en ? 'Customer / Supplier' : '客戶/供應商'}</th>
+                <th className="text-left p-3 w-16">{en ? 'Type' : '類型'}</th>
+                <th className="text-left p-3">{en ? 'Status' : '狀態'}</th>
+                <th className="text-right p-3 hidden lg:table-cell">{en ? 'Amount' : '金額'}</th>
+                <th className="text-left p-3 hidden lg:table-cell">{en ? 'Date' : '日期'}</th>
+                <th className="text-right p-3">{en ? 'Actions' : '操作'}</th>
               </tr>
             </thead>
             <tbody>
@@ -158,6 +199,15 @@ export default function Invoices() {
                 <tr key={inv.id} className="border-b hover:bg-muted/30">
                   <td className="p-3 font-medium">{inv.invoice_number}</td>
                   <td className="p-3 hidden md:table-cell">{inv.direction === 'incoming' ? (inv.vendor_name || inv.customer_name || '-') : (inv.customer_name || '-')}</td>
+                  <td className="p-3">
+                    <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
+                      inv.direction === 'incoming' || inv.direction === 'expense'
+                        ? 'bg-orange-100 text-orange-700'
+                        : 'bg-blue-100 text-blue-700'
+                    }`}>
+                      {(inv.direction === 'incoming' || inv.direction === 'expense') ? (en ? 'AP' : '應付') : (en ? 'AR' : '應收')}
+                    </span>
+                  </td>
                   <td className="p-3"><span className={statusBadge(inv.status)}>{statusLabel(inv.status)}</span></td>
                   <td className="p-3 text-right hidden lg:table-cell">{inv.currency} {inv.total?.toLocaleString()}</td>
                   <td className="p-3 hidden lg:table-cell">{inv.issue_date}</td>
