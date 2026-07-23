@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api, WORKER_API_BASE } from '../lib/api';
 import { Upload, Download, Trash2, Search, Pencil, X, Check, File, FileText, FileSpreadsheet, Image, FolderOpen, Folder, ChevronRight, ChevronDown, Zap } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 function formatSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -195,6 +196,8 @@ export default function FileStorage() {
   const [editFolder, setEditFolder] = useState('');
   const [editDesc, setEditDesc] = useState('');
 
+  const navigate = useNavigate();
+
   const { data: files, isLoading } = useQuery({
     queryKey: ['file-storage', filterFolder, searchQ],
     queryFn: () => {
@@ -213,54 +216,51 @@ export default function FileStorage() {
 
   const uploadMut = useMutation({
     mutationFn: (body: unknown) => api('/file-storage/upload', { method: 'POST', body, baseUrl: WORKER_API_BASE }),
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['file-storage'] });
       queryClient.invalidateQueries({ queryKey: ['file-storage-folders'] });
       setDescription('');
+      // Auto-import: if invoice or bank statement, redirect to review page
+      if (data?.category === 'invoice' || data?.category === 'receipt') {
+        api('/file-storage/' + data.id + '/import-invoice', { method: 'POST' })
+          .then((res: any) => {
+            queryClient.invalidateQueries({ queryKey: ['invoices'] });
+            navigate('/invoices/review/' + res.invoice_id);
+          })
+          .catch(() => {}); // already handled by manual button
+      } else if (data?.category === 'bank_statement') {
+        api('/file-storage/' + data.id + '/import-statement', { method: 'POST' })
+          .then((res: any) => {
+            queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
+            navigate('/bank-statements/review/' + res.statement_id);
+          })
+          .catch(() => {});
+      }
     },
     onError: (err: any) => {
       alert(`上傳失敗：${err?.message || err?.error || '未知錯誤'}`);
       setUploading(false);
     },
   });
-
-  const deleteMut = useMutation({
-    mutationFn: (id: string) => api(`/file-storage/${id}`, { method: 'DELETE' }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['file-storage'] });
-      queryClient.invalidateQueries({ queryKey: ['file-storage-folders'] });
-    },
-  });
-
-  const updateMut = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: unknown }) => api(`/file-storage/${id}`, { method: 'PATCH', body }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['file-storage'] });
-      queryClient.invalidateQueries({ queryKey: ['file-storage-folders'] });
-      setEditingId(null);
-    },
-  });
-
-  const autoMatchMut = useMutation({
-    mutationFn: () => api('/file-storage/auto-match-invoices', { method: 'POST' }),
-    onSuccess: (data: any) => {
-      queryClient.invalidateQueries({ queryKey: ['file-storage'] });
-      alert(`配對完成：${data.matched?.length || 0} 筆成功，${data.unmatched || 0} 筆未配對`);
-    },
-  });
-
   const importStmtMut = useMutation({
     mutationFn: (id: string) => api(`/file-storage/${id}/import-statement`, { method: 'POST' }),
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['file-storage'] });
       queryClient.invalidateQueries({ queryKey: ['file-storage-folders'] });
       queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
-      alert(`已匯入銀行月結單！\n交易筆數：${data.transactions_count || 0}\n銀行：${data.bank_name || '未知'}`);
+      // Redirect to review page so user can check/edit transactions
+      if (data.ocr_failed) {
+        navigate('/bank-statements/review/' + data.statement_id);
+      } else {
+        navigate('/bank-statements/review/' + data.statement_id);
+      }
     },
     onError: (err: any) => {
       alert(`匯入失敗：${err?.message || err?.error || '未知錯誤'}`);
     },
   });
+
+  
 
   const importInvMut = useMutation({
     mutationFn: (id: string) => api(`/file-storage/${id}/import-invoice`, { method: 'POST' }),
@@ -268,12 +268,8 @@ export default function FileStorage() {
       queryClient.invalidateQueries({ queryKey: ['file-storage'] });
       queryClient.invalidateQueries({ queryKey: ['file-storage-folders'] });
       queryClient.invalidateQueries({ queryKey: ['invoices'] });
-      if (data.ocr_failed) {
-        alert('已建立發票草稿。\nOCR 無法自動辨識，請在手動審查頁面輸入資料。');
-        window.location.href = '/invoices/review/' + data.invoice_id;
-      } else {
-        alert(`已匯入發票！\n發票號碼：${data.invoice_number || 'DRAFT'}\n品項數：${data.items_count || 0}`);
-      }
+      // Always redirect to review page so user can check/edit data
+      navigate('/invoices/review/' + data.invoice_id);
     },
     onError: (err: any) => {
       alert(`匯入失敗：${err?.message || err?.error || '未知錯誤'}`);
@@ -341,6 +337,34 @@ export default function FileStorage() {
       }
     }
   };
+
+
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => api(`/file-storage/${id}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['file-storage'] });
+      queryClient.invalidateQueries({ queryKey: ['file-storage-folders'] });
+    },
+  });
+
+  const updateMut = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: unknown }) => api(`/file-storage/${id}`, { method: 'PATCH', body }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['file-storage'] });
+      queryClient.invalidateQueries({ queryKey: ['file-storage-folders'] });
+      setEditingId(null);
+    },
+  });
+
+  const autoMatchMut = useMutation({
+    mutationFn: () => api('/file-storage/auto-match-invoices', { method: 'POST' }),
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ['file-storage'] });
+      alert(`配對完成：${data.matched?.length || 0} 筆成功，${data.unmatched || 0} 筆未配對`);
+    },
+  });
+
+  
 
   const directionMut = useMutation({
     mutationFn: ({ id, direction }: { id: string; direction: string }) =>
