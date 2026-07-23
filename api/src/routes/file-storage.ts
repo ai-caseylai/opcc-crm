@@ -66,34 +66,45 @@ async function importStatementFromFile(
   let ocrText = fileRow.ocr_text || '';
   if (!ocrText || ocrText.length < 20) {
     const obj = await fileBucket.get(fileRow.r2_key);
-    if (obj && glmApiKey) {
-      try {
-        const buffer = await obj.arrayBuffer();
-        const bytes = new Uint8Array(buffer);
-        let binary = '';
-        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-        const base64 = btoa(binary);
-        const mimeType = fileRow.file_type || 'application/pdf';
-        console.log('[OCR-DEBUG] Calling GLM, file size:', buffer.byteLength, 'mime:', mimeType);
-        const glmResp = await fetch('https://api.z.ai/api/paas/v4/layout_parsing', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${glmApiKey}` },
-          body: JSON.stringify({ model: 'glm-ocr', file: `data:${mimeType};base64,${base64}` }),
-        });
-        console.log('[OCR-DEBUG] GLM response status:', glmResp.status);
-        if (glmResp.ok) {
-          const glmData = await glmResp.json() as any;
-          ocrText = typeof glmData === 'string' ? glmData : JSON.stringify(glmData);
-          console.log('[OCR-DEBUG] GLM ocrText length:', ocrText.length, 'preview:', ocrText.slice(0, 200));
-        } else {
-          const errBody = await glmResp.text();
-          console.log('[OCR-DEBUG] GLM error body:', errBody.slice(0, 500));
+    if (obj) {
+      const buffer = await obj.arrayBuffer();
+      const mimeType = fileRow.file_type || 'application/pdf';
+
+      // Attempt 1: GLM-OCR — best for all PDFs
+      if (glmApiKey) {
+        try {
+          const bytes = new Uint8Array(buffer);
+          let binary = '';
+          for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+          const base64 = btoa(binary);
+          const glmResp = await fetch('https://api.z.ai/api/paas/v4/layout_parsing', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${glmApiKey}` },
+            body: JSON.stringify({ model: 'glm-ocr', file: `data:${mimeType};base64,${base64}` }),
+          });
+          if (glmResp.ok) {
+            const glmData = await glmResp.json() as any;
+            ocrText = typeof glmData === 'string' ? glmData : JSON.stringify(glmData);
+          }
+        } catch {}
+        if (ocrText) {
+          await db.prepare("UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ?").bind(ocrText, fileId).run();
         }
-      } catch (e: any) {
-        console.log('[OCR-DEBUG] GLM exception:', e?.message || String(e));
       }
-      if (ocrText) {
-        await db.prepare("UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ?").bind(ocrText, fileId).run();
+
+      // Attempt 2: Cloudflare AI toMarkdown — fast free fallback
+      if ((!ocrText || ocrText.length < 20) && ai) {
+        try {
+          const mdResult = await (ai as any).toMarkdown([{
+            name: fileRow.original_name || fileRow.filename || 'statement.pdf',
+            blob: new Blob([buffer], { type: mimeType }),
+          }]);
+          const candidate = Array.isArray(mdResult) ? mdResult.map((r: any) => r?.data || r?.content || '').join('\n') : String(mdResult || '');
+          if (candidate && candidate.length > 20) ocrText = candidate;
+        } catch {}
+        if (ocrText && ocrText.length >= 20) {
+          await db.prepare("UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ?").bind(ocrText, fileId).run();
+        }
       }
     }
   }
@@ -1766,27 +1777,8 @@ files.post('/:id/import-document', async (c) => {
       const buffer = await obj.arrayBuffer();
       const mimeType = fileRow.file_type || 'application/pdf';
 
-      // Attempt 1: Cloudflare AI Workers toMarkdown — best for text-layer PDFs (fast, free)
-      if (c.env.AI) {
-        try {
-          const mdResult = await (c.env.AI as any).toMarkdown([{
-            name: fileRow.original_name || fileRow.filename || 'file.pdf',
-            blob: new Blob([buffer], { type: mimeType }),
-          }]);
-          const candidate = Array.isArray(mdResult)
-            ? mdResult.map((r: any) => r?.data || r?.content || '').join('\n')
-            : String(mdResult || '');
-          if (candidate && candidate.length > 20) {
-            ocrText = candidate;
-            await db.prepare("UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ?").bind(ocrText, fileId).run();
-          }
-        } catch (e: any) {
-          console.log('[SMART-IMPORT] toMarkdown failed:', e?.message || e);
-        }
-      }
-
-      // Attempt 2: GLM-OCR — for scanned/image PDFs
-      if ((!ocrText || ocrText.length < 20) && c.env.GLM_API_KEY) {
+      // Attempt 1: GLM-OCR — best for all PDFs (tables, Chinese, scanned docs)
+      if (c.env.GLM_API_KEY) {
         try {
           const bytes = new Uint8Array(buffer);
           let binary = '';
@@ -1807,6 +1799,25 @@ files.post('/:id/import-document', async (c) => {
           }
         } catch (e: any) {
           console.log('[SMART-IMPORT] GLM OCR error:', e?.message || e);
+        }
+      }
+
+      // Attempt 2: Cloudflare AI toMarkdown — fast free fallback for text-layer PDFs
+      if ((!ocrText || ocrText.length < 20) && c.env.AI) {
+        try {
+          const mdResult = await (c.env.AI as any).toMarkdown([{
+            name: fileRow.original_name || fileRow.filename || 'file.pdf',
+            blob: new Blob([buffer], { type: mimeType }),
+          }]);
+          const candidate = Array.isArray(mdResult)
+            ? mdResult.map((r: any) => r?.data || r?.content || '').join('\n')
+            : String(mdResult || '');
+          if (candidate && candidate.length > 20) {
+            ocrText = candidate;
+            await db.prepare("UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ?").bind(ocrText, fileId).run();
+          }
+        } catch (e: any) {
+          console.log('[SMART-IMPORT] toMarkdown failed:', e?.message || e);
         }
       }
     }
