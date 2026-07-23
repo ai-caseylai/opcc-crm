@@ -650,7 +650,25 @@ ${ocrText.slice(0, 8000)}`;
       items.push({ description: 'Invoice item', quantity: 1, unit_price: total, amount: total, sort_order: 0 });
     }
   }
-  if (items.length === 0) return { success: false, error: 'No line items found in invoice' };
+  if (items.length === 0) {
+    // AI/OCR failed to extract line items — create a pending_review draft like bank statements do
+    const emptyInvId = `i-${uuidv4().slice(0, 8)}`;
+    const emptyInvNumber = `DRAFT-${Date.now().toString(36).toUpperCase()}`;
+    const placeholderCust = await db.prepare('SELECT id FROM customers WHERE user_id = ? ORDER BY created_at LIMIT 1').bind(userId).first<{ id: string }>();
+    let fallbackCustId: string;
+    if (placeholderCust) {
+      fallbackCustId = placeholderCust.id;
+    } else {
+      fallbackCustId = `c-${uuidv4().slice(0, 8)}`;
+      await db.prepare('INSERT INTO customers (id, user_id, name, is_active) VALUES (?, ?, ?, 1)').bind(fallbackCustId, userId, 'Unknown Customer', true).run();
+    }
+    await db.prepare(
+      `INSERT INTO invoices (id, user_id, invoice_number, customer_id, status, issue_date, due_date, subtotal, total, currency, file_id)
+       VALUES (?, ?, ?, ?, 'pending_review', date('now'), date('now', '+30 days'), 0, 0, 'HKD', ?)`
+    ).bind(emptyInvId, userId, emptyInvNumber, fallbackCustId, fileId).run();
+    await db.prepare("UPDATE file_records SET category = 'invoice', ocr_status = 'failed', updated_at = datetime('now') WHERE id = ?").bind(fileId).run();
+    return { success: true, invoice_id: emptyInvId, items_count: 0, ocr_failed: true };
+  }
 
   const subtotal = items.reduce((s: number, it: any) => s + it.amount, 0);
   const total = parsed?.total || subtotal;

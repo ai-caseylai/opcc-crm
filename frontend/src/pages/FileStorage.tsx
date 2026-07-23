@@ -164,6 +164,11 @@ function FolderTree({ node, depth, expanded, toggle, onFileAction, onSetDirectio
                     匯入
                   </button>
                 )}
+                {(f.category === 'invoice' || f.category === 'receipt' || (f.file_type || '').includes('pdf')) && (
+                  <button onClick={() => onFileAction('import-invoice', f)} className="px-1.5 py-0.5 rounded text-[10px] font-medium border border-blue-300 text-blue-600 hover:bg-blue-50" title="匯入為發票">
+                    發票
+                  </button>
+                )}
                 <button onClick={() => onFileAction('edit', f)} className="p-1 hover:bg-muted rounded"><Pencil className="h-3.5 w-3.5" /></button>
                 <button onClick={() => { if (confirm(t('common.confirmDelete'))) onFileAction('delete', f); }} className="p-1 hover:bg-muted rounded text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
               </div>
@@ -257,6 +262,24 @@ export default function FileStorage() {
     },
   });
 
+  const importInvMut = useMutation({
+    mutationFn: (id: string) => api(`/file-storage/${id}/import-invoice`, { method: 'POST' }),
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ['file-storage'] });
+      queryClient.invalidateQueries({ queryKey: ['file-storage-folders'] });
+      queryClient.invalidateQueries({ queryKey: ['invoices'] });
+      if (data.ocr_failed) {
+        alert('已建立發票草稿。\nOCR 無法自動辨識，請在手動審查頁面輸入資料。');
+        window.location.href = '/invoices/review/' + data.invoice_id;
+      } else {
+        alert(`已匯入發票！\n發票號碼：${data.invoice_number || 'DRAFT'}\n品項數：${data.items_count || 0}`);
+      }
+    },
+    onError: (err: any) => {
+      alert(`匯入失敗：${err?.message || err?.error || '未知錯誤'}`);
+    },
+  });
+
   const uploadFiles = useCallback((fileList: FileList | File[]) => {
     const arr = Array.from(fileList);
     if (arr.length === 0) return;
@@ -311,6 +334,10 @@ export default function FileStorage() {
     } else if (action === 'import-statement') {
       if (confirm(`確定要將「${f.filename}」匯入為銀行月結單嗎？系統會自動 OCR 辨識並解析交易紀錄。`)) {
         importStmtMut.mutate(f.id);
+      }
+    } else if (action === 'import-invoice') {
+      if (confirm(`確定要將「${f.filename}」匯入為發票嗎？系統會自動 OCR 辨識並解析品項。`)) {
+        importInvMut.mutate(f.id);
       }
     }
   };
