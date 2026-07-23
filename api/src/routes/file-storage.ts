@@ -166,8 +166,8 @@ IMPORTANT — deciding whether a line's amount is a deposit or a withdrawal:
 Return ONLY valid JSON, no explanation. If you can't parse something, use null.
 
 OCR TEXT:
-${ocrText.slice(0, 8000)}` }],
-          max_tokens: 4000,
+${ocrText.slice(0, 16000)}` }],
+          max_tokens: 8000,
         }),
       });
       const parseData = await parseResp.json() as any;
@@ -175,6 +175,30 @@ ${ocrText.slice(0, 8000)}` }],
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
       if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
     } catch {}
+  }
+
+  // Cross-file duplicate check: same bank + same period = same statement
+  // This catches re-uploads of the same PDF with a different filename (which gets a different r2_key)
+  const parsedBankName = parsed?.bank_name || inferBankName(ocrText, fileRow.original_name || fileRow.filename) || null;
+  const parsedPeriodStart = parsed?.period_start || null;
+  const parsedPeriodEnd = parsed?.period_end || null;
+  if (parsedBankName && parsedPeriodStart) {
+    const crossDup = await db.prepare(
+      'SELECT id, bank_name, period_start, period_end, file_name FROM bank_statements WHERE user_id = ? AND bank_name = ? AND period_start = ? AND deleted_at IS NULL'
+    ).bind(userId, parsedBankName, parsedPeriodStart).first<{ id: string; bank_name: string | null; period_start: string | null; period_end: string | null; file_name: string | null }>();
+    if (crossDup) {
+      return {
+        success: false,
+        error: 'This statement period already exists',
+        statement_id: crossDup.id,
+        duplicate_info: {
+          type: 'bank_statement',
+          bank_name: crossDup.bank_name,
+          period: crossDup.period_start && crossDup.period_end ? `${crossDup.period_start} – ${crossDup.period_end}` : null,
+          file_name: crossDup.file_name,
+        },
+      };
+    }
   }
 
   const stmtId = `bs-${uuidv4().slice(0, 8)}`;
@@ -431,7 +455,7 @@ async function importInvoiceFromFile(
 Return ONLY valid JSON, no explanation. Use null for missing values.
 
 OCR TEXT:
-${ocrText.slice(0, 8000)}`;
+${ocrText.slice(0, 12000)}`;
 
       const promptForInvoice = `Parse this invoice OCR text into structured JSON. Extract:
 - invoice_number: the invoice number/ID
@@ -456,7 +480,7 @@ ${ocrText.slice(0, 8000)}`;
         body: JSON.stringify({
           model: 'deepseek-chat',
           messages: [{ role: 'user', content: isReceipt ? promptForReceipt : promptForInvoice }],
-          max_tokens: 4000,
+          max_tokens: 6000,
         }),
       });
       const data = await resp.json() as any;
