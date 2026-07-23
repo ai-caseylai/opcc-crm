@@ -9,6 +9,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
+import { tr } from '../lib/i18nHelpers';
 
 interface StaffUser {
   id: string;
@@ -31,8 +32,8 @@ export default function UserManagement() {
 // ── Admin: all users across the platform ──
 function AdminUserManagement() {
   const { i18n } = useTranslation();
-  const en = i18n.language === 'en';
   const [search, setSearch] = useState('');
+  const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
     queryKey: ['admin-users'],
@@ -62,31 +63,32 @@ function AdminUserManagement() {
     <div className="max-w-5xl space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold">{en ? 'All Platform Users' : '所有平台用戶'}</h2>
+          <h2 className="text-lg font-semibold">{tr('All Platform Users', '所有平台用戶', '所有平台用戶')}</h2>
           <p className="text-sm text-muted-foreground">
-            {en ? `${allUsers.length} users across all companies` : `所有公司共 ${allUsers.length} 個用戶`}
+            {tr(`${allUsers.length} users across all companies`, `所有公司共 ${allUsers.length} 個用戶`, `所有公司共 ${allUsers.length} 个用戶`)}
           </p>
         </div>
         <input
           value={search}
           onChange={e => setSearch(e.target.value)}
-          placeholder={en ? 'Search users...' : '搜尋用戶...'}
+          placeholder={tr('Search users...', '搜尋用戶...', '搜索用戶...')}
           className="border rounded-md px-3 py-1.5 text-sm bg-background w-56"
         />
       </div>
 
       {isLoading ? (
-        <p className="text-sm text-muted-foreground">{en ? 'Loading...' : '載入中...'}</p>
+        <p className="text-sm text-muted-foreground">{tr('Loading...', '載入中...', '载入中...')}</p>
       ) : (
         <div className="border rounded-lg overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-muted/50">
               <tr>
-                <th className="text-left px-4 py-2.5 text-xs font-medium">{en ? 'Name' : '名稱'}</th>
-                <th className="text-left px-4 py-2.5 text-xs font-medium">{en ? 'Email' : '電郵'}</th>
-                <th className="text-left px-4 py-2.5 text-xs font-medium">{en ? 'Company' : '公司'}</th>
-                <th className="text-left px-4 py-2.5 text-xs font-medium">{en ? 'Role' : '角色'}</th>
-                <th className="text-left px-4 py-2.5 text-xs font-medium">{en ? 'Created' : '建立'}</th>
+                <th className="text-left px-4 py-2.5 text-xs font-medium">{tr('Name', '名稱', '名称')}</th>
+                <th className="text-left px-4 py-2.5 text-xs font-medium">{tr('Email', '電郵', '电邮')}</th>
+                <th className="text-left px-4 py-2.5 text-xs font-medium">{tr('Company', '公司', '公司')}</th>
+                <th className="text-left px-4 py-2.5 text-xs font-medium">{tr('Role', '角色', '角色')}</th>
+                <th className="text-left px-4 py-2.5 text-xs font-medium">{tr('Created', '建立', '建立')}</th>
+                <th className="text-right px-4 py-2.5 text-xs font-medium">{tr('Actions', '操作', '操作')}</th>
               </tr>
             </thead>
             <tbody>
@@ -97,6 +99,22 @@ function AdminUserManagement() {
                   <td className="px-4 py-3 text-muted-foreground">{u.company_name || '-'}</td>
                   <td className="px-4 py-3"><span className={roleBadge(u.role)}>{u.role}</span></td>
                   <td className="px-4 py-3 text-xs text-muted-foreground">{u.created_at?.slice(0, 10)}</td>
+                  <td className="px-4 py-3 text-right">
+                    {u.role !== 'admin' && u.role !== 'supervisor' && (
+                      <button
+                        onClick={async () => {
+                          if (!confirm(tr(`Delete user ${u.email}? This cannot be undone.`, `刪除用戶 ${u.email}？此操作無法撤銷。`, `删除用戶 ${u.email}？此操作无法撤銷。`))) return;
+                          try {
+                            await api(`/admin/users/${u.id}`, { method: 'DELETE' });
+                            queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+                          } catch (e: any) { alert(e?.message || 'Failed'); }
+                        }}
+                        className="text-xs px-2 py-1 border border-red-300 text-red-600 rounded hover:bg-red-50"
+                      >
+                        {tr('Delete', '刪除', '删除')}
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

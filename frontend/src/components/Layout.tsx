@@ -7,6 +7,7 @@ import { api } from '../lib/api';
 import Chatbot from './Chatbot';
 import CookieConsent from './CookieConsent';
 import FirmClientSwitcher from './FirmClientSwitcher';
+import { tr } from '../lib/i18nHelpers';
 import {
   LayoutDashboard, Users, Truck, Package, FileText, FileSpreadsheet, Mail,
   Calculator, Upload, Settings, LogOut, Menu, X, MessageCircle, Calendar, Briefcase, FolderOpen, Plug, SlidersHorizontal, Landmark, Receipt, CheckSquare, Globe, CreditCard, Smartphone, HardDrive, ShoppingCart, ClipboardList, AlertCircle, BookOpen, ChevronLeft, ChevronRight, Building2, Shield, Tag, Bot, Link2, Trash2, ClipboardCheck, UserCog,
@@ -250,7 +251,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               <h1 className="text-xl font-bold text-primary">{t('app.title')}</h1>
               <p className="text-sm text-muted-foreground mt-1 flex items-center gap-1.5">
                 <Shield className="h-3.5 w-3.5 text-red-500" />
-                {i18n.language === 'en' ? 'Platform Admin' : '平台管理員'}
+                {tr('Platform Admin', '平台管理員', '平台管理员')}
               </p>
             </>
           ) : (
@@ -308,10 +309,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             <div key={gi}>
               {group.label && !collapsed && (
                 <div className="text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-wider px-3 pt-3 pb-1">
-                  {group.label === 'fileProcessing' ? (i18n.language === 'en' ? 'FILE PROCESSING' : '文件處理') :
-                   group.label === 'accounting' ? (i18n.language === 'en' ? 'ACCOUNTING' : '會計') :
-                   group.label === 'firmManagement' ? (i18n.language === 'en' ? 'FIRM' : '會計師樓') :
-                   group.label === 'administration' ? (i18n.language === 'en' ? 'ADMINISTRATION' : '管理') :
+                  {group.label === 'fileProcessing' ? (tr('FILE PROCESSING', '文件處理', '文件处理')) :
+                   group.label === 'accounting' ? (tr('ACCOUNTING', '會計', '会计')) :
+                   group.label === 'firmManagement' ? (tr('FIRM', '會計師樓', '会计师楼')) :
+                   group.label === 'administration' ? (tr('ADMINISTRATION', '管理', '管理')) :
                    group.label}
                 </div>
               )}
@@ -361,7 +362,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer hover:text-foreground">
             <input type="checkbox" checked={showAll} onChange={e => setShowAll(e.target.checked)}
               className="rounded border-muted-foreground/30" />
-            {i18n.language === 'en' ? 'Show all features' : '顯示全部功能'}
+            {tr('Show all features', '顯示全部功能', '显示全部功能')}
           </label>
           <div className="text-sm text-muted-foreground">{user?.email}</div>
           <button onClick={handleLogout}

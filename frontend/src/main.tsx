@@ -39,7 +39,7 @@ i18n.on('languageChanged', (lang) => {
     setTimeout(() => walkAndStrip(document.body), 100);
     // Set up observer for dynamic content
     const observer = new MutationObserver((mutations) => {
-      if (i18n.language !== 'en') { observer.disconnect(); return; }
+      // Language-independent font observer
       mutations.forEach(m => {
         m.addedNodes.forEach(n => walkAndStrip(n));
         if (m.type === 'characterData') stripChineseFromNode(m.target);

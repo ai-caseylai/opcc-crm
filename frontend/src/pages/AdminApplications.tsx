@@ -7,6 +7,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { useToast } from '../components/Toast';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 
@@ -33,6 +34,7 @@ export default function AdminApplications() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const toast = useToast();
   const [filter, setFilter] = useState<'pending' | 'approved' | 'rejected' | 'all'>('pending');
   const [approvedCreds, setApprovedCreds] = useState<{ email: string; temp_password: string; company: string } | null>(null);
 
@@ -60,14 +62,20 @@ export default function AdminApplications() {
         temp_password: res.temp_password,
         company: app?.company_name || '',
       });
+      // Alert admin about email status
+      if (res.email_sent) {
+        // Email sent successfully - no extra alert needed, the creds panel shows
+      } else {
+        toast.info(`Account created but email could NOT be sent to ${res.email}.\n\n${res.email_error || 'Unknown reason'}\n\nPlease use the "Copy Credentials" button below to share login details manually.`);
+      }
     },
-    onError: (err: any) => alert(`Failed to approve: ${err?.message || 'Unknown error'}`),
+    onError: (err: any) => toast.info(`Failed to approve: ${err?.message || 'Unknown error'}`),
   });
 
   const rejectMut = useMutation({
     mutationFn: (appId: string) => api(`/admin/applications/${appId}/reject`, { method: 'POST' }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-applications'] }),
-    onError: (err: any) => alert(`Failed to reject: ${err?.message || 'Unknown error'}`),
+    onError: (err: any) => toast.info(`Failed to reject: ${err?.message || 'Unknown error'}`),
   });
 
   const statusBadge = (status: string) => {
@@ -111,7 +119,7 @@ export default function AdminApplications() {
                 <button
                   onClick={() => {
                     navigator.clipboard.writeText(credText);
-                    alert('Credentials copied to clipboard! You can paste them in WhatsApp or email.');
+                    toast.info('Credentials copied to clipboard! You can paste them in WhatsApp or email.');
                   }}
                   className="bg-green-600 text-white px-4 py-1.5 rounded-md text-sm font-medium hover:bg-green-700"
                 >

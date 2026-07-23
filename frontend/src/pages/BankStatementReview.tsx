@@ -3,6 +3,8 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api, WORKER_API_BASE } from '../lib/api';
+import { useToast } from '../components/Toast';
+import { tr } from '../lib/i18nHelpers';
 
 // Money formatter — always 2 decimals with thousand separators
 const money = (v: number | null | undefined): string => {
@@ -86,6 +88,7 @@ interface StatementWithTx {
 
 export default function BankStatementReview() {
   const { i18n } = useTranslation();
+  const toast = useToast();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -188,11 +191,11 @@ export default function BankStatementReview() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
       queryClient.invalidateQueries({ queryKey: ['bank-statements-drafts'] });
-      alert(i18n.language === 'en' ? '✅ Saved to database! This statement is now confirmed.' : '✅ 已儲存至數據庫！此月結單已確認。');
+      toast.success(tr('Saved to database! This statement is now confirmed.', '已儲存至數據庫！此月結單已確認。', '已储存至数据库！此月结单已确认。'));
       navigate('/bank-statements');
     },
     onError: (err: any) => {
-      alert(`Failed to save: ${err?.message || err?.error || 'Unknown error'}`);
+      toast.error(`Failed to save: ${err?.message || err?.error || 'Unknown error'}`);
     },
   });
 
@@ -422,11 +425,13 @@ export default function BankStatementReview() {
             <div className="text-2xl">⚠️</div>
             <div className="flex-1">
               <h2 className="font-bold text-yellow-900 dark:text-yellow-100">
-                {i18n.language === 'en' ? 'Review extracted data before saving to database' : '儲存至數據庫前請先審核提取的數據'}
+                {tr('Review extracted data before saving to database', '儲存至數據庫前請先審核提取的數據', '储存至数据库前請先审核提取的數據')}
               </h2>
               <p className="text-sm text-yellow-800 dark:text-yellow-200 mt-1">
                 {i18n.language === 'en'
                   ? <>Compare the AI-extracted data on the right with the original PDF on the left. Edit any field that's wrong. When everything matches, click <strong>Save to Database</strong>.</>
+                  : i18n.language === 'zh-Hans'
+                  ? <>将右侧 AI 提取的数据与左侧原始 PDF 进行对比。修正任何错误，确认后点击<strong>储存至数据库</strong>。</>
                   : <>將右側 AI 提取的數據與左側原始 PDF 進行對比。修正任何錯誤，確認後點擊<strong>儲存至數據庫</strong>。</>}
               </p>
             </div>
@@ -439,6 +444,8 @@ export default function BankStatementReview() {
             <p className="text-sm text-green-900 dark:text-green-100">
               {i18n.language === 'en'
                 ? <><strong>Confirmed.</strong> This statement is saved. Any edits below save instantly.</>
+                : i18n.language === 'zh-Hans'
+                ? <><strong>已确认。</strong>此月结单已储存。以下的编辑将即时保存。</>
                 : <><strong>已確認。</strong>此月結單已儲存。以下的編輯將即時保存。</>}
             </p>
           </div>
@@ -450,7 +457,7 @@ export default function BankStatementReview() {
         {/* Left: PDF viewer */}
         <div className="rounded-lg border bg-card flex flex-col">
           <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/30">
-            <h3 className="font-bold text-sm">{i18n.language === 'en' ? '📄 Original Document' : '📄 原始文件'}</h3>
+            <h3 className="font-bold text-sm">{tr('📄 Original Document', '📄 原始文件', '📄 原始文件')}</h3>
             <span className="text-xs text-muted-foreground truncate ml-2">{stmt.file_name || 'PDF'}</span>
           </div>
           <div className="flex-1 bg-muted/10 relative" style={{ minHeight: '70vh' }}>
@@ -476,16 +483,16 @@ export default function BankStatementReview() {
         <div className="space-y-4 overflow-y-auto pb-24" style={{ maxHeight: '85vh' }}>
           {/* Header info */}
           <div className="rounded-lg border bg-card p-4">
-            <h3 className="font-bold text-sm mb-3">{i18n.language === 'en' ? '📋 Extracted Statement Details' : '📋 提取的月結單資料'}</h3>
+            <h3 className="font-bold text-sm mb-3">{tr('📋 Extracted Statement Details', '📋 提取的月結單資料', '📋 提取的月结单资料')}</h3>
             <div className="grid grid-cols-2 gap-3">
-              <Field label={i18n.language === 'en' ? 'Bank Name' : 'Bank Name 銀行名稱'} value={merged.bank_name || ''} onChange={v => upd('bank_name', v)} />
-              <Field label={i18n.language === 'en' ? 'Account Number' : 'Account Number 帳號'} value={merged.account_number || ''} onChange={v => upd('account_number', v)} />
-              <Field label={i18n.language === 'en' ? 'Branch' : 'Branch 分行'} value={merged.branch || ''} onChange={v => upd('branch', v)} />
-              <Field label={i18n.language === 'en' ? 'Currency' : 'Currency 貨幣'} value={merged.currency || ''} onChange={v => upd('currency', v)} />
-              <Field label={i18n.language === 'en' ? 'Period Start' : 'Period Start 開始日期'} value={merged.period_start || ''} onChange={v => upd('period_start', v)} placeholder="YYYY-MM-DD" />
-              <Field label={i18n.language === 'en' ? 'Period End' : 'Period End 結束日期'} value={merged.period_end || ''} onChange={v => upd('period_end', v)} placeholder="YYYY-MM-DD" />
+              <Field label={tr('Bank Name', 'Bank Name 銀行名稱', 'Bank Name 银行名称')} value={merged.bank_name || ''} onChange={v => upd('bank_name', v)} />
+              <Field label={tr('Account Number', 'Account Number 帳號', 'Account Number 账号')} value={merged.account_number || ''} onChange={v => upd('account_number', v)} />
+              <Field label={tr('Branch', 'Branch 分行', 'Branch 分行')} value={merged.branch || ''} onChange={v => upd('branch', v)} />
+              <Field label={tr('Currency', 'Currency 貨幣', 'Currency 货币')} value={merged.currency || ''} onChange={v => upd('currency', v)} />
+              <Field label={tr('Period Start', 'Period Start 開始日期', 'Period Start 開始日期')} value={merged.period_start || ''} onChange={v => upd('period_start', v)} placeholder="YYYY-MM-DD" />
+              <Field label={tr('Period End', 'Period End 結束日期', 'Period End 結束日期')} value={merged.period_end || ''} onChange={v => upd('period_end', v)} placeholder="YYYY-MM-DD" />
               <label className="block">
-                <span className="text-xs text-muted-foreground">{i18n.language === 'en' ? 'Opening Balance' : 'Opening Balance 期初餘額'}</span>
+                <span className="text-xs text-muted-foreground">{tr('Opening Balance', 'Opening Balance 期初餘額', 'Opening Balance 期初余额')}</span>
                 <MoneyInput
                   value={merged.opening_balance ?? null}
                   onChange={v => upd('opening_balance', v ?? 0)}
@@ -494,7 +501,7 @@ export default function BankStatementReview() {
               </label>
               <label className="block">
                 <span className="text-xs text-muted-foreground flex items-center justify-between">
-                  <span>{i18n.language === 'en' ? 'Closing Balance' : 'Closing Balance 期末餘額'}</span>
+                  <span>{tr('Closing Balance', 'Closing Balance 期末餘額', 'Closing Balance 期末余额')}</span>
                   {totals.closingMismatch && (
                     <button
                       type="button"
@@ -520,13 +527,13 @@ export default function BankStatementReview() {
                   disabled={saveHeaderMut.isPending}
                   className="px-3 py-1.5 bg-primary text-primary-foreground rounded text-xs"
                 >
-                  {saveHeaderMut.isPending ? (i18n.language === 'en' ? 'Saving…' : '儲存中…') : (i18n.language === 'en' ? '💾 Save header changes' : '💾 儲存標題修改')}
+                  {saveHeaderMut.isPending ? (tr('Saving…', '儲存中…', '储存中…')) : (tr('💾 Save header changes', '💾 儲存標題修改', '💾 储存標題修改'))}
                 </button>
                 <button
                   onClick={() => setHeaderEdits({})}
                   className="px-3 py-1.5 border rounded text-xs hover:bg-muted"
                 >
-                  {i18n.language === 'en' ? 'Discard' : '放棄'}
+                  {tr('Discard', '放棄', '放弃')}
                 </button>
               </div>
             )}
@@ -596,11 +603,11 @@ export default function BankStatementReview() {
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="border-b text-left">
-                      <th className="py-1 pr-1 font-medium w-20">{i18n.language === 'en' ? 'Date' : '日期'}</th>
-                      <th className="py-1 pr-1 font-medium">{i18n.language === 'en' ? 'Description' : '描述'}</th>
-                      <th className="py-1 pr-1 font-medium text-right w-20">{i18n.language === 'en' ? 'Deposit' : '存入'}</th>
-                      <th className="py-1 pr-1 font-medium text-right w-20">{i18n.language === 'en' ? 'Withdrawal' : '提取'}</th>
-                      <th className="py-1 pr-1 font-medium text-right w-20">{i18n.language === 'en' ? 'Balance' : '餘額'}</th>
+                      <th className="py-1 pr-1 font-medium w-20">{tr('Date', '日期', '日期')}</th>
+                      <th className="py-1 pr-1 font-medium">{tr('Description', '描述', '描述')}</th>
+                      <th className="py-1 pr-1 font-medium text-right w-20">{tr('Deposit', '存入', '存入')}</th>
+                      <th className="py-1 pr-1 font-medium text-right w-20">{tr('Withdrawal', '提取', '提取')}</th>
+                      <th className="py-1 pr-1 font-medium text-right w-20">{tr('Balance', '餘額', '余额')}</th>
                       <th className="py-1 font-medium w-8"></th>
                     </tr>
                   </thead>
@@ -720,13 +727,13 @@ export default function BankStatementReview() {
                   onClick={saveAllTxEdits}
                   className="px-3 py-1.5 bg-primary text-primary-foreground rounded text-xs"
                 >
-                  💾 {i18n.language === 'en' ? `Save ${txDirtyCount} transaction edit${txDirtyCount === 1 ? '' : 's'}` : `儲存 ${txDirtyCount} 筆交易修改`}
+                  💾 {tr(`Save ${txDirtyCount} transaction edit${txDirtyCount === 1 ? '' : 's'}`, `儲存 ${txDirtyCount} 筆交易修改`, `储存 ${txDirtyCount} 笔交易修改`)}
                 </button>
                 <button
                   onClick={() => setTxEdits({})}
                   className="px-3 py-1.5 border rounded text-xs hover:bg-muted"
                 >
-                  {i18n.language === 'en' ? 'Discard changes' : '放棄修改'}
+                  {tr('Discard changes', '放棄修改', '放弃修改')}
                 </button>
               </div>
             )}
@@ -739,19 +746,19 @@ export default function BankStatementReview() {
         {isDraft ? (
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div>
-              <h3 className="font-bold text-sm">{i18n.language === 'en' ? 'Ready to save?' : '準備儲存？'}</h3>
+              <h3 className="font-bold text-sm">{tr('Ready to save?', '準備儲存？', '準備储存？')}</h3>
               <p className="text-xs text-muted-foreground">
                 {i18n.language === 'en'
                   ? <>Click <strong>Save to Database</strong> to confirm this statement. You can still edit it later.</>
+                  : i18n.language === 'zh-Hans'
+                  ? <>点击<strong>储存至数据库</strong>确认此月结单。之后仍可编辑。</>
                   : <>點擊<strong>儲存至數據庫</strong>確認此月結單。之後仍可編輯。</>}
               </p>
             </div>
             <div className="flex gap-2">
               <button
                 onClick={() => {
-                  if (confirm(i18n.language === 'en'
-                    ? 'Discard this statement? It will be moved to the Recycle Bin where it can be restored within 30 days.'
-                    : '放棄此月結單？將移至回收站，可在30天內還原。')) {
+                  if (confirm(tr('Discard this statement? It will be moved to the Recycle Bin where it can be restored within 30 days.', '放棄此月結單？將移至回收站，可在30天內還原。', '放弃此月结单？將移至回收站，可在30天內还原。'))) {
                     discardMut.mutate();
                   }
                 }}
@@ -759,30 +766,30 @@ export default function BankStatementReview() {
                 className="px-4 py-2 border border-red-300 text-red-600 rounded text-sm hover:bg-red-50 dark:hover:bg-red-950"
               >
                 {discardMut.isPending
-                  ? (i18n.language === 'en' ? 'Discarding…' : '放棄中…')
-                  : (i18n.language === 'en' ? '🗑 Discard' : '🗑 放棄')}
+                  ? (tr('Discarding…', '放棄中…', '放弃中…'))
+                  : (tr('🗑 Discard', '🗑 放棄', '🗑 放弃'))}
               </button>
               <button
                 onClick={saveAndConfirm}
                 disabled={confirmMut.isPending || saveHeaderMut.isPending || createTxMut.isPending || transactions.length === 0}
                 className="px-6 py-2 bg-green-600 text-white rounded font-bold hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                title={transactions.length === 0 ? (i18n.language === 'en' ? 'Add at least one transaction before saving' : '儲存前請先新增至少一筆交易') : ''}
+                title={transactions.length === 0 ? (tr('Add at least one transaction before saving', '儲存前請先新增至少一筆交易', '储存前請先新增至少一笔交易')) : ''}
               >
                 {confirmMut.isPending
-                  ? (i18n.language === 'en' ? 'Saving…' : '儲存中…')
-                  : (i18n.language === 'en' ? '✅ Save to Database' : '✅ 儲存至數據庫')}
+                  ? (tr('Saving…', '儲存中…', '储存中…'))
+                  : (tr('✅ Save to Database', '✅ 儲存至數據庫', '✅ 储存至数据库'))}
               </button>
             </div>
           </div>
         ) : (
           <div className="flex items-center justify-between">
             <p className="text-sm text-muted-foreground">
-              {i18n.language === 'en' ? 'This statement is already saved. Edits save instantly.' : '此月結單已儲存。編輯將即時保存。'}
+              {tr('This statement is already saved. Edits save instantly.', '此月結單已儲存。編輯將即時保存。', '此月结单已储存。編輯將即時保存。')}
             </p>
             <Link to="/bank-statements"
               className="px-4 py-2 bg-primary text-primary-foreground rounded text-sm"
             >
-              {i18n.language === 'en' ? '← Back to Bank Statements' : '← 返回銀行月結單'}
+              {tr('← Back to Bank Statements', '← 返回銀行月結單', '← 返回银行月结单')}
             </Link>
           </div>
         )}

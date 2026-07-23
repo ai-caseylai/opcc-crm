@@ -39,12 +39,22 @@ auth.post('/apply', authRateLimiter, zValidator('json', applySchema), async (c) 
   const { company_name, contact_name, email, phone, message } = c.req.valid('json');
   const db = c.env.DB;
 
-  // Check if email already applied or registered
-  const existingApp = await db.prepare('SELECT id FROM applications WHERE email = ?').bind(email).first();
-  if (existingApp) return c.json({ error: 'An application with this email already exists.' }, 409);
+  // Check if email already has an active application (pending or approved)
+  const existingApp = await db.prepare(
+    "SELECT id, status FROM applications WHERE email = ? ORDER BY created_at DESC LIMIT 1"
+  ).bind(email).first<{ id: string; status: string }>();
+  // Block only if pending or approved — allow re-apply after deregistered/rejected
+  if (existingApp && (existingApp.status === 'pending' || existingApp.status === 'approved')) {
+    return c.json({ error: 'An application with this email already exists.' }, 409);
+  }
 
-  const existingUser = await db.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
-  if (existingUser) return c.json({ error: 'This email is already registered.' }, 409);
+  // Check if email is an active supervisor/admin account (not legacy 'user' role)
+  const existingUser = await db.prepare(
+    "SELECT id, role FROM users WHERE email = ?"
+  ).bind(email).first<{ id: string; role: string }>();
+  if (existingUser && (existingUser.role === 'supervisor' || existingUser.role === 'admin')) {
+    return c.json({ error: 'This email is already registered as an active account.' }, 409);
+  }
 
   const id = `app-${uuidv4().slice(0, 8)}`;
   await db.prepare(

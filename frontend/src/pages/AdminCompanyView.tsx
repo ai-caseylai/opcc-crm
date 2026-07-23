@@ -9,6 +9,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
+import { tr } from '../lib/i18nHelpers';
 import {
   ChevronLeft, Building2, Users, FileText, Truck, Calculator,
   Landmark, Download, Shield,
@@ -19,10 +20,9 @@ export default function AdminCompanyView() {
   const { user } = useAuth();
   const { i18n } = useTranslation();
   const navigate = useNavigate();
-  const en = i18n.language === 'en';
 
   if (user?.role !== 'admin') {
-    return <div className="p-8 text-center text-muted-foreground">{en ? 'Admin access required.' : '需要管理員權限。'}</div>;
+    return <div className="p-8 text-center text-muted-foreground">{tr('Admin access required.', '需要管理員權限。', '需要管理員权限。')}</div>;
   }
 
   const { data: summary, isLoading } = useQuery({
@@ -45,14 +45,14 @@ export default function AdminCompanyView() {
       a.click();
       URL.revokeObjectURL(url);
     } catch (err: any) {
-      alert(en ? 'Export failed: ' + (err?.message || 'unknown') : '導出失敗');
+      alert(tr('Export failed: ', '導出失敗：', '导出失败：') + (err?.message || tr('unknown', '未知', '未知')));
     }
   };
 
   if (isLoading) {
     return (
       <div className="p-8 text-center text-muted-foreground">
-        {en ? 'Loading company data...' : '載入公司資料...'}
+        {tr('Loading company data...', '載入公司資料...', '载入公司资料...')}
       </div>
     );
   }
@@ -60,18 +60,18 @@ export default function AdminCompanyView() {
   if (!companyUser) {
     return (
       <div className="p-8 text-center text-muted-foreground">
-        {en ? 'Company not found.' : '找不到公司。'}
+        {tr('Company not found.', '找不到公司。', '找不到公司。')}
       </div>
     );
   }
 
   const statCards = [
-    { label: en ? 'Customers' : '客戶', value: counts.customers || 0, icon: Users, color: 'text-blue-600', bg: 'bg-blue-50 dark:bg-blue-950/30' },
-    { label: en ? 'Suppliers' : '供應商', value: counts.suppliers || 0, icon: Truck, color: 'text-green-600', bg: 'bg-green-50 dark:bg-green-950/30' },
-    { label: en ? 'Invoices' : '發票', value: counts.invoices || 0, icon: FileText, color: 'text-orange-600', bg: 'bg-orange-50 dark:bg-orange-950/30' },
-    { label: en ? 'Quotations' : '報價單', value: counts.quotations || 0, icon: Calculator, color: 'text-purple-600', bg: 'bg-purple-50 dark:bg-purple-950/30' },
-    { label: en ? 'Journal Entries' : '日記帳', value: counts.journal_entries || 0, icon: Calculator, color: 'text-indigo-600', bg: 'bg-indigo-50 dark:bg-indigo-950/30' },
-    { label: en ? 'Products' : '產品', value: counts.products || 0, icon: Building2, color: 'text-pink-600', bg: 'bg-pink-50 dark:bg-pink-950/30' },
+    { label: tr('Customers', '客戶', '客户'), value: counts.customers || 0, icon: Users, color: 'text-blue-600', bg: 'bg-blue-50 dark:bg-blue-950/30' },
+    { label: tr('Suppliers', '供應商', '供应商'), value: counts.suppliers || 0, icon: Truck, color: 'text-green-600', bg: 'bg-green-50 dark:bg-green-950/30' },
+    { label: tr('Invoices', '發票', '发票'), value: counts.invoices || 0, icon: FileText, color: 'text-orange-600', bg: 'bg-orange-50 dark:bg-orange-950/30' },
+    { label: tr('Quotations', '報價單', '报价单'), value: counts.quotations || 0, icon: Calculator, color: 'text-purple-600', bg: 'bg-purple-50 dark:bg-purple-950/30' },
+    { label: tr('Journal Entries', '日記帳', '日记账'), value: counts.journal_entries || 0, icon: Calculator, color: 'text-indigo-600', bg: 'bg-indigo-50 dark:bg-indigo-950/30' },
+    { label: tr('Products', '產品', '产品'), value: counts.products || 0, icon: Building2, color: 'text-pink-600', bg: 'bg-pink-50 dark:bg-pink-950/30' },
   ];
 
   return (
@@ -82,7 +82,7 @@ export default function AdminCompanyView() {
         className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
       >
         <ChevronLeft className="h-4 w-4" />
-        {en ? 'Back to Admin Dashboard' : '返回管理面板'}
+        {tr('Back to Admin Dashboard', '返回管理面板', '返回管理面板')}
       </button>
 
       {/* Company Header */}
@@ -102,7 +102,7 @@ export default function AdminCompanyView() {
                   'bg-gray-100 text-gray-600'
                 }`}>{companyUser.role}</span>
                 <span className="text-xs text-muted-foreground">
-                  {en ? 'Created' : '建立於'}: {companyUser.created_at?.slice(0, 10)}
+                  {tr('Created', '建立於', '建立於')}: {companyUser.created_at?.slice(0, 10)}
                 </span>
                 <span className="text-xs text-muted-foreground">
                   ID: <span className="font-mono">{companyUser.id}</span>
@@ -115,7 +115,7 @@ export default function AdminCompanyView() {
             className="flex items-center gap-2 px-3 py-2 border rounded-lg text-sm hover:bg-muted"
           >
             <Download className="h-4 w-4" />
-            {en ? 'Export Data' : '導出數據'}
+            {tr('Export Data', '導出數據', '导出數據')}
           </button>
         </div>
       </div>
@@ -138,12 +138,13 @@ export default function AdminCompanyView() {
         <Shield className="h-5 w-5 text-muted-foreground mt-0.5 flex-shrink-0" />
         <div className="text-sm text-muted-foreground">
           <p className="font-medium text-foreground mb-1">
-            {en ? 'Read-only view' : '唯讀模式'}
+            {tr('Read-only view', '唯讀模式', '唯讀模式')}
           </p>
           <p>
-            {en
-              ? 'This is a summary of the company\'s data. Use the Export button to download a full JSON backup. To make changes, ask the company supervisor to do it from their account.'
-              : '這是公司數據的摘要。使用導出按鈕下載完整的 JSON 備份。如需變更，請聯繫公司管理員從他們的帳戶進行。'}
+            {tr(
+              'This is a summary of the company\'s data. Use the Export button to download a full JSON backup. To make changes, ask the company supervisor to do it from their account.',
+              '這是公司數據的摘要。使用導出按鈕下載完整的 JSON 備份。如需變更，請聯繫公司管理員從他們的帳戶進行。',
+              '这是公司数据的摘要。使用导出按钮下载完整的 JSON 备份。如需变更，请联系公司管理员从他们的账户进行。')}
           </p>
         </div>
       </div>
@@ -151,12 +152,13 @@ export default function AdminCompanyView() {
       {/* Danger Zone: Deregister */}
       <div className="border-2 border-red-200 rounded-xl p-5">
         <h3 className="text-sm font-semibold text-red-700 mb-1">
-          {en ? 'Danger Zone' : '危險區域'}
+          {tr('Danger Zone', '危險區域', '危險区域')}
         </h3>
         <p className="text-sm text-muted-foreground mb-3">
-          {en
-            ? 'Deregistering a company permanently deletes all their data: invoices, bank statements, customers, suppliers, journal entries, files, and staff accounts. This cannot be undone.'
-            : '取消註冊將永久刪除公司所有數據：發票、銀行月結單、客戶、供應商、日記帳、文件及員工帳戶。此操作無法撤銷。'}
+          {tr(
+            'Deregistering a company permanently deletes all their data: invoices, bank statements, customers, suppliers, journal entries, files, and staff accounts. This cannot be undone.',
+            '取消註冊將永久刪除公司所有數據：發票、銀行月結單、客戶、供應商、日記帳、文件及員工帳戶。此操作無法撤銷。',
+            '取消注册将永久删除公司所有数据：发票、银行月结单、客户、供应商、日记帐、文件及员工账户。此操作无法撤销。')}
         </p>
         <DeregisterButton userId={userId!} companyName={companyUser.company_name || companyUser.name} />
       </div>
@@ -167,7 +169,6 @@ export default function AdminCompanyView() {
 function DeregisterButton({ userId, companyName }: { userId: string; companyName: string }) {
   const { i18n } = useTranslation();
   const navigate = useNavigate();
-  const en = i18n.language === 'en';
   const [confirming, setConfirming] = useState(false);
   const [confirmText, setConfirmText] = useState('');
   const [deleting, setDeleting] = useState(false);
@@ -180,7 +181,7 @@ function DeregisterButton({ userId, companyName }: { userId: string; companyName
       alert(res.message || 'Company deregistered.');
       navigate('/');
     } catch (err: any) {
-      alert(en ? 'Failed: ' + (err?.message || 'unknown') : '失敗：' + (err?.message || '未知'));
+      alert(tr('Failed: ', '失敗：', '失败：') + (err?.message || tr('unknown', '未知', '未知')));
     }
     setDeleting(false);
   };
@@ -191,7 +192,7 @@ function DeregisterButton({ userId, companyName }: { userId: string; companyName
         onClick={() => setConfirming(true)}
         className="px-4 py-2 border-2 border-red-300 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50"
       >
-        {en ? 'Deregister This Company' : '取消註冊此公司'}
+        {tr('Deregister This Company', '取消註冊此公司', '取消注册此公司')}
       </button>
     );
   }
@@ -199,9 +200,10 @@ function DeregisterButton({ userId, companyName }: { userId: string; companyName
   return (
     <div className="bg-red-50 dark:bg-red-950/20 rounded-lg p-4 space-y-3">
       <p className="text-sm text-red-800 dark:text-red-300 font-medium">
-        {en
-          ? `Type "${companyName}" to confirm permanent deletion:`
-          : `輸入「${companyName}」以確認永久刪除：`}
+        {tr(
+          `Type "${companyName}" to confirm permanent deletion:`,
+          `輸入「${companyName}」以確認永久刪除：`,
+          `输入「${companyName}」以确认永久删除：`)}
       </p>
       <input
         value={confirmText}
@@ -216,14 +218,14 @@ function DeregisterButton({ userId, companyName }: { userId: string; companyName
           className="bg-red-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-red-700 disabled:opacity-40"
         >
           {deleting
-            ? (en ? 'Deleting...' : '刪除中...')
-            : (en ? 'Permanently Delete All Data' : '永久刪除所有數據')}
+            ? (tr('Deleting...', '刪除中...', '删除中...'))
+            : (tr('Permanently Delete All Data', '永久刪除所有數據', '永久删除所有數據'))}
         </button>
         <button
           onClick={() => { setConfirming(false); setConfirmText(''); }}
           className="px-4 py-2 border rounded-md text-sm hover:bg-muted"
         >
-          {en ? 'Cancel' : '取消'}
+          {tr('Cancel', '取消', '取消')}
         </button>
       </div>
     </div>

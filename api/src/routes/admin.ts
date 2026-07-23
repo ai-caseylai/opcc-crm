@@ -193,11 +193,15 @@ admin.post('/applications/:id/approve', async (c) => {
      created_user_id = ?, updated_at = datetime('now') WHERE id = ?`
   ).bind(adminUser.id, userId, appId).run();
 
-  // Send welcome email (implement with your email provider)
+  // Send welcome email via Resend (or Mailgun fallback)
   const loginUrl = 'https://sme.techforliving.net/login';
-  try {
-    if (c.env.RESEND_API_KEY) {
-      await fetch('https://api.resend.com/emails', {
+  let emailSent = false;
+  let emailError = '';
+
+  // Try Resend first
+  if (c.env.RESEND_API_KEY) {
+    try {
+      const emailResp = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${c.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -207,15 +211,64 @@ admin.post('/applications/:id/approve', async (c) => {
           text: `Hi ${app.contact_name},\n\nWelcome to Tech Connect SME!\n\nYour account for ${app.company_name} has been approved.\n\nLogin URL: ${loginUrl}\nEmail: ${app.email}\nTemporary Password: ${tempPassword}\n\nPlease log in and change your password immediately.\n\nTech Connect SME Team`,
         }),
       });
+      const emailResult = await emailResp.json().catch(() => null);
+      if (emailResp.ok) {
+        emailSent = true;
+        console.log('[EMAIL] Welcome email sent via Resend to', app.email);
+      } else {
+        emailError = `Resend API error ${emailResp.status}: ${JSON.stringify(emailResult)}`;
+        console.error('[EMAIL] Resend failed:', emailError);
+      }
+    } catch (e: any) {
+      emailError = `Resend exception: ${e?.message || String(e)}`;
+      console.error('[EMAIL]', emailError);
     }
-  } catch (e) { console.error('[EMAIL] Failed to send welcome email:', e); }
+  }
+
+  // Try Mailgun as fallback if Resend didn't work
+  if (!emailSent && c.env.MAILGUN_API_KEY) {
+    try {
+      const mgDomain = 'techforliving.net';
+      const formData = new URLSearchParams();
+      formData.append('from', `Tech Connect SME <noreply@${mgDomain}>`);
+      formData.append('to', app.email);
+      formData.append('subject', 'Your Tech Connect SME Account is Ready');
+      formData.append('text', `Hi ${app.contact_name},\n\nWelcome to Tech Connect SME!\n\nYour account for ${app.company_name} has been approved.\n\nLogin URL: ${loginUrl}\nEmail: ${app.email}\nTemporary Password: ${tempPassword}\n\nPlease log in and change your password immediately.\n\nTech Connect SME Team`);
+
+      const mgResp = await fetch(`https://api.mailgun.net/v3/${mgDomain}/messages`, {
+        method: 'POST',
+        headers: { 'Authorization': `Basic ${btoa('api:' + c.env.MAILGUN_API_KEY)}` },
+        body: formData,
+      });
+      if (mgResp.ok) {
+        emailSent = true;
+        emailError = '';
+        console.log('[EMAIL] Welcome email sent via Mailgun to', app.email);
+      } else {
+        const mgResult = await mgResp.text().catch(() => '');
+        emailError += ` | Mailgun error ${mgResp.status}: ${mgResult}`;
+        console.error('[EMAIL] Mailgun also failed:', mgResult);
+      }
+    } catch (e: any) {
+      emailError += ` | Mailgun exception: ${e?.message || String(e)}`;
+      console.error('[EMAIL] Mailgun exception:', e);
+    }
+  }
+
+  if (!emailSent && !c.env.RESEND_API_KEY && !c.env.MAILGUN_API_KEY) {
+    emailError = 'No email API key configured (RESEND_API_KEY or MAILGUN_API_KEY). Use the Copy Credentials button to manually send login details.';
+  }
 
   return c.json({
     success: true,
     user_id: userId,
     email: app.email,
     temp_password: tempPassword,
-    message: `Supervisor account created for ${app.company_name}. Welcome email sent to ${app.email}.`,
+    email_sent: emailSent,
+    email_error: emailError || undefined,
+    message: emailSent
+      ? `Supervisor account created for ${app.company_name}. Welcome email sent to ${app.email}.`
+      : `Supervisor account created for ${app.company_name}. Email could NOT be sent — please use "Copy Credentials" to share login details manually.${emailError ? ' Error: ' + emailError : ''}`,
   }, 201);
 });
 
@@ -366,6 +419,36 @@ admin.get('/tenants/:userId/summary', async (c) => {
   }
 
   return c.json({ user: userRow, counts });
+});
+
+// ── DELETE INDIVIDUAL USER (for cleaning up legacy/test accounts) ──
+admin.delete('/users/:userId', async (c) => {
+  const adminUser = c.get('user');
+  if (adminUser.role !== 'admin') return c.json({ error: 'Admin only' }, 403);
+
+  const targetId = c.req.param('userId');
+  const db = c.env.DB;
+
+  const target = await db.prepare(
+    'SELECT id, email, role, company_name FROM users WHERE id = ?'
+  ).bind(targetId).first<{ id: string; email: string; role: string; company_name: string }>();
+  if (!target) return c.json({ error: 'User not found' }, 404);
+  if (target.role === 'admin') return c.json({ error: 'Cannot delete admin accounts' }, 403);
+
+  // For supervisors, use the full deregister flow
+  if (target.role === 'supervisor') {
+    return c.json({ error: 'Use the deregister company endpoint for supervisor accounts' }, 400);
+  }
+
+  // For legacy user/staff/viewer accounts, just delete the user record
+  try { await db.prepare('PRAGMA foreign_keys = OFF').run(); } catch {}
+  await db.prepare('DELETE FROM users WHERE id = ?').bind(targetId).run();
+  try { await db.prepare('PRAGMA foreign_keys = ON').run(); } catch {}
+
+  // Clean up any related applications
+  await db.prepare("DELETE FROM applications WHERE email = ? AND status NOT IN ('approved')").bind(target.email).run();
+
+  return c.json({ success: true, message: `User ${target.email} (${target.role}) deleted.` });
 });
 
 // ── DEREGISTER COMPANY (delete all data + user) ──────────────────────────

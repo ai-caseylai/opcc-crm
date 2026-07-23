@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../lib/api';
 import { Settings as SettingsIcon, Building2, Upload, Save } from 'lucide-react';
+import { tr } from '../lib/i18nHelpers';
 // Website → /website-generator | Modules → /modules | API/WB → /integrations
 
 export default function Settings() {
@@ -69,33 +70,33 @@ export default function Settings() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold">{i18n.language === 'en' ? 'Settings' : '設定 Settings'}</h2>
-        <p className="text-muted-foreground mt-1">{i18n.language === 'en' ? 'Account & Settings' : '帳戶與 API 設定'}</p>
+        <h2 className="text-2xl font-bold">{tr('Settings', '設定 Settings', '设定 Settings')}</h2>
+        <p className="text-muted-foreground mt-1">{tr('Account & Settings', '帳戶與 API 設定', '账户與 API 设定')}</p>
       </div>
 
       {/* Account Info */}
       <div className="bg-card border rounded-xl p-6 space-y-3">
         <h3 className="font-semibold flex items-center gap-2">
-          <SettingsIcon className="h-4 w-4" /> {i18n.language === 'en' ? 'Account Info' : '帳戶資訊'}
+          <SettingsIcon className="h-4 w-4" /> {tr('Account Info', '帳戶資訊', '账户資訊')}
         </h3>
         <div className="grid grid-cols-2 gap-3 text-sm">
-          <div><span className="text-muted-foreground">{i18n.language === 'en' ? 'Name:' : '姓名:'}</span> {user?.name}</div>
-          <div><span className="text-muted-foreground">{i18n.language === 'en' ? 'Role:' : '角色:'}</span> {user?.role}</div>
-          <div><span className="text-muted-foreground">{i18n.language === 'en' ? 'Email:' : '電郵:'}</span> {user?.email}</div>
-          <div><span className="text-muted-foreground">{i18n.language === 'en' ? 'Company:' : '公司:'}</span> {user?.company_name || '-'}</div>
+          <div><span className="text-muted-foreground">{tr('Name:', '姓名:', '姓名:')}</span> {user?.name}</div>
+          <div><span className="text-muted-foreground">{tr('Role:', '角色:', '角色:')}</span> {user?.role}</div>
+          <div><span className="text-muted-foreground">{tr('Email:', '電郵:', '电邮:')}</span> {user?.email}</div>
+          <div><span className="text-muted-foreground">{tr('Company:', '公司:', '公司:')}</span> {user?.company_name || '-'}</div>
         </div>
       </div>
 
       {/* Company Profile */}
       <div className="bg-card border rounded-xl p-6 space-y-4">
-        <h3 className="font-semibold flex items-center gap-2"><Building2 className="h-4 w-4" /> {i18n.language === 'en' ? 'Company Profile' : '公司資料'}</h3>
-        <h4 className="text-sm font-medium mt-2">{i18n.language === 'en' ? 'PDF Document Images' : 'PDF 文件圖案'}</h4>
+        <h3 className="font-semibold flex items-center gap-2"><Building2 className="h-4 w-4" /> {tr('Company Profile', '公司資料', '公司资料')}</h3>
+        <h4 className="text-sm font-medium mt-2">{tr('PDF Document Images', 'PDF 文件圖案', 'PDF 文件圖案')}</h4>
         <div className="grid grid-cols-3 gap-4">
           <div className="space-y-2 text-center">
             <label className="text-xs text-muted-foreground">Header Logo</label>
             <label className="flex flex-col items-center gap-1 cursor-pointer border rounded-lg p-3 hover:bg-muted/30">
               <Upload className="h-5 w-5 text-muted-foreground" />
-              <span className="text-xs text-primary">{i18n.language === 'en' ? 'Upload PDF Logo' : '上傳 PDF Logo'}</span>
+              <span className="text-xs text-primary">{tr('Upload PDF Logo', '上傳 PDF Logo', '上传 PDF Logo')}</span>
               <input type="file" accept="image/png" onChange={handlePdfImageUpload('pdf-logo')} className="hidden" />
             </label>
           </div>
@@ -103,7 +104,7 @@ export default function Settings() {
             <label className="text-xs text-muted-foreground">公司印章 Chop</label>
             <label className="flex flex-col items-center gap-1 cursor-pointer border rounded-lg p-3 hover:bg-muted/30">
               <Upload className="h-5 w-5 text-muted-foreground" />
-              <span className="text-xs text-primary">{i18n.language === 'en' ? 'Upload Chop' : '上傳 Chop'}</span>
+              <span className="text-xs text-primary">{tr('Upload Chop', '上傳 Chop', '上传 Chop')}</span>
               <input type="file" accept="image/png" onChange={handlePdfImageUpload('pdf-chop')} className="hidden" />
             </label>
           </div>
@@ -111,7 +112,7 @@ export default function Settings() {
             <label className="text-xs text-muted-foreground">簽名章 Stamp</label>
             <label className="flex flex-col items-center gap-1 cursor-pointer border rounded-lg p-3 hover:bg-muted/30">
               <Upload className="h-5 w-5 text-muted-foreground" />
-              <span className="text-xs text-primary">{i18n.language === 'en' ? 'Upload Stamp' : '上傳簽名章'}</span>
+              <span className="text-xs text-primary">{tr('Upload Stamp', '上傳簽名章', '上传签名章')}</span>
               <input type="file" accept="image/png" onChange={handlePdfImageUpload('pdf-stamp')} className="hidden" />
             </label>
           </div>
@@ -125,15 +126,15 @@ export default function Settings() {
           <div><label className="text-xs text-muted-foreground">簽署人</label><input value={coForm.signatory_name} onChange={e => setCoForm({...coForm, signatory_name: e.target.value})} className="w-full px-3 py-2 border rounded-md bg-background text-sm mt-0.5" /></div>
           <div><label className="text-xs text-muted-foreground">稅號</label><input value={coForm.tax_id} onChange={e => setCoForm({...coForm, tax_id: e.target.value})} className="w-full px-3 py-2 border rounded-md bg-background text-sm mt-0.5" /></div>
         </div>
-        <h4 className="text-sm font-medium mt-2">{i18n.language === 'en' ? 'Bank Details' : '銀行資料'}</h4>
+        <h4 className="text-sm font-medium mt-2">{tr('Bank Details', '銀行資料', '银行资料')}</h4>
         <div className="grid grid-cols-2 gap-3">
           <div><label className="text-xs text-muted-foreground">銀行名稱</label><input value={coForm.bank_name} onChange={e => setCoForm({...coForm, bank_name: e.target.value})} className="w-full px-3 py-2 border rounded-md bg-background text-sm mt-0.5" /></div>
           <div><label className="text-xs text-muted-foreground">帳戶號碼</label><input value={coForm.bank_account} onChange={e => setCoForm({...coForm, bank_account: e.target.value})} className="w-full px-3 py-2 border rounded-md bg-background text-sm mt-0.5" /></div>
           <div><label className="text-xs text-muted-foreground">Swift/BIC</label><input value={coForm.bank_swift} onChange={e => setCoForm({...coForm, bank_swift: e.target.value})} className="w-full px-3 py-2 border rounded-md bg-background text-sm mt-0.5" /></div>
           <div><label className="text-xs text-muted-foreground">銀行地址</label><input value={coForm.bank_address} onChange={e => setCoForm({...coForm, bank_address: e.target.value})} className="w-full px-3 py-2 border rounded-md bg-background text-sm mt-0.5" /></div>
         </div>
-        <h4 className="text-sm font-medium mt-2">{i18n.language === 'en' ? 'Invoice Number Format' : '發票號碼格式'}</h4>
-        <p className="text-xs text-muted-foreground">{i18n.language === 'en' ? 'Auto-generates invoice numbers. Leave blank for manual entry.' : '建立發票時自動產生號碼，留空或刪除則手動輸入'}</p>
+        <h4 className="text-sm font-medium mt-2">{tr('Invoice Number Format', '發票號碼格式', '发票號碼格式')}</h4>
+        <p className="text-xs text-muted-foreground">{tr('Auto-generates invoice numbers. Leave blank for manual entry.', '建立發票時自動產生號碼，留空或刪除則手動輸入', '建立发票時自动產生號碼，留空或删除則手动輸入')}</p>
         <div className="grid grid-cols-2 gap-3">
           <div>
             <select value={coForm.invoice_number_pattern} onChange={e => setCoForm({...coForm, invoice_number_pattern: e.target.value})}
@@ -144,13 +145,13 @@ export default function Settings() {
                 { v: 'INV{YY}{MM}-{NNNN}', label: 'INV2605-0001' },
                 { v: '#{YYYY}{MM}{NNN}', label: '#202605001' },
                 { v: '#{YY}{MM}{DD}-{NN}', label: '#260511-01' },
-                { v: 'INV-{NNNNN}', label: i18n.language === 'en' ? 'INV-00001 (Sequential)' : 'INV-00001 (流水號)' },
+                { v: 'INV-{NNNNN}', label: tr('INV-00001 (Sequential)', 'INV-00001 (流水號)', 'INV-00001 (流水号)') },
               ].map(p => <option key={p.v} value={p.v}>{p.v} → {p.label}</option>)}
             </select>
           </div>
           <div className="flex items-end pb-2">
             <span className="text-xs text-muted-foreground">
-              {i18n.language === 'en' ? 'Preview: ' : '預覽: '}{(() => {
+              {tr('Preview: ', '預覽: ', '预览: ')}{(() => {
                 const now = new Date();
                 const p = coForm.invoice_number_pattern || 'INV{YY}{MM}-{NNN}';
                 return p
@@ -165,7 +166,7 @@ export default function Settings() {
         </div>
         <button onClick={() => saveCompany.mutate(coForm)} disabled={saveCompany.isPending}
           className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm hover:opacity-90 disabled:opacity-50">
-          <Save className="h-4 w-4" /> {coSaved ? (i18n.language === 'en' ? 'Saved!' : '已儲存！') : (i18n.language === 'en' ? 'Save Company Profile' : '儲存公司資料')}
+          <Save className="h-4 w-4" /> {coSaved ? (tr('Saved!', '已儲存！', '已储存！')) : (tr('Save Company Profile', '儲存公司資料', '储存公司资料'))}
         </button>
       </div>
 

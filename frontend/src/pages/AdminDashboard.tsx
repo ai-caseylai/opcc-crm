@@ -9,6 +9,7 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
+import { tr } from '../lib/i18nHelpers';
 import {
   Building2, Users, ClipboardCheck, FileText, Activity,
   ChevronRight, ExternalLink, Search, Shield,
@@ -40,7 +41,6 @@ export default function AdminDashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [searchQ, setSearchQ] = useState('');
-  const en = i18n.language === 'en';
 
   const { data: usersData, isLoading: usersLoading, error: usersError } = useQuery({
     queryKey: ['admin-users'],
@@ -77,20 +77,20 @@ export default function AdminDashboard() {
       <div>
         <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
           <Shield className="h-3.5 w-3.5" />
-          <span>{en ? 'Platform Administration' : '平台管理'}</span>
+          <span>{tr('Platform Administration', '平台管理', '平台管理')}</span>
         </div>
         <h1 className="text-2xl font-bold">
-          {en ? `Welcome back, ${user?.name || 'Admin'}` : `歡迎回來，${user?.name || '管理員'}`}
+          {tr(`Welcome back, ${user?.name || 'Admin'}`, `歡迎回來，${user?.name || '管理員'}`, `歡迎回來，${user?.name || '管理員'}`)}
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          {en ? 'System overview and company management' : '系統概覽和公司管理'}
+          {tr('System overview and company management', '系統概覽和公司管理', '系統概覽和公司管理')}
         </p>
       </div>
 
       {/* Error state */}
       {usersError && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-sm text-red-700">
-          {en ? 'Failed to load data: ' : '載入失敗：'}{(usersError as any)?.message || 'Unknown error'}
+          {tr('Failed to load data: ', '載入失敗：', '载入失败：')}{(usersError as any)?.message || 'Unknown error'}
         </div>
       )}
 
@@ -98,14 +98,14 @@ export default function AdminDashboard() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatsCard
           icon={Building2}
-          label={en ? 'Companies' : '公司'}
+          label={tr('Companies', '公司', '公司')}
           value={companies.length}
           color="text-blue-600"
           bg="bg-blue-50 dark:bg-blue-950/30"
         />
         <StatsCard
           icon={ClipboardCheck}
-          label={en ? 'Pending Applications' : '待審核申請'}
+          label={tr('Pending Applications', '待審核申請', '待审核申请')}
           value={pendingApps.length}
           color={pendingApps.length > 0 ? 'text-orange-600' : 'text-green-600'}
           bg={pendingApps.length > 0 ? 'bg-orange-50 dark:bg-orange-950/30' : 'bg-green-50 dark:bg-green-950/30'}
@@ -113,15 +113,15 @@ export default function AdminDashboard() {
         />
         <StatsCard
           icon={Users}
-          label={en ? 'Total Users' : '總用戶'}
+          label={tr('Total Users', '總用戶', '总用戶')}
           value={allUsers.length}
-          sub={en ? `${totalStaff} staff` : `${totalStaff} 員工`}
+          sub={tr(`${totalStaff} staff`, `${totalStaff} 員工`, `${totalStaff} 員工`)}
           color="text-purple-600"
           bg="bg-purple-50 dark:bg-purple-950/30"
         />
         <StatsCard
           icon={FileText}
-          label={en ? 'Total Invoices' : '總發票'}
+          label={tr('Total Invoices', '總發票', '总发票')}
           value={totalInvoices}
           color="text-emerald-600"
           bg="bg-emerald-50 dark:bg-emerald-950/30"
@@ -135,7 +135,7 @@ export default function AdminDashboard() {
             <ClipboardCheck className="h-5 w-5 text-orange-600 mt-0.5 flex-shrink-0" />
             <div className="flex-1">
               <h3 className="font-semibold text-orange-900 dark:text-orange-200 text-sm">
-                {en ? `${pendingApps.length} application(s) awaiting review` : `${pendingApps.length} 個申請待審核`}
+                {tr(`${pendingApps.length} application(s) awaiting review`, `${pendingApps.length} 個申請待審核`, `${pendingApps.length} 个申请待审核`)}
               </h3>
               <div className="mt-2 space-y-1">
                 {pendingApps.slice(0, 3).map(app => (
@@ -152,7 +152,7 @@ export default function AdminDashboard() {
                 onClick={() => navigate('/admin/applications')}
                 className="mt-2 text-sm text-orange-700 dark:text-orange-300 font-medium hover:underline flex items-center gap-1"
               >
-                {en ? 'Review applications' : '審核申請'} <ChevronRight className="h-3.5 w-3.5" />
+                {tr('Review applications', '審核申請', '审核申请')} <ChevronRight className="h-3.5 w-3.5" />
               </button>
             </div>
           </div>
@@ -164,14 +164,14 @@ export default function AdminDashboard() {
         <div className="p-4 border-b flex items-center justify-between gap-3">
           <h2 className="font-semibold text-sm flex items-center gap-2">
             <Building2 className="h-4 w-4" />
-            {en ? `Companies (${companies.length})` : `公司 (${companies.length})`}
+            {tr(`Companies (${companies.length})`, `公司 (${companies.length})`, `公司 (${companies.length})`)}
           </h2>
           <div className="relative">
             <Search className="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <input
               value={searchQ}
               onChange={e => setSearchQ(e.target.value)}
-              placeholder={en ? 'Search companies...' : '搜尋公司...'}
+              placeholder={tr('Search companies...', '搜尋公司...', '搜索公司...')}
               className="pl-8 pr-3 py-1.5 border rounded-md text-sm bg-background w-52"
             />
           </div>
@@ -179,23 +179,23 @@ export default function AdminDashboard() {
 
         {usersLoading ? (
           <div className="p-8 text-center text-muted-foreground text-sm">
-            {en ? 'Loading...' : '載入中...'}
+            {tr('Loading...', '載入中...', '载入中...')}
           </div>
         ) : companies.length === 0 ? (
           <div className="p-12 text-center text-muted-foreground">
             <Building2 className="h-10 w-10 mx-auto mb-3 opacity-30" />
-            <p className="text-sm">{en ? 'No companies yet. Approve an application to get started.' : '尚無公司。批准申請以開始。'}</p>
+            <p className="text-sm">{tr('No companies yet. Approve an application to get started.', '尚無公司。批准申請以開始。', '尚无公司。批准申请以开始。')}</p>
           </div>
         ) : (
           <table className="w-full text-sm">
             <thead className="bg-muted/50 text-xs">
               <tr>
-                <th className="text-left px-4 py-2.5 font-medium">{en ? 'Company' : '公司'}</th>
-                <th className="text-left px-4 py-2.5 font-medium">{en ? 'Contact' : '聯絡人'}</th>
-                <th className="text-center px-4 py-2.5 font-medium">{en ? 'Invoices' : '發票'}</th>
-                <th className="text-center px-4 py-2.5 font-medium">{en ? 'Customers' : '客戶'}</th>
-                <th className="text-left px-4 py-2.5 font-medium">{en ? 'Created' : '建立日期'}</th>
-                <th className="text-right px-4 py-2.5 font-medium">{en ? 'Actions' : '操作'}</th>
+                <th className="text-left px-4 py-2.5 font-medium">{tr('Company', '公司', '公司')}</th>
+                <th className="text-left px-4 py-2.5 font-medium">{tr('Contact', '聯絡人', '聯络人')}</th>
+                <th className="text-center px-4 py-2.5 font-medium">{tr('Invoices', '發票', '发票')}</th>
+                <th className="text-center px-4 py-2.5 font-medium">{tr('Customers', '客戶', '客户')}</th>
+                <th className="text-left px-4 py-2.5 font-medium">{tr('Created', '建立日期', '建立日期')}</th>
+                <th className="text-right px-4 py-2.5 font-medium">{tr('Actions', '操作', '操作')}</th>
               </tr>
             </thead>
             <tbody>
@@ -225,7 +225,7 @@ export default function AdminDashboard() {
                       className="text-xs px-2.5 py-1 border rounded hover:bg-muted inline-flex items-center gap-1"
                     >
                       <ExternalLink className="h-3 w-3" />
-                      {en ? 'View' : '查看'}
+                      {tr('View', '查看', '查看')}
                     </button>
                   </td>
                 </tr>
@@ -239,7 +239,7 @@ export default function AdminDashboard() {
       <div className="bg-card border rounded-xl p-4">
         <h2 className="font-semibold text-sm flex items-center gap-2 mb-3">
           <Activity className="h-4 w-4" />
-          {en ? 'Recent System Activity' : '最近系統活動'}
+          {tr('Recent System Activity', '最近系統活動', '最近系統活動')}
         </h2>
         <RecentActivity />
       </div>
@@ -268,7 +268,6 @@ function StatsCard({ icon: Icon, label, value, sub, color, bg, onClick }: {
 
 function RecentActivity() {
   const { i18n } = useTranslation();
-  const en = i18n.language === 'en';
 
   // Use admin users endpoint as a proxy for recent activity
   const { data } = useQuery({
@@ -281,7 +280,7 @@ function RecentActivity() {
   const recent = [...users].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')).slice(0, 5);
 
   if (recent.length === 0) {
-    return <p className="text-sm text-muted-foreground">{en ? 'No recent activity.' : '暫無最近活動。'}</p>;
+    return <p className="text-sm text-muted-foreground">{tr('No recent activity.', '暫無最近活動。', '暫无最近活動。')}</p>;
   }
 
   return (

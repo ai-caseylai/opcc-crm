@@ -3,9 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
+import { useToast } from '../components/Toast';
 import { Eye, Trash2, Landmark, ChevronDown, ChevronRight, FileText, Link2, Check, X, Zap, Search, Tag, Download, Upload, FilePlus, Pencil } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import SupervisorPasswordModal from '../components/SupervisorPasswordModal';
+import { tr } from '../lib/i18nHelpers';
 
 interface Transaction {
   id: string;
@@ -28,6 +30,7 @@ interface Transaction {
 
 export default function BankStatements() {
   const { t, i18n } = useTranslation();
+  const toast = useToast();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { user } = useAuth();
@@ -74,14 +77,14 @@ export default function BankStatements() {
         ? '\n\nItem moved to Recycle Bin — can be restored within 30 days.'
         : '';
       if (cascadeMsg || fileMsg || restoreMsg) {
-        setTimeout(() => alert(`Statement deleted.${cascadeMsg}${fileMsg}${restoreMsg}`), 10);
+        setTimeout(() => toast.info(`Statement deleted.${cascadeMsg}${fileMsg}${restoreMsg}`), 10);
       }
     },
     onError: (err: any) => {
       if (err?.status === 403 || /higher permission/i.test(err?.error || err?.message || '')) {
-        alert('Delete not allowed for your account. Only account owner or boss-level users can delete records. Please ask your admin.');
+        toast.info('Delete not allowed for your account. Only account owner or boss-level users can delete records. Please ask your admin.');
       } else {
-        alert(`Delete failed: ${err?.error || err?.message || 'Unknown error'}`);
+        toast.info(`Delete failed: ${err?.error || err?.message || 'Unknown error'}`);
       }
     },
   });
@@ -90,9 +93,7 @@ export default function BankStatements() {
     mutationFn: () => api('/bank-statements/auto-match', { method: 'POST' }),
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['bank-statement', expandedId] });
-      alert(i18n.language === 'en'
-        ? `Auto-match done: ${data.matched?.length || 0} suggested, ${data.unmatched_count || 0} unmatched`
-        : `配對完成：${data.matched?.length || 0} 筆建議，${data.unmatched_count || 0} 筆未配對`);
+      toast.info(tr(`Auto-match done: ${data.matched?.length || 0} suggested, ${data.unmatched_count || 0} unmatched`, `配對完成：${data.matched?.length || 0} 筆建議，${data.unmatched_count || 0} 筆未配對`, `配对完成：${data.matched?.length || 0} 笔建议，${data.unmatched_count || 0} 笔未配对`));
     },
   });
 
@@ -129,7 +130,7 @@ export default function BankStatements() {
       navigate(`/invoices?highlight=${data.id}`);
     },
     onError: (err: any) => {
-      alert(`Could not create invoice: ${err?.error || err?.message || 'Unknown error'}`);
+      toast.info(`Could not create invoice: ${err?.error || err?.message || 'Unknown error'}`);
     },
   });
 
@@ -137,9 +138,7 @@ export default function BankStatements() {
     mutationFn: () => api(`/bank-statements/${expandedId}/auto-categorize`, { method: 'POST' }),
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['bank-statement', expandedId] });
-      alert(i18n.language === 'en'
-        ? `Auto-categorized: ${data.categorized} rows, skipped ${data.skipped} (total ${data.total})`
-        : `已自動分類：${data.categorized} 筆，跳過 ${data.skipped} 筆（共 ${data.total} 筆）`);
+      toast.info(tr(`Auto-categorized: ${data.categorized} rows, skipped ${data.skipped} (total ${data.total})`, `已自動分類：${data.categorized} 筆，跳過 ${data.skipped} 筆（共 ${data.total} 筆）`, `已自动分類：${data.categorized} 笔，跳過 ${data.skipped} 笔（共 ${data.total} 笔）`));
     },
   });
 
@@ -243,12 +242,12 @@ export default function BankStatements() {
                   <div className="border-x border-b rounded-b-md bg-muted/10 px-4 py-3">
                     {detailQuery.isLoading ? (
                       <p className="text-sm text-muted-foreground py-4 text-center">
-                        {i18n.language === 'en' ? 'Loading transactions...' : '載入交易中...'}
+                        {tr('Loading transactions...', '載入交易中...', '载入交易中...')}
                       </p>
                     ) : transactions.length === 0 ? (
                       <div className="flex items-center gap-2 text-sm text-muted-foreground py-4 justify-center">
                         <FileText className="h-4 w-4" />
-                        {i18n.language === 'en' ? 'No transactions found' : '沒有找到交易'}
+                        {tr('No transactions found', '沒有找到交易', '沒有找到交易')}
                       </div>
                     ) : (
                       <div>
@@ -282,9 +281,9 @@ export default function BankStatements() {
                                         body: { csv: text },
                                       });
                                       queryClient.invalidateQueries({ queryKey: ['bank-statement', expandedId] });
-                                      alert(i18n.language === 'en' ? 'CSV import complete' : 'CSV 匯入完成');
+                                      toast.success(tr('CSV import complete', 'CSV 匯入完成', 'CSV 汇入完成'));
                                     } catch (err: any) {
-                                      alert((i18n.language === 'en' ? 'Import failed: ' : '匯入失敗：') + (err.message || 'unknown'));
+                                      toast.error((tr('Import failed: ', '匯入失敗：', '汇入失败：')) + (err.message || 'unknown'));
                                     }
                                     e.target.value = '';
                                   }} />
@@ -292,8 +291,8 @@ export default function BankStatements() {
                               <button onClick={() => { setEditMode(!editMode); setEdits({}); }}
                                 className={`px-2 py-1 text-xs rounded border ${editMode ? 'bg-primary text-primary-foreground border-primary' : 'hover:bg-muted'}`}>
                                 {editMode
-                                  ? (i18n.language === 'en' ? 'Done Editing' : '完成編輯')
-                                  : (i18n.language === 'en' ? '✏️ Edit' : '✏️ 編輯')}
+                                  ? (tr('Done Editing', '完成編輯', '完成編輯'))
+                                  : (tr('✏️ Edit', '✏️ 編輯', '✏️ 編輯'))}
                               </button>
                               <button onClick={async () => {
                                 if (!detail?.id) return;
@@ -301,11 +300,11 @@ export default function BankStatements() {
                                   const res = await api(`/bank-statements/${detail.id}/reconcile`, { method: 'POST' });
                                   setReconData(res);
                                 } catch (err: any) {
-                                  alert((i18n.language === 'en' ? 'Reconcile failed: ' : '對賬失敗：') + (err.message || 'unknown'));
+                                  toast.error((tr('Reconcile failed: ', '對賬失敗：', '对账失败：')) + (err.message || 'unknown'));
                                 }
                               }}
                                 className="px-2 py-1 text-xs rounded border hover:bg-green-100">
-                                {i18n.language === 'en' ? '🔍 Reconcile' : '🔍 對賬 Reconcile'}
+                                {tr('🔍 Reconcile', '🔍 對賬 Reconcile', '🔍 对账 Reconcile')}
                               </button>
                             </div>
                           </div>
@@ -415,7 +414,7 @@ export default function BankStatements() {
                                         onClick={e => e.stopPropagation()}
                                       >
                                         <option value="" className="text-muted-foreground">
-                          {i18n.language === 'en' ? '-- Select account --' : '-- 選科目 --'}
+                          {tr('-- Select account --', '-- 選科目 --', '-- 選科目 --')}
                         </option>
                                         {accounts.map((a: any) => (
                                           <option key={a.account_code} value={a.account_code}>
@@ -504,15 +503,15 @@ Return ONLY a JSON object with corrected fields. If nothing needs fixing, return
                                                   if (json.withdrawal_amount !== undefined) update.withdrawal_amount = json.withdrawal_amount;
                                                   if (json.balance !== undefined) update.balance = json.balance;
                                                   setEdits(prev => ({...prev, [tx.id]: {...prev[tx.id], ...update}}));
-                                                  if (json.note) alert('AI: ' + json.note);
+                                                  if (json.note) toast.info('AI: ' + json.note);
                                                 } else {
-                                                  alert('AI 認為此交易無需修改');
+                                                  toast.info('AI 認為此交易無需修改');
                                                 }
-                                              } catch { alert('AI 回應無法解析：' + cleanReply.slice(0, 200)); }
+                                              } catch { toast.info('AI 回應無法解析：' + cleanReply.slice(0, 200)); }
                                             } else {
-                                              alert('AI 回應：' + reply.slice(0, 300));
+                                              toast.info('AI 回應：' + reply.slice(0, 300));
                                             }
-                                          } catch (e: any) { alert('AI 失敗：' + (e.message || 'unknown')); }
+                                          } catch (e: any) { toast.info('AI 失敗：' + (e.message || 'unknown')); }
                                           setAiLoading(null);
                                         }}
                                           disabled={aiLoading === tx.id}
@@ -605,25 +604,25 @@ Return ONLY a JSON object with corrected fields. If nothing needs fixing, return
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setReconData(null)}>
           <div className="bg-card border rounded-xl p-6 w-full max-w-lg mx-4 space-y-4" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between">
-              <h3 className="font-bold text-lg">{i18n.language === 'en' ? 'Bank Reconciliation' : '銀行對賬 Bank Reconciliation'}</h3>
+              <h3 className="font-bold text-lg">{tr('Bank Reconciliation', '銀行對賬 Bank Reconciliation', '银行对账 Bank Reconciliation')}</h3>
               <span className={`text-sm font-bold px-3 py-1 rounded ${Math.abs(reconData.difference || 0) < 0.01 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                 {Math.abs(reconData.difference || 0) < 0.01
-                  ? (i18n.language === 'en' ? '✓ Balanced' : '✓ 相符')
-                  : (i18n.language === 'en' ? '⚠ Difference' : '⚠ 不符')}
+                  ? (tr('✓ Balanced', '✓ 相符', '✓ 相符'))
+                  : (tr('⚠ Difference', '⚠ 不符', '⚠ 不符'))}
               </span>
             </div>
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div className="bg-muted/50 rounded-lg p-3">
-                <span className="text-muted-foreground text-xs">{i18n.language === 'en' ? 'Statement Balance' : '月結單餘額'}</span>
+                <span className="text-muted-foreground text-xs">{tr('Statement Balance', '月結單餘額', '月结单余额')}</span>
                 <p className="font-bold text-lg">HKD {reconData.statement_balance?.toLocaleString()}</p>
               </div>
               <div className="bg-muted/50 rounded-lg p-3">
-                <span className="text-muted-foreground text-xs">{i18n.language === 'en' ? 'GL Balance' : '總賬餘額'}</span>
+                <span className="text-muted-foreground text-xs">{tr('GL Balance', '總賬餘額', '總賬余额')}</span>
                 <p className="font-bold text-lg">HKD {reconData.gl_balance?.toLocaleString()}</p>
               </div>
             </div>
             <div className="text-sm flex justify-between border-t pt-3">
-              <span>{i18n.language === 'en' ? 'Difference' : '差異 Difference'}</span>
+              <span>{tr('Difference', '差異 Difference', '差异 Difference')}</span>
               <span className={`font-bold ${Math.abs(reconData.difference || 0) < 0.01 ? 'text-green-600' : 'text-red-600'}`}>
                 HKD {reconData.difference?.toLocaleString()}
               </span>
@@ -631,7 +630,7 @@ Return ONLY a JSON object with corrected fields. If nothing needs fixing, return
             {(reconData.outstanding_transactions || []).length > 0 && (
               <div>
                 <span className="text-sm font-medium">
-                  {i18n.language === 'en' ? `Outstanding (${reconData.outstanding_transactions.length})` : `未達交易 Outstanding (${reconData.outstanding_transactions.length})`}
+                  {tr(`Outstanding (${reconData.outstanding_transactions.length})`, `未達交易 Outstanding (${reconData.outstanding_transactions.length})`, `未達交易 Outstanding (${reconData.outstanding_transactions.length})`)}
                 </span>
                 <div className="max-h-48 overflow-y-auto mt-2 border rounded-lg divide-y">
                   {(reconData.outstanding_transactions || []).map((t: any) => (
@@ -648,7 +647,7 @@ Return ONLY a JSON object with corrected fields. If nothing needs fixing, return
             )}
             <div className="flex gap-3 justify-end">
               <button onClick={() => setReconData(null)} className="px-4 py-2 border rounded-md text-sm">
-                {i18n.language === 'en' ? 'Close' : '關閉'}
+                {tr('Close', '關閉', '关闭')}
               </button>
             </div>
           </div>
@@ -719,14 +718,14 @@ function ContinuityChain() {
           }
           <span className="font-bold text-sm">
             {hasIssues ? '⚠️' : '✅'}{' '}
-            {i18n.language === 'en' ? 'Statement Continuity Chain' : '月結單連續性檢查'}
+            {tr('Statement Continuity Chain', '月結單連續性檢查', '月结单连续性检查')}
           </span>
           {!expanded && (
             <span className="text-xs text-muted-foreground ml-2">
-              {groups.length} {i18n.language === 'en' ? 'account(s)' : '個帳戶'}
+              {groups.length} {tr('account(s)', '個帳戶', '个账户')}
               {hasIssues && (
                 <span className="text-red-600 font-medium ml-2">
-                  {i18n.language === 'en' ? '— issues found' : '— 發現問題'}
+                  {tr('— issues found', '— 發現問題', '— 发现问题')}
                 </span>
               )}
             </span>
@@ -743,11 +742,11 @@ function ContinuityChain() {
         <div className="space-y-3 pt-1">
           {/* Legend */}
           <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-            <span>🟢 {i18n.language === 'en' ? 'Matched' : '正常'}</span>
-            <span>🔴 {i18n.language === 'en' ? 'Gap (missing month)' : '缺失月份'}</span>
-            <span>🟡 {i18n.language === 'en' ? 'Balance mismatch' : '餘額不符'}</span>
-            <span>🟠 {i18n.language === 'en' ? 'Overlap' : '重疊'}</span>
-            <span>🟣 {i18n.language === 'en' ? 'Duplicate' : '重複'}</span>
+            <span>🟢 {tr('Matched', '正常', '正常')}</span>
+            <span>🔴 {tr('Gap (missing month)', '缺失月份', '缺失月份')}</span>
+            <span>🟡 {tr('Balance mismatch', '餘額不符', '余额不符')}</span>
+            <span>🟠 {tr('Overlap', '重疊', '重叠')}</span>
+            <span>🟣 {tr('Duplicate', '重複', '重复')}</span>
           </div>
 
           {groups.map((g: any) => (
@@ -763,8 +762,8 @@ function ContinuityChain() {
                   g.status === 'complete' ? 'bg-green-200 text-green-800' : 'bg-red-200 text-red-800'
                 }`}>
                   {g.status === 'complete'
-                    ? (i18n.language === 'en' ? 'Complete' : '完整')
-                    : (i18n.language === 'en' ? 'Issues found' : '有問題')}
+                    ? (tr('Complete', '完整', '完整'))
+                    : (tr('Issues found', '有問題', '有问题'))}
                 </span>
               </div>
 
@@ -807,29 +806,23 @@ function ContinuityChain() {
                 <div key={`issue-${link.id}`} className="text-xs pl-2 border-l-2 border-red-300 ml-2 space-y-0.5">
                   {link.issues.includes('gap') && link.missing_months && (
                     <p className="text-red-700 dark:text-red-400">
-                      {issueIcon(link.issues)} {i18n.language === 'en' ? 'Missing:' : '缺失：'}{' '}
+                      {issueIcon(link.issues)} {tr('Missing:', '缺失：', '缺失：')}{' '}
                       <span className="font-mono font-medium">{link.missing_months.join(', ')}</span>
                     </p>
                   )}
                   {link.issues.includes('balance_mismatch') && (
                     <p className="text-yellow-700 dark:text-yellow-400">
-                      🟡 {i18n.language === 'en'
-                        ? `Balance mismatch at ${link.statement_year}-${String(link.statement_month).padStart(2, '0')}: expected opening ${link.expected_opening?.toLocaleString()}, got ${link.actual_opening?.toLocaleString()} (diff: ${link.mismatch_amount?.toLocaleString()})`
-                        : `${link.statement_year}-${String(link.statement_month).padStart(2, '0')} 餘額不符：預期期初 ${link.expected_opening?.toLocaleString()}，實際 ${link.actual_opening?.toLocaleString()}（差異 ${link.mismatch_amount?.toLocaleString()}）`}
+                      🟡 {tr(`Balance mismatch at ${link.statement_year}-${String(link.statement_month).padStart(2, '0')}: expected opening ${link.expected_opening?.toLocaleString()}, got ${link.actual_opening?.toLocaleString()} (diff: ${link.mismatch_amount?.toLocaleString()})`, `${link.statement_year}-${String(link.statement_month).padStart(2, '0')} 餘額不符：預期期初 ${link.expected_opening?.toLocaleString()}，實際 ${link.actual_opening?.toLocaleString()}（差異 ${link.mismatch_amount?.toLocaleString()}）`, `${link.statement_year}-${String(link.statement_month).padStart(2, '0')} 餘額不符：預期期初 ${link.expected_opening?.toLocaleString()}，實際 ${link.actual_opening?.toLocaleString()}（差異 ${link.mismatch_amount?.toLocaleString()}）`)}
                     </p>
                   )}
                   {link.issues.includes('duplicate') && (
                     <p className="text-purple-700 dark:text-purple-400">
-                      🟣 {i18n.language === 'en'
-                        ? `Duplicate statement for ${link.statement_year}-${String(link.statement_month).padStart(2, '0')}`
-                        : `${link.statement_year}-${String(link.statement_month).padStart(2, '0')} 重複月結單`}
+                      🟣 {tr(`Duplicate statement for ${link.statement_year}-${String(link.statement_month).padStart(2, '0')}`, `${link.statement_year}-${String(link.statement_month).padStart(2, '0')} 重複月結單`, `${link.statement_year}-${String(link.statement_month).padStart(2, '0')} 重复月结单`)}
                     </p>
                   )}
                   {(link.issues.includes('overlap') || link.issues.includes('date_overlap')) && (
                     <p className="text-orange-700 dark:text-orange-400">
-                      🟠 {i18n.language === 'en'
-                        ? `Overlapping period at ${link.statement_year}-${String(link.statement_month).padStart(2, '0')}`
-                        : `${link.statement_year}-${String(link.statement_month).padStart(2, '0')} 期間重疊`}
+                      🟠 {tr(`Overlapping period at ${link.statement_year}-${String(link.statement_month).padStart(2, '0')}`, `${link.statement_year}-${String(link.statement_month).padStart(2, '0')} 期間重疊`, `${link.statement_year}-${String(link.statement_month).padStart(2, '0')} 期间重叠`)}
                     </p>
                   )}
                 </div>
@@ -871,7 +864,7 @@ function AccountModal({ tx, allTx, accounts, onClose, onApply }: {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
       <div className="bg-card border rounded-xl p-4 w-[80vw] mx-4 space-y-3 max-h-[70vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between">
-          <h3 className="font-bold text-lg flex items-center gap-2"><Tag className="h-5 w-5" /> {i18n.language === 'en' ? 'Select Account Code' : '選擇會計科目'}</h3>
+          <h3 className="font-bold text-lg flex items-center gap-2"><Tag className="h-5 w-5" /> {tr('Select Account Code', '選擇會計科目', '选择会计科目')}</h3>
           <button onClick={onClose} className="p-1 hover:bg-muted rounded"><X className="h-5 w-5" /></button>
         </div>
 
@@ -895,7 +888,7 @@ function AccountModal({ tx, allTx, accounts, onClose, onApply }: {
         <div className="relative">
           <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <input value={search} onChange={e => setSearch(e.target.value)}
-            placeholder={i18n.language === 'en' ? 'Search by code or name...' : '輸入科目編號或名稱搜尋...'}
+            placeholder={tr('Search by code or name...', '輸入科目編號或名稱搜尋...', '輸入科目编号或名称搜索...')}
             className="w-full pl-9 pr-3 py-2 border rounded-md text-sm bg-background" autoFocus />
         </div>
 
@@ -913,7 +906,7 @@ function AccountModal({ tx, allTx, accounts, onClose, onApply }: {
             </button>
           ))}
           {filtered.length === 0 && (
-            <p className="text-sm text-muted-foreground text-center py-4">{i18n.language === 'en' ? 'No matching accounts' : '無匹配科目'}</p>
+            <p className="text-sm text-muted-foreground text-center py-4">{tr('No matching accounts', '無匹配科目', '无匹配科目')}</p>
           )}
         </div>
 
@@ -921,7 +914,7 @@ function AccountModal({ tx, allTx, accounts, onClose, onApply }: {
         {similar.length > 0 && (
           <div className="border rounded-lg">
             <div className="px-3 py-2 bg-muted/30 border-b text-sm font-medium flex items-center gap-2">
-              <span>{i18n.language === 'en' ? `Similar transactions (${similar.length})` : `相似交易 (${similar.length})`}</span>
+              <span>{tr(`Similar transactions (${similar.length})`, `相似交易 (${similar.length})`, `相似交易 (${similar.length})`)}</span>
               <span className="text-xs text-muted-foreground">
                 {(() => {
                   const cats = new Map<string, number>();
@@ -941,8 +934,8 @@ function AccountModal({ tx, allTx, accounts, onClose, onApply }: {
               }}
                 className="text-xs text-primary hover:underline">
                 {selectedSimilar.size === similar.length
-                  ? (i18n.language === 'en' ? 'Deselect All' : '取消全選')
-                  : (i18n.language === 'en' ? 'Select All' : '全選')}
+                  ? (tr('Deselect All', '取消全選', '取消全选'))
+                  : (tr('Select All', '全選', '全选'))}
               </button>
             </div>
             <div className="max-h-36 overflow-y-auto">
@@ -987,8 +980,8 @@ function AccountModal({ tx, allTx, accounts, onClose, onApply }: {
           disabled={!selectedCode}
           className="w-full py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:opacity-90 disabled:opacity-30">
           {selectedSimilar.size > 0
-            ? (i18n.language === 'en' ? `Apply to ${selectedSimilar.size + 1} transactions` : `套用科目（含 ${selectedSimilar.size} 筆相似交易）`)
-            : (i18n.language === 'en' ? 'Apply Account Code' : '套用科目')}
+            ? (tr(`Apply to ${selectedSimilar.size + 1} transactions`, `套用科目（含 ${selectedSimilar.size} 筆相似交易）`, `套用科目（含 ${selectedSimilar.size} 笔相似交易）`))
+            : (tr('Apply Account Code', '套用科目', '套用科目'))}
         </button>
       </div>
     </div>
@@ -1034,6 +1027,7 @@ function ManualMatchModal({ txId, onClose, onMatch }: { txId: string; onClose: (
 // ── Pending Review Banner: shows draft statements awaiting confirmation ──
 function PendingReviewBanner() {
   const { i18n } = useTranslation();
+  const toast = useToast();
   const queryClient = useQueryClient();
   const { data } = useQuery({
     queryKey: ['bank-statements-drafts'],
@@ -1050,9 +1044,9 @@ function PendingReviewBanner() {
     },
     onError: (err: any) => {
       if (err?.status === 403 || /higher permission/i.test(err?.error || err?.message || '')) {
-        alert('Only account owner or boss-level users can discard drafts. Please ask your admin.');
+        toast.info('Only account owner or boss-level users can discard drafts. Please ask your admin.');
       } else {
-        alert(`Discard failed: ${err?.error || err?.message || 'Unknown error'}`);
+        toast.info(`Discard failed: ${err?.error || err?.message || 'Unknown error'}`);
       }
     },
   });
@@ -1096,9 +1090,7 @@ function PendingReviewBanner() {
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  if (confirm(i18n.language === 'en'
-                    ? 'Discard this draft? It will be moved to the Recycle Bin (30-day restore) and the PDF will also be removed from File Storage.'
-                    : '放棄此草稿？將移至回收站（可在30天內還原），PDF 也將從文件存儲中刪除。')) {
+                  if (confirm(tr('Discard this draft? It will be moved to the Recycle Bin (30-day restore) and the PDF will also be removed from File Storage.', '放棄此草稿？將移至回收站（可在30天內還原），PDF 也將從文件存儲中刪除。', '放弃此草稿？將移至回收站（可在30天內还原），PDF 也將從文件存儲中删除。'))) {
                     dismissMut.mutate(d.id);
                   }
                 }}

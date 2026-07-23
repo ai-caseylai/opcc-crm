@@ -3,9 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api, WORKER_API_BASE } from '../lib/api';
+import { useToast } from '../components/Toast';
 import { Upload, Download, Trash2, Search, Pencil, X, Check, File, FileText, FileSpreadsheet, Image, FolderOpen, Folder, ChevronRight, ChevronDown, Zap } from 'lucide-react';
 import SupervisorPasswordModal from '../components/SupervisorPasswordModal';
 import { useAuth } from '../contexts/AuthContext';
+import { tr } from '../lib/i18nHelpers';
 
 function formatSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -135,14 +137,14 @@ function FolderTree({ node, depth, expanded, toggle, onFileAction, onSetDirectio
                     {f.category === 'invoice' && f.direction && (
                       <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
                         f.direction === 'outgoing' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' : 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300'
-                      }`}>{f.direction === 'outgoing' ? '銷售' : '採購'}</span>
+                      }`}>{f.direction === 'outgoing' ? tr('Sales', '銷售', '销售') : tr('Purchase', '採購', '采购')}</span>
                     )}
                     {f.category === 'invoice' && f.payment_status && f.payment_status !== 'unmatched' && (
                       <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
                         f.payment_status === 'received' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
                         : f.payment_status === 'paid' ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300'
                         : 'bg-gray-100 text-gray-700'
-                      }`}>{f.payment_status === 'received' ? '已收' : f.payment_status === 'paid' ? '已付' : f.payment_status}</span>
+                      }`}>{f.payment_status === 'received' ? tr('Received', '已收', '已收') : f.payment_status === 'paid' ? tr('Paid', '已付', '已付') : f.payment_status}</span>
                     )}
                     {f.category === 'invoice' && f.amount != null && (
                       <span className="font-mono">${f.amount.toLocaleString()}</span>
@@ -158,8 +160,8 @@ function FolderTree({ node, depth, expanded, toggle, onFileAction, onSetDirectio
                       f.direction === 'outgoing' ? 'border-blue-300 text-blue-600 hover:bg-blue-50' :
                       f.direction === 'incoming' ? 'border-orange-300 text-orange-600 hover:bg-orange-50' :
                       'border-gray-300 text-gray-500 hover:bg-gray-50'
-                    }`} title="切換銷售/採購">
-                    {!f.direction ? '?' : f.direction === 'outgoing' ? '銷' : '採'}
+                    }`} title={tr('Toggle Sales/Purchase', '切換銷售/採購', '切换销售/采购')}>
+                    {!f.direction ? '?' : f.direction === 'outgoing' ? tr('S', '銷', '销') : tr('P', '採', '采')}
                   </button>
                 )}
                 <button onClick={() => downloadFile(f.id, f.filename || 'file')} className="p-1 hover:bg-muted rounded"><Download className="h-3.5 w-3.5" /></button>
@@ -176,6 +178,7 @@ function FolderTree({ node, depth, expanded, toggle, onFileAction, onSetDirectio
 
 export default function FileStorage() {
   const { t, i18n } = useTranslation();
+  const toast = useToast();
   const { user } = useAuth();
   const isStaff = user?.role === 'staff' || user?.role === 'viewer';
   const queryClient = useQueryClient();
@@ -210,9 +213,9 @@ export default function FileStorage() {
     existingFileName: string | null;
     statementId: string | null;
     invoiceId: string | null;       // for invoice/receipt duplicates
-    dupType: 'bank_statement' | 'invoice' | 'receipt' | null;
-    dupNumber: string | null;       // e.g. "2025001" or "2025002"
-    dupVendor: string | null;
+    dupType: 'bank_statement' | 'invoice' | 'receipt' | 'file' | null;
+    dupNumber: string | null;       // e.g. "2025001" or folder name
+    dupVendor: string | null;       // or upload date
     pendingFile?: File | null;
   } | null>(null);
 
@@ -319,27 +322,27 @@ export default function FileStorage() {
 
         if (docType === 'bank_statement' && result?.statement_id) {
           if (result?.ocr_failed) {
-            alert('The system could not automatically read this file. This can happen with blurry photos, unusual formats, or scanned documents.\n\nYou will be taken to the review page where you can enter the transactions manually.');
+            toast.warning('The system could not automatically read this file. You will be taken to the review page where you can enter details manually.');
           }
           navigate(`/bank-statements/review/${result.statement_id}`);
         } else if (docType === 'invoice' && result?.invoice_id) {
           if (result?.ocr_failed) {
-            alert('The system could not automatically read this invoice. You will be taken to the review page to enter the details manually.');
+            toast.warning('Could not automatically read this invoice. You will be taken to the review page to enter details manually.');
           }
           // Navigate to Invoice Review page — same flow as bank statements
           navigate(`/invoices/review/${result.invoice_id}`);
         } else if (result?.error) {
-          alert(`Could not auto-process this file: ${result.error}\n\nThe file was uploaded but auto-extraction failed. Try a clearer file.`);
+          toast.error(`Could not auto-process: ${result.error}`);
         }
       } catch (err: any) {
         setProcessingMsg(null);
         setUploading(false);
-        alert(`Could not process this file: ${err?.message || err?.error || 'Unknown error'}\n\nThe file was uploaded but auto-extraction failed.`);
+        toast.error(`Could not process file: ${err?.message || 'Unknown error'}`);
       }
     },
     onError: (err: any) => {
       setProcessingMsg(null);
-      alert(`Upload failed: ${err?.message || err?.error || 'Unknown error'}`);
+      toast.error(`Upload failed: ${err?.message || err?.error || 'Unknown error'}`);
       setUploading(false);
     },
   });
@@ -365,9 +368,7 @@ export default function FileStorage() {
     mutationFn: () => api('/file-storage/auto-match-invoices', { method: 'POST' }),
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['file-storage'] });
-      alert(i18n.language === 'en'
-        ? `Match complete: ${data.matched?.length || 0} matched, ${data.unmatched || 0} unmatched`
-        : `配對完成：${data.matched?.length || 0} 筆成功，${data.unmatched || 0} 筆未配對`);
+      toast.success(tr(`Match complete: ${data.matched?.length || 0} matched, ${data.unmatched || 0} unmatched`, `配對完成：${data.matched?.length || 0} 筆成功，${data.unmatched || 0} 筆未配對`, `配对完成：${data.matched?.length || 0} 笔成功，${data.unmatched || 0} 笔未配对`));
     },
   });
 
@@ -377,14 +378,10 @@ export default function FileStorage() {
       queryClient.invalidateQueries({ queryKey: ['file-storage'] });
       queryClient.invalidateQueries({ queryKey: ['file-storage-folders'] });
       queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
-      alert(i18n.language === 'en'
-        ? `Bank statement imported!\nTransactions: ${data.transactions_count || 0}\nBank: ${data.bank_name || 'Unknown'}`
-        : `已匯入銀行月結單！\n交易筆數：${data.transactions_count || 0}\n銀行：${data.bank_name || '未知'}`);
+      toast.success(tr(`Bank statement imported!\nTransactions: ${data.transactions_count || 0}\nBank: ${data.bank_name || 'Unknown'}`, `已匯入銀行月結單！\n交易筆數：${data.transactions_count || 0}\n銀行：${data.bank_name || '未知'}`, `已汇入银行月结单！\n交易笔数：${data.transactions_count || 0}\n银行：${data.bank_name || '未知'}`));
     },
     onError: (err: any) => {
-      alert(i18n.language === 'en'
-        ? `Import failed: ${err?.message || err?.error || 'Unknown error'}`
-        : `匯入失敗：${err?.message || err?.error || '未知錯誤'}`);
+      toast.error(tr(`Import failed: ${err?.message || err?.error || 'Unknown error'}`, `匯入失敗：${err?.message || err?.error || '未知錯誤'}`, `汇入失败：${err?.message || err?.error || '未知错误'}`));
     },
   });
 
@@ -393,8 +390,36 @@ export default function FileStorage() {
     if (arr.length === 0) return;
 
     for (const file of arr) {
-      // ── Pre-upload duplicate check for bank statements ──────────────
+      // ── General duplicate check: same filename already in system ──────
+      // Skip for PDFs, images, and Excel files — they go through auto-processing
+      // which has its own better duplicate detection (by invoice number, bank period, etc.)
       const lowerName = file.name.toLowerCase();
+      const isAutoProcessable = /\.(pdf|jpg|jpeg|png|gif|webp|bmp|xlsx|xls|csv)$/i.test(lowerName);
+
+      if (!isAutoProcessable) {
+        try {
+          const dupCheck: any = await api(`/file-storage/check-duplicate?filename=${encodeURIComponent(file.name)}`);
+          if (dupCheck?.exists && dupCheck?.existing_file) {
+            const ef = dupCheck.existing_file;
+            setDupWarning({
+              show: true,
+              fileId: '',
+              bankName: null,
+              period: null,
+              existingFileName: ef.filename || ef.original_name,
+              statementId: null,
+              invoiceId: null,
+              dupType: 'file',
+              dupNumber: ef.folder || 'Uploads',
+              dupVendor: ef.created_at?.slice(0, 10) || '',
+              pendingFile: file,
+            });
+            return; // modal handles the rest via handleDupChoice
+          }
+        } catch { /* if check fails, proceed with upload */ }
+      }
+
+      // ── Pre-upload duplicate check for bank statements ──────────────
       const isBankStatement =
         /hsbc|hang.?seng|bank.?of.?china|boc|standard.?chartered|citibank|dbs|statement/i.test(lowerName) &&
         /\.(pdf|jpg|jpeg|png)$/i.test(lowerName);
@@ -457,7 +482,7 @@ export default function FileStorage() {
     return new Promise<void>((resolve) => {
       // Check file size — iOS Safari struggles with files > 20MB
       if (file.size > 20 * 1024 * 1024) {
-        alert(`File too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Maximum size is 20MB. Please compress the PDF and try again.`);
+        toast.error(`File too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Maximum size is 20MB.`);
         setUploading(false);
         resolve();
         return;
@@ -467,7 +492,7 @@ export default function FileStorage() {
       reader.onload = (ev) => {
         const base64 = ev.target?.result as string;
         if (!base64) {
-          alert('Could not read file. On iPhone, please ensure the file is fully downloaded (not in iCloud) before uploading. Try opening the file first, then upload.');
+          toast.error('Could not read file. Please ensure the file is fully downloaded before uploading.');
           setUploading(false);
           resolve();
           return;
@@ -485,7 +510,7 @@ export default function FileStorage() {
         resolve();
       };
       reader.onerror = () => {
-        alert('Upload failed: Could not read the file.\n\niPhone users: Make sure the file is downloaded locally (not in iCloud). Tap and hold the file → "Download" before uploading.\n\nAlternatively, try using Google Chrome instead of Safari.');
+        toast.error('Upload failed: Could not read the file. Make sure it is fully downloaded locally.');
         setUploading(false);
         resolve();
       };
@@ -519,9 +544,7 @@ export default function FileStorage() {
     } else if (action === 'delete') {
       deleteMut.mutate(f.id);
     } else if (action === 'import-statement') {
-      if (confirm(i18n.language === 'en'
-        ? `Import "${f.filename}" as a bank statement? The system will auto-OCR and parse transactions.`
-        : `確定要將「${f.filename}」匯入為銀行月結單嗎？系統會自動 OCR 辨識並解析交易紀錄。`)) {
+      if (confirm(tr(`Import "${f.filename}" as a bank statement? The system will auto-OCR and parse transactions.`, `確定要將「${f.filename}」匯入為銀行月結單嗎？系統會自動 OCR 辨識並解析交易紀錄。`, `确定要将「${f.filename}」汇入为银行月结单吗？系统会自动 OCR 辨识并解析交易纪录。`))) {
         importStmtMut.mutate(f.id);
       }
     }
@@ -547,6 +570,9 @@ export default function FileStorage() {
       // User said No — navigate to the existing record to view it
       if (dupType === 'bank_statement' && statementId) {
         navigate(`/bank-statements/review/${statementId}`);
+      } else if (dupType === 'file') {
+        // Just close — user decided not to re-upload
+        return;
       } else if (invoiceId) {
         navigate(`/invoices/review/${invoiceId}`);
       }
@@ -583,11 +609,11 @@ export default function FileStorage() {
       } else if (result?.invoice_id) {
         navigate(`/invoices/review/${result.invoice_id}`);
       } else {
-        alert(`Re-import failed: ${result?.error || 'Unknown error'}`);
+        toast.error(`Re-import failed: ${result?.error || 'Unknown error'}`);
       }
     } catch (err: any) {
       setProcessingMsg(null);
-      alert(`Re-import failed: ${err?.message || 'Unknown error'}`);
+      toast.error(`Re-import failed: ${err?.message || 'Unknown error'}`);
     }
   };
 
@@ -622,15 +648,15 @@ export default function FileStorage() {
         navigate(`/bank-statements/review/${result.statement_id}`);
       } else if (choice === 'invoice' && result?.invoice_id) {
         if (result?.ocr_failed) {
-          alert('Could not automatically read this invoice. You will be taken to the review page to enter the details manually.');
+          toast.warning('Could not automatically read this invoice. You will be taken to the review page to enter details manually.');
         }
         navigate(`/invoices/review/${result.invoice_id}`);
       } else if (result?.error) {
-        alert(`Processing failed: ${result.error}`);
+        toast.error(`Processing failed: ${result.error}`);
       }
     } catch (err: any) {
       setProcessingMsg(null);
-      alert(`Processing failed: ${err?.message || 'Unknown error'}`);
+      toast.error(`Processing failed: ${err?.message || 'Unknown error'}`);
     }
   };
 
@@ -686,6 +712,18 @@ export default function FileStorage() {
                     {dupWarning.dupVendor ? <> from <strong>{dupWarning.dupVendor}</strong></> : ''} has already been imported.
                   </p>
                 </>
+              ) : dupWarning.dupType === 'file' ? (
+                <>
+                  <h3 className="font-bold text-lg">{tr('File Already Exists', '檔案已存在', '文件已存在')}</h3>
+                  <p className="text-sm text-muted-foreground mt-2">
+                    {tr('A file named', '名為', '名为')} <strong>{dupWarning.existingFileName}</strong> {tr('already exists in folder', '已存在於資料夾', '已存在于文件夹')} <strong>{dupWarning.dupNumber}</strong>.
+                  </p>
+                  {dupWarning.dupVendor && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {tr('Uploaded on', '上傳日期', '上传日期')}: {dupWarning.dupVendor}
+                    </p>
+                  )}
+                </>
               ) : (
                 <>
                   <h3 className="font-bold text-lg">Invoice Already Exists 發票已存在</h3>
@@ -708,7 +746,7 @@ export default function FileStorage() {
                 onClick={() => handleDupChoice(false)}
                 className="px-6 py-2 border border-border rounded-md text-sm font-medium hover:bg-muted"
               >
-                No, view existing
+                {dupWarning.dupType === 'file' ? tr('Cancel', '取消', '取消') : 'No, view existing'}
               </button>
             </div>
           </div>
@@ -774,7 +812,7 @@ export default function FileStorage() {
           </div>
           <div className="text-center">
             <p className="font-medium">{dragOver ? t('fileStorage.dropHere') : t('fileStorage.dragDrop')}</p>
-            <p className="text-sm text-muted-foreground mt-1">{t('fileStorage.orClick')}（自動分類到對應資料夾）</p>
+            <p className="text-sm text-muted-foreground mt-1">{t('fileStorage.orClick')}</p>
           </div>
           <label className="cursor-pointer bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:opacity-90">
             {uploading ? 'Uploading...' : t('fileStorage.upload')}
@@ -783,7 +821,7 @@ export default function FileStorage() {
         </div>
         <div className="flex flex-wrap items-center gap-3 mt-4 pt-4 border-t">
           <div>
-            <label className="text-xs text-muted-foreground">{t('fileStorage.folder')}（留空自動分類）</label>
+            <label className="text-xs text-muted-foreground">{t('fileStorage.folder')}</label>
             <input value={folder} onChange={e => setFolder(e.target.value)} placeholder={t('fileStorage.folderPlaceholder')}
               className="px-3 py-2 border rounded-md bg-background text-sm w-52" />
           </div>
@@ -808,13 +846,11 @@ export default function FileStorage() {
           {folderList.map(f => <option key={f} value={f}>{f}</option>)}
         </select>
         <span className="text-xs text-muted-foreground">
-          {i18n.language === 'en'
-            ? `${fileList.length} file${fileList.length === 1 ? '' : 's'}`
-            : `${fileList.length} 個檔案`}
+          {tr(`${fileList.length} file${fileList.length === 1 ? '' : 's'}`, `${fileList.length} 個檔案`, `${fileList.length} 个档案`)}
         </span>
         <button onClick={() => autoMatchMut.mutate()} disabled={autoMatchMut.isPending}
           className="flex items-center gap-1 px-3 py-2 bg-primary text-primary-foreground rounded-md text-xs hover:opacity-90 disabled:opacity-40">
-          <Zap className="h-3 w-3" /> {i18n.language === 'en' ? 'Match Invoices' : '配對發票'}
+          <Zap className="h-3 w-3" /> {tr('Match Invoices', '配對發票', '配对发票')}
         </button>
       </div>
 
@@ -823,20 +859,20 @@ export default function FileStorage() {
         <div className="bg-card border rounded-xl p-6">
           <div className="space-y-3">
             <input value={editName} onChange={e => setEditName(e.target.value)} className="px-3 py-2 border rounded-md text-sm w-full"
-              placeholder={i18n.language === 'en' ? 'Filename' : '檔案名稱'} />
+              placeholder={tr('Filename', '檔案名稱', '档案名称')} />
             <div className="flex gap-3">
               <input value={editFolder} onChange={e => setEditFolder(e.target.value)} className="px-3 py-2 border rounded-md text-sm flex-1"
-                placeholder={i18n.language === 'en' ? 'Folder (use / for subfolders)' : '資料夾（可用 / 分隔層級）'} />
+                placeholder={tr('Folder (use / for subfolders)', '資料夾（可用 / 分隔層級）', '资料夹（可用 / 分隔層級）')} />
               <input value={editDesc} onChange={e => setEditDesc(e.target.value)} className="px-3 py-2 border rounded-md text-sm flex-1"
-                placeholder={i18n.language === 'en' ? 'Description' : '描述'} />
+                placeholder={tr('Description', '描述', '描述')} />
             </div>
             <div className="flex gap-2 justify-end">
               <button onClick={() => setEditingId(null)} className="px-3 py-1.5 border rounded-md text-sm">
-                {i18n.language === 'en' ? 'Cancel' : '取消'}
+                {tr('Cancel', '取消', '取消')}
               </button>
               <button onClick={() => updateMut.mutate({ id: editingId, body: { filename: editName, folder: editFolder, description: editDesc } })}
                 className="px-3 py-1.5 bg-primary text-primary-foreground rounded-md text-sm">
-                {i18n.language === 'en' ? 'Save' : '儲存'}
+                {tr('Save', '儲存', '储存')}
               </button>
             </div>
           </div>

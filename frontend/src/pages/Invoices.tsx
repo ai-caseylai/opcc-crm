@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api, WORKER_API_BASE } from '../lib/api';
 import { Plus, Search, FileText, Eye, Trash2, Download, Pencil } from 'lucide-react';
+import { tr } from '../lib/i18nHelpers';
 
 // Authenticated PDF download: fetches with Bearer token, opens as blob URL
 async function downloadInvoicePDF(invoiceId: string, invoiceNumber: string) {
@@ -31,7 +32,6 @@ async function downloadInvoicePDF(invoiceId: string, invoiceNumber: string) {
 
 export default function Invoices() {
   const { i18n } = useTranslation();
-  const en = i18n.language === 'en';
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
@@ -112,7 +112,7 @@ export default function Invoices() {
           : (inv.direction === 'outgoing' || inv.direction === 'income')
       );
   const statusLabel = (s: string) => {
-    const labels: Record<string, string> = { draft: '草稿', sent: '應收', paid: '已收', overdue: '逾期未收', cancelled: '已取消' };
+    const labels: Record<string, string> = { draft: tr('Draft', '草稿', '草稿'), sent: tr('Sent', '應收', '应收'), paid: tr('Paid', '已收', '已收'), overdue: tr('Overdue', '逾期未收', '逾期未收'), cancelled: tr('Cancelled', '已取消', '已取消') };
     return labels[s] || s;
   };
   const statusBadge = (s: string) => {
@@ -124,21 +124,21 @@ export default function Invoices() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold">{en ? 'Invoices' : '發票 Invoices'}</h2>
-          <p className="text-muted-foreground mt-1">{en ? 'Manage sales invoices and supplier bills' : '管理銷售發票和供應商帳單'}</p>
+          <h2 className="text-2xl font-bold">{tr('Invoices', '發票 Invoices', '发票 Invoices')}</h2>
+          <p className="text-muted-foreground mt-1">{tr('Manage sales invoices and supplier bills', '管理銷售發票和供應商帳單', '管理銷售发票和供应商账單')}</p>
         </div>
         <button onClick={() => setShowForm(true)}
           className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:opacity-90">
-          <Plus className="h-4 w-4" /> {en ? 'Create Invoice' : '建立發票'}
+          <Plus className="h-4 w-4" /> {tr('Create Invoice', '建立發票', '建立发票')}
         </button>
       </div>
 
       {/* Direction tabs: All / Receivable (AR) / Payable (AP) */}
       <div className="flex gap-1 bg-muted/50 rounded-lg p-1 w-fit">
         {([
-          { key: 'all', label: en ? 'All Invoices' : '全部' },
-          { key: 'outgoing', label: en ? 'Receivable (AR)' : '應收帳款 AR' },
-          { key: 'incoming', label: en ? 'Payable (AP)' : '應付帳款 AP' },
+          { key: 'all', label: tr('All Invoices', '全部', '全部') },
+          { key: 'outgoing', label: tr('Receivable (AR)', '應收帳款 AR', '應收账款 AR') },
+          { key: 'incoming', label: tr('Payable (AP)', '應付帳款 AP', '應付账款 AP') },
         ] as const).map(t => (
           <button
             key={t.key}
@@ -167,31 +167,31 @@ export default function Invoices() {
         <div className="relative flex-1">
           <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
           <input value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-            placeholder={en ? 'Search invoices...' : '搜尋發票...'} className="w-full pl-10 pr-4 py-2 border rounded-md bg-background text-sm" />
+            placeholder={tr('Search invoices...', '搜尋發票...', '搜索发票...')} className="w-full pl-10 pr-4 py-2 border rounded-md bg-background text-sm" />
         </div>
         <select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}
           className="px-3 py-2 border rounded-md bg-background text-sm">
-          <option value="">{en ? 'All Status' : '全部狀態'}</option>
-          <option value="draft">{en ? 'Draft' : '草稿'}</option>
-          <option value="sent">{en ? 'Receivable' : '應收'}</option>
-          <option value="paid">{en ? 'Paid' : '已收'}</option>
-          <option value="overdue">{en ? 'Overdue' : '逾期未收'}</option>
+          <option value="">{tr('All Status', '全部狀態', '全部状态')}</option>
+          <option value="draft">{tr('Draft', '草稿', '草稿')}</option>
+          <option value="sent">{tr('Receivable', '應收', '應收')}</option>
+          <option value="paid">{tr('Paid', '已收', '已收')}</option>
+          <option value="overdue">{tr('Overdue', '逾期未收', '逾期未收')}</option>
         </select>
       </div>
 
-      {isLoading ? <div className="text-center py-12 text-muted-foreground">載入中...</div> :
-       invoices.length === 0 ? <div className="text-center py-12 text-muted-foreground">未有發票記錄</div> : (
+      {isLoading ? <div className="text-center py-12 text-muted-foreground">{tr('Loading...', '載入中...', '载入中...')}</div> :
+       invoices.length === 0 ? <div className="text-center py-12 text-muted-foreground">{tr('No invoice records', '未有發票記錄', '未有发票记录')}</div> : (
         <div className="bg-card border rounded-xl overflow-hidden">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-muted/50">
-                <th className="text-left p-3">{en ? 'Invoice No.' : '發票號碼'}</th>
-                <th className="text-left p-3 hidden md:table-cell">{en ? 'Customer / Supplier' : '客戶/供應商'}</th>
-                <th className="text-left p-3 w-16">{en ? 'Type' : '類型'}</th>
-                <th className="text-left p-3">{en ? 'Status' : '狀態'}</th>
-                <th className="text-right p-3 hidden lg:table-cell">{en ? 'Amount' : '金額'}</th>
-                <th className="text-left p-3 hidden lg:table-cell">{en ? 'Date' : '日期'}</th>
-                <th className="text-right p-3">{en ? 'Actions' : '操作'}</th>
+                <th className="text-left p-3">{tr('Invoice No.', '發票號碼', '发票号码')}</th>
+                <th className="text-left p-3 hidden md:table-cell">{tr('Customer / Supplier', '客戶/供應商', '客户/供应商')}</th>
+                <th className="text-left p-3 w-16">{tr('Type', '類型', '類型')}</th>
+                <th className="text-left p-3">{tr('Status', '狀態', '状态')}</th>
+                <th className="text-right p-3 hidden lg:table-cell">{tr('Amount', '金額', '金额')}</th>
+                <th className="text-left p-3 hidden lg:table-cell">{tr('Date', '日期', '日期')}</th>
+                <th className="text-right p-3">{tr('Actions', '操作', '操作')}</th>
               </tr>
             </thead>
             <tbody>
@@ -205,7 +205,7 @@ export default function Invoices() {
                         ? 'bg-orange-100 text-orange-700'
                         : 'bg-blue-100 text-blue-700'
                     }`}>
-                      {(inv.direction === 'incoming' || inv.direction === 'expense') ? (en ? 'AP' : '應付') : (en ? 'AR' : '應收')}
+                      {(inv.direction === 'incoming' || inv.direction === 'expense') ? (tr('AP', '應付', '應付')) : (tr('AR', '應收', '應收'))}
                     </span>
                   </td>
                   <td className="p-3"><span className={statusBadge(inv.status)}>{statusLabel(inv.status)}</span></td>
@@ -216,12 +216,12 @@ export default function Invoices() {
                     <button onClick={() => navigate(`/invoices/review/${inv.id}`)} className="p-1 hover:bg-muted rounded mr-1" title="編輯 Edit"><Pencil className="h-4 w-4" /></button>
                     <button onClick={() => downloadInvoicePDF(inv.id, inv.invoice_number)} className="p-1 hover:bg-muted rounded mr-1" title="下載 PDF"><Download className="h-4 w-4" /></button>
                     {inv.status === 'draft' && (
-                      <button onClick={() => updateStatus.mutate({ id: inv.id, status: 'sent' })} className="text-xs text-blue-600 hover:underline mr-2">發送（應收）</button>
+                      <button onClick={() => updateStatus.mutate({ id: inv.id, status: 'sent' })} className="text-xs text-blue-600 hover:underline mr-2">{tr('Send (AR)', '發送（應收）', '发送（应收）')}</button>
                     )}
                     {inv.status === 'sent' && (
                       <button onClick={() => updateStatus.mutate({ id: inv.id, status: 'paid' })} className="text-xs text-green-600 hover:underline mr-2">已收</button>
                     )}
-                    <button onClick={() => { if (confirm('確定刪除?')) deleteMut.mutate(inv.id); }} className="p-1 hover:bg-muted rounded text-destructive"><Trash2 className="h-4 w-4" /></button>
+                    <button onClick={() => { if (confirm(tr('Delete this item?', '確定刪除?', '确定删除?'))) deleteMut.mutate(inv.id); }} className="p-1 hover:bg-muted rounded text-destructive"><Trash2 className="h-4 w-4" /></button>
                   </td>
                 </tr>
               ))}
@@ -234,13 +234,13 @@ export default function Invoices() {
       {showForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 overflow-y-auto" onClick={() => setShowForm(false)}>
           <div className="bg-card border rounded-xl p-6 w-full max-w-2xl mx-4 my-8 space-y-4" onClick={(e) => e.stopPropagation()}>
-            <h3 className="font-bold text-lg">建立發票</h3>
+            <h3 className="font-bold text-lg">{tr('Create Invoice', '建立發票', '建立发票')}</h3>
             <form onSubmit={handleSubmit} className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <input value={form.invoice_number} onChange={(e) => setForm({ ...form, invoice_number: e.target.value })}
-                    placeholder="發票號碼（留空自動產生）" className="w-full px-3 py-2 border rounded-md bg-background text-sm" />
-                  {!form.invoice_number && <p className="text-[10px] text-muted-foreground mt-0.5">留空則根據設定格式自動產生號碼</p>}
+                    placeholder={tr("Invoice No. (auto if blank)", "發票號碼（留空自動產生）", "发票号码（留空自动产生）")} className="w-full px-3 py-2 border rounded-md bg-background text-sm" />
+                  {!form.invoice_number && <p className="text-[10px] text-muted-foreground mt-0.5">{tr('Leave blank to auto-generate', '留空則根據設定格式自動產生號碼', '留空则根据设定格式自动产生号码')}</p>}
                 </div>
                 <select required value={form.customer_id} onChange={(e) => {
                   const cid = e.target.value;
@@ -252,7 +252,7 @@ export default function Invoices() {
                   });
                 }}
                   className="px-3 py-2 border rounded-md bg-background text-sm">
-                  <option value="">選擇客戶 *</option>
+                  <option value="">{tr('Select Customer *', '選擇客戶 *', '选择客户 *')}</option>
                   {(customers?.data || []).map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
@@ -260,7 +260,7 @@ export default function Invoices() {
                 <input type="date" value={form.issue_date} onChange={(e) => setForm({ ...form, issue_date: e.target.value })}
                   className="px-3 py-2 border rounded-md bg-background text-sm" />
                 <input type="date" required value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })}
-                  className="px-3 py-2 border rounded-md bg-background text-sm" placeholder="到期日" />
+                  className="px-3 py-2 border rounded-md bg-background text-sm" placeholder={tr("Due date", "到期日", "到期日")} />
                 <select value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })}
                   className="px-3 py-2 border rounded-md bg-background text-sm">
                   <option value="HKD">HKD</option><option value="USD">USD</option><option value="CNY">CNY</option>
@@ -268,26 +268,26 @@ export default function Invoices() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <input value={form.receipt_number} onChange={(e) => setForm({ ...form, receipt_number: e.target.value })}
-                  placeholder="收據號碼" className="px-3 py-2 border rounded-md bg-background text-sm" />
+                  placeholder={tr("Receipt No.", "收據號碼", "收据号码")} className="px-3 py-2 border rounded-md bg-background text-sm" />
                 <input type="date" value={form.paid_date} onChange={(e) => setForm({ ...form, paid_date: e.target.value })}
-                  className="px-3 py-2 border rounded-md bg-background text-sm" placeholder="付款日期" />
+                  className="px-3 py-2 border rounded-md bg-background text-sm" placeholder={tr("Payment date", "付款日期", "付款日期")} />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <input value={form.attn} onChange={(e) => setForm({ ...form, attn: e.target.value })}
-                  placeholder="Attn 聯絡人" className="px-3 py-2 border rounded-md bg-background text-sm" />
+                  placeholder={tr("Attn Contact", "Attn 聯絡人", "Attn 联络人")} className="px-3 py-2 border rounded-md bg-background text-sm" />
                 <input value={form.customer_phone} onChange={(e) => setForm({ ...form, customer_phone: e.target.value })}
-                  placeholder="Tel 電話" className="px-3 py-2 border rounded-md bg-background text-sm" />
+                  placeholder={tr("Tel", "Tel 電話", "Tel 电话")} className="px-3 py-2 border rounded-md bg-background text-sm" />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <input value={form.customer_email} onChange={(e) => setForm({ ...form, customer_email: e.target.value })}
-                  placeholder="E-mail 電郵" className="px-3 py-2 border rounded-md bg-background text-sm" />
+                  placeholder={tr("E-mail", "E-mail 電郵", "E-mail 电邮")} className="px-3 py-2 border rounded-md bg-background text-sm" />
                 <input value={form.customer_address} onChange={(e) => setForm({ ...form, customer_address: e.target.value })}
-                  placeholder="Address 地址" className="px-3 py-2 border rounded-md bg-background text-sm" />
+                  placeholder={tr("Address", "Address 地址", "Address 地址")} className="px-3 py-2 border rounded-md bg-background text-sm" />
               </div>
 
               <div className="border rounded-md p-3 space-y-2">
                 <div className="flex justify-between items-center">
-                  <span className="text-sm font-medium">項目 Items</span>
+                  <span className="text-sm font-medium">{tr('Items', '項目 Items', '项目 Items')}</span>
                   <button type="button" onClick={addItem} className="text-xs text-primary hover:underline">+ 新增項目</button>
                 </div>
                 {form.items.map((item, idx) => {
@@ -306,7 +306,7 @@ export default function Invoices() {
                       }}
                         onFocus={() => { setProductSearch({ ...productSearch, [idx]: item.description }); setProductDropdown(idx); }}
                         onBlur={() => setTimeout(() => setProductDropdown(null), 200)}
-                        placeholder="搜尋產品或輸入描述" className="w-full px-2 py-1 border rounded text-sm" />
+                        placeholder={tr("Search product or enter description", "搜尋產品或輸入描述", "搜索产品或输入描述")} className="w-full px-2 py-1 border rounded text-sm" />
                       {showDropdown && (
                         <div className="absolute z-10 left-0 right-0 top-full mt-1 bg-card border rounded-md shadow-lg max-h-48 overflow-y-auto">
                           {filteredProducts.map((p: any) => (
@@ -332,31 +332,31 @@ export default function Invoices() {
                                 setProductDropdown(null);
                               }}
                               className="w-full text-left px-2 py-1.5 text-sm hover:bg-muted text-primary">
-                              + 新增產品「{searchText}」
+                              {tr('+ New product', '+ 新增產品', '+ 新增产品')}「{searchText}」
                             </button>
                           )}
                         </div>
                       )}
                     </div>
                     <input type="number" value={item.quantity} onChange={(e) => updateItem(idx, 'quantity', parseFloat(e.target.value))}
-                      className="col-span-2 px-2 py-1 border rounded text-sm" placeholder="數量" />
+                      className="col-span-2 px-2 py-1 border rounded text-sm" placeholder={tr("Qty", "數量", "数量")} />
                     <input type="number" step="0.01" value={item.unit_price} onChange={(e) => updateItem(idx, 'unit_price', parseFloat(e.target.value))}
-                      className="col-span-2 px-2 py-1 border rounded text-sm" placeholder="單價" />
+                      className="col-span-2 px-2 py-1 border rounded text-sm" placeholder={tr("Unit Price", "單價", "单价")} />
                     <span className="col-span-2 text-sm text-right">{form.currency} {(item.amount || 0).toFixed(2)}</span>
                     <button type="button" onClick={() => { const items = form.items.filter((_, i) => i !== idx); setForm({ ...form, items: items.length ? items : [{ description: '', quantity: 1, unit_price: 0, amount: 0 }] }); }} className="col-span-1 text-destructive text-xs">✕</button>
                   </div>
                 );})}
                 <div className="text-right font-bold text-sm pt-2 border-t">
-                  總計: {form.currency} {form.items.reduce((s, i) => s + i.amount, 0).toFixed(2)}
+                  {tr('Total', '總計', '总计')}: {form.currency} {form.items.reduce((s, i) => s + i.amount, 0).toFixed(2)}
                 </div>
               </div>
 
               <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })}
-                placeholder="備註 Notes" className="w-full px-3 py-2 border rounded-md bg-background text-sm" rows={2} />
+                placeholder={tr("Notes", "備註 Notes", "备注 Notes")} className="w-full px-3 py-2 border rounded-md bg-background text-sm" rows={2} />
               <div className="flex gap-3 justify-end">
-                <button type="button" onClick={() => setShowForm(false)} className="px-4 py-2 border rounded-md text-sm">取消</button>
+                <button type="button" onClick={() => setShowForm(false)} className="px-4 py-2 border rounded-md text-sm">{tr('Cancel', '取消', '取消')}</button>
                 <button type="submit" disabled={createMut.isPending}
-                  className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm">建立</button>
+                  className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm">{tr('Create', '建立', '建立')}</button>
               </div>
             </form>
           </div>
@@ -370,19 +370,19 @@ export default function Invoices() {
             {/* Left: details */}
             <div className="w-[45%] flex flex-col min-h-0 overflow-y-auto pr-2 space-y-4">
               <div className="flex justify-between items-center">
-                <h3 className="font-bold text-lg">發票 #{invoiceDetail.invoice_number}</h3>
+                <h3 className="font-bold text-lg">{tr('Invoice', '發票', '发票')} #{invoiceDetail.invoice_number}</h3>
                 <button onClick={() => setViewId(null)} className="text-muted-foreground">✕</button>
               </div>
               <div className="grid grid-cols-2 gap-3 text-sm">
                 <div><span className="text-muted-foreground">{invoiceDetail.direction === 'incoming' ? '供應商:' : '客戶:'}</span> {invoiceDetail.direction === 'incoming' ? (invoiceDetail.vendor_name || invoiceDetail.customer_name) : invoiceDetail.customer_name}</div>
-                <div><span className="text-muted-foreground">狀態:</span> <span className={statusBadge(invoiceDetail.status)}>{statusLabel(invoiceDetail.status)}</span></div>
-                <div><span className="text-muted-foreground">日期:</span> {invoiceDetail.issue_date}</div>
-                <div><span className="text-muted-foreground">到期:</span> {invoiceDetail.due_date}</div>
-                {invoiceDetail.receipt_number && <div><span className="text-muted-foreground">收據號碼:</span> {invoiceDetail.receipt_number}</div>}
-                {invoiceDetail.paid_date && <div><span className="text-muted-foreground">付款日期:</span> {invoiceDetail.paid_date}</div>}
+                <div><span className="text-muted-foreground">{tr('Status', '狀態', '状态')}:</span> <span className={statusBadge(invoiceDetail.status)}>{statusLabel(invoiceDetail.status)}</span></div>
+                <div><span className="text-muted-foreground">{tr('Date', '日期', '日期')}:</span> {invoiceDetail.issue_date}</div>
+                <div><span className="text-muted-foreground">{tr('Due', '到期', '到期')}:</span> {invoiceDetail.due_date}</div>
+                {invoiceDetail.receipt_number && <div><span className="text-muted-foreground">{tr('Receipt No.', '收據號碼', '收据号码')}:</span> {invoiceDetail.receipt_number}</div>}
+                {invoiceDetail.paid_date && <div><span className="text-muted-foreground">{tr('Payment Date', '付款日期', '付款日期')}:</span> {invoiceDetail.paid_date}</div>}
               </div>
               <table className="w-full text-sm">
-                <thead><tr className="border-b"><th className="text-left p-2">項目</th><th className="text-right p-2">數量</th><th className="text-right p-2">單價</th><th className="text-right p-2">金額</th></tr></thead>
+                <thead><tr className="border-b"><th className="text-left p-2">{tr('Item', '項目', '项目')}</th><th className="text-right p-2">數量</th><th className="text-right p-2">單價</th><th className="text-right p-2">金額</th></tr></thead>
                 <tbody>
                   {(invoiceDetail.items || []).map((item: any) => (
                     <tr key={item.id} className="border-b">
@@ -393,12 +393,12 @@ export default function Invoices() {
                     </tr>
                   ))}
                 </tbody>
-                <tfoot><tr><td colSpan={3} className="text-right font-bold p-2">總計</td><td className="text-right font-bold p-2">{invoiceDetail.currency} {invoiceDetail.total?.toFixed(2)}</td></tr></tfoot>
+                <tfoot><tr><td colSpan={3} className="text-right font-bold p-2">{tr('Total', '總計', '总计')}</td><td className="text-right font-bold p-2">{invoiceDetail.currency} {invoiceDetail.total?.toFixed(2)}</td></tr></tfoot>
               </table>
               <button
                 onClick={() => downloadInvoicePDF(invoiceDetail.id, invoiceDetail.invoice_number)}
                 className="inline-flex items-center gap-2 text-sm text-primary hover:underline">
-                <Download className="h-4 w-4" /> 下載 PDF
+                <Download className="h-4 w-4" /> {tr('Download PDF', '下載 PDF', '下载 PDF')}
               </button>
             </div>
             {/* Right: live invoice preview rendered from data (no iframe needed) */}
@@ -433,10 +433,10 @@ export default function Invoices() {
                 <table className="w-full text-xs border-collapse">
                   <thead>
                     <tr className="bg-gray-100">
-                      <th className="text-left p-2 border">項目 Description</th>
-                      <th className="text-right p-2 border w-16">數量 Qty</th>
-                      <th className="text-right p-2 border w-24">單價 Unit Price</th>
-                      <th className="text-right p-2 border w-24">金額 Amount</th>
+                      <th className="text-left p-2 border">{tr('Description', '項目 Description', '项目 Description')}</th>
+                      <th className="text-right p-2 border w-16">{tr('Qty', '數量 Qty', '数量 Qty')}</th>
+                      <th className="text-right p-2 border w-24">{tr('Unit Price', '單價 Unit Price', '单价 Unit Price')}</th>
+                      <th className="text-right p-2 border w-24">{tr('Amount', '金額 Amount', '金额 Amount')}</th>
                     </tr>
                   </thead>
                   <tbody>

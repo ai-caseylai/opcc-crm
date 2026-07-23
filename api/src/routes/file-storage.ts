@@ -918,6 +918,23 @@ files.get('/issues', async (c) => {
   return c.json({ issues: row?.count || 0 });
 });
 
+// Check if a file with the same name already exists
+files.get('/check-duplicate', async (c) => {
+  const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
+  const filename = c.req.query('filename');
+  if (!filename) return c.json({ exists: false });
+
+  const existing = await c.env.DB.prepare(
+    'SELECT id, filename, original_name, folder, created_at FROM file_records WHERE user_id = ? AND (filename = ? OR original_name = ?) AND deleted_at IS NULL LIMIT 1'
+  ).bind(tenantId, filename, filename).first<{ id: string; filename: string; original_name: string; folder: string; created_at: string }>();
+
+  if (existing) {
+    return c.json({ exists: true, existing_file: existing });
+  }
+  return c.json({ exists: false });
+});
+
 // Upload file to R2 + store metadata in D1
 files.post('/upload', async (c) => {
   const user = c.get('user');
