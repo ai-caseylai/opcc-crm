@@ -1,9 +1,14 @@
+import { useTranslation } from 'react-i18next';
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { useToast } from '../components/Toast';
 import { Plus, Trash2, Calculator } from 'lucide-react';
+import { tr } from '../lib/i18nHelpers';
 
 export default function FixedAssets() {
+  const { i18n } = useTranslation();
+  const toast = useToast();
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({
@@ -33,7 +38,7 @@ export default function FixedAssets() {
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['fixed-assets'] });
       queryClient.invalidateQueries({ queryKey: ['entries'] });
-      alert(`折舊完成！\n資產：${data.assets_depreciated} 項\n總折舊：HKD ${data.total_depreciation?.toLocaleString()}`);
+      toast.info(`折舊完成！\n資產：${data.assets_depreciated} 項\n總折舊：HKD ${data.total_depreciation?.toLocaleString()}`);
     },
   });
 
@@ -45,8 +50,8 @@ export default function FixedAssets() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold">固定資產 Fixed Assets</h2>
-          <p className="text-muted-foreground mt-1">固定資產登記冊及折舊管理</p>
+          <h2 className="text-2xl font-bold">{tr('Fixed Assets', '固定資產 Fixed Assets', '固定资产 Fixed Assets')}</h2>
+          <p className="text-muted-foreground mt-1">{tr('Fixed Asset Register & Depreciation Management', '固定資產登記冊及折舊管理', '固定资产登记册及折旧管理')}</p>
         </div>
         <div className="flex gap-2">
           <button onClick={() => {
@@ -55,11 +60,11 @@ export default function FixedAssets() {
             depnMut.mutate(date);
           }} disabled={depnMut.isPending}
             className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:opacity-90 disabled:opacity-40">
-            <Calculator className="h-4 w-4" /> 計算折舊 Run Depreciation
+            <Calculator className="h-4 w-4" /> {tr('Run Depreciation', '計算折舊 Run Depreciation', '计算折旧 Run Depreciation')}
           </button>
           <button onClick={() => setShowForm(true)}
             className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:opacity-90">
-            <Plus className="h-4 w-4" /> 新增資產
+            <Plus className="h-4 w-4" /> {tr('Add Asset', '新增資產', '新增资产')}
           </button>
         </div>
       </div>
@@ -67,15 +72,15 @@ export default function FixedAssets() {
       {/* Summary cards */}
       <div className="grid grid-cols-3 gap-4">
         <div className="bg-card border rounded-xl p-4">
-          <span className="text-xs text-muted-foreground">資產原值 Total Cost</span>
+          <span className="text-xs text-muted-foreground">{tr('Total Cost', '資產原值 Total Cost', '资产原值 Total Cost')}</span>
           <p className="text-xl font-bold mt-1">HKD {totalCost.toLocaleString()}</p>
         </div>
         <div className="bg-card border rounded-xl p-4">
-          <span className="text-xs text-muted-foreground">累計折舊 Accum. Depreciation</span>
+          <span className="text-xs text-muted-foreground">{tr('Accum. Depreciation', '累計折舊 Accum. Depreciation', '累计折旧 Accum. Depreciation')}</span>
           <p className="text-xl font-bold mt-1 text-red-600">HKD {totalAccDepn.toLocaleString()}</p>
         </div>
         <div className="bg-card border rounded-xl p-4">
-          <span className="text-xs text-muted-foreground">賬面淨值 Net Book Value</span>
+          <span className="text-xs text-muted-foreground">{tr('Net Book Value', '賬面淨值 Net Book Value', '账面净值 Net Book Value')}</span>
           <p className="text-xl font-bold mt-1 text-green-600">HKD {totalNBV.toLocaleString()}</p>
         </div>
       </div>
@@ -85,15 +90,15 @@ export default function FixedAssets() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b bg-muted/50">
-              <th className="text-left p-3">資產名稱</th>
-              <th className="text-left p-3">類別</th>
-              <th className="text-left p-3">購買日</th>
-              <th className="text-right p-3">成本</th>
-              <th className="text-right p-3">年限</th>
-              <th className="text-right p-3">月折舊</th>
-              <th className="text-right p-3">累計折舊</th>
-              <th className="text-right p-3">淨值 NBV</th>
-              <th className="text-center p-3 w-[60px]">操作</th>
+              <th className="text-left p-3">{tr('Asset Name', '資產名稱', '资产名称')}</th>
+              <th className="text-left p-3">{tr('Category', '類別', '类别')}</th>
+              <th className="text-left p-3">{tr('Purchase Date', '購買日', '购买日')}</th>
+              <th className="text-right p-3">{tr('Cost', '成本', '成本')}</th>
+              <th className="text-right p-3">{tr('Life (yrs)', '年限', '年限')}</th>
+              <th className="text-right p-3">{tr('Monthly Depn', '月折舊', '月折旧')}</th>
+              <th className="text-right p-3">{tr('Accum. Depn', '累計折舊', '累计折旧')}</th>
+              <th className="text-right p-3">{tr('NBV', '淨值 NBV', '净值 NBV')}</th>
+              <th className="text-center p-3 w-[60px]">{tr('Actions', '操作', '操作')}</th>
             </tr>
           </thead>
           <tbody>
@@ -103,18 +108,18 @@ export default function FixedAssets() {
                 <td className="p-3 text-xs">{a.category}</td>
                 <td className="p-3 text-muted-foreground">{a.purchase_date}</td>
                 <td className="p-3 text-right font-mono">{a.cost?.toLocaleString()}</td>
-                <td className="p-3 text-center">{a.useful_life_years} 年</td>
+                <td className="p-3 text-center">{a.useful_life_years} {tr('yr', '年', '年')}</td>
                 <td className="p-3 text-right font-mono">{a.monthly_depreciation?.toLocaleString()}</td>
                 <td className="p-3 text-right font-mono text-red-600">{a.accumulated_depreciation?.toLocaleString()}</td>
                 <td className="p-3 text-right font-mono font-medium">{a.net_book_value?.toLocaleString()}</td>
                 <td className="p-3 text-center">
-                  <button onClick={() => { if (confirm('刪除此資產？')) deleteMut.mutate(a.id); }}
+                  <button onClick={() => { if (confirm(tr('Delete this asset?', '刪除此資產？', '删除此资产？'))) deleteMut.mutate(a.id); }}
                     className="text-destructive hover:underline text-xs"><Trash2 className="h-3 w-3" /></button>
                 </td>
               </tr>
             ))}
             {assets.length === 0 && (
-              <tr><td colSpan={9} className="text-center p-6 text-muted-foreground">未有固定資產記錄</td></tr>
+              <tr><td colSpan={9} className="text-center p-6 text-muted-foreground">{tr('No fixed asset records', '未有固定資產記錄', '未有固定资产记录')}</td></tr>
             )}
           </tbody>
         </table>
@@ -124,36 +129,36 @@ export default function FixedAssets() {
       {showForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowForm(false)}>
           <div className="bg-card border rounded-xl p-6 w-full max-w-lg mx-4 space-y-4" onClick={e => e.stopPropagation()}>
-            <h3 className="font-bold text-lg">新增固定資產</h3>
+            <h3 className="font-bold text-lg">{tr('Add Fixed Asset', '新增固定資產', '新增固定资产')}</h3>
             <form onSubmit={e => { e.preventDefault(); createMut.mutate(form); }} className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <input required value={form.asset_name} onChange={e => setForm({...form, asset_name: e.target.value})}
-                  placeholder="資產名稱 *" className="px-3 py-2 border rounded-md text-sm" />
+                  placeholder={tr('Asset Name *', '資產名稱 *', '资产名称 *')} className="px-3 py-2 border rounded-md text-sm" />
                 <input value={form.asset_code} onChange={e => setForm({...form, asset_code: e.target.value})}
-                  placeholder="資產編號" className="px-3 py-2 border rounded-md text-sm" />
+                  placeholder={tr('Asset Code', '資產編號', '资产编号')} className="px-3 py-2 border rounded-md text-sm" />
                 <select value={form.category} onChange={e => setForm({...form, category: e.target.value})}
                   className="px-3 py-2 border rounded-md text-sm bg-background">
-                  <option value="office_equipment">辦公設備 Office Equipment</option>
-                  <option value="computer">電腦設備 Computer</option>
-                  <option value="vehicle">汽車 Vehicle</option>
-                  <option value="furniture">家具 Furniture</option>
-                  <option value="leasehold">裝修 Leasehold Improvement</option>
+                  <option value="office_equipment">{tr('Office Equipment', '辦公設備 Office Equipment', '办公设备 Office Equipment')}</option>
+                  <option value="computer">{tr('Computer', '電腦設備 Computer', '电脑设备 Computer')}</option>
+                  <option value="vehicle">{tr('Vehicle', '汽車 Vehicle', '汽车 Vehicle')}</option>
+                  <option value="furniture">{tr('Furniture', '家具 Furniture', '家具 Furniture')}</option>
+                  <option value="leasehold">{tr('Leasehold Improvement', '裝修 Leasehold Improvement', '装修 Leasehold Improvement')}</option>
                 </select>
                 <input type="date" required value={form.purchase_date} onChange={e => setForm({...form, purchase_date: e.target.value})}
                   className="px-3 py-2 border rounded-md text-sm" />
                 <input type="number" step="0.01" required value={form.cost} onChange={e => setForm({...form, cost: e.target.value})}
-                  placeholder="購置成本 *" className="px-3 py-2 border rounded-md text-sm" />
+                  placeholder={tr('Cost *', '購置成本 *', '购置成本 *')} className="px-3 py-2 border rounded-md text-sm" />
                 <input type="number" step="0.1" value={form.useful_life_years} onChange={e => setForm({...form, useful_life_years: e.target.value})}
-                  placeholder="使用年限 (年)" className="px-3 py-2 border rounded-md text-sm" />
+                  placeholder={tr('Useful Life (years)', '使用年限 (年)', '使用年限 (年)')} className="px-3 py-2 border rounded-md text-sm" />
                 <input type="number" step="0.01" value={form.salvage_value} onChange={e => setForm({...form, salvage_value: e.target.value})}
-                  placeholder="殘值" className="px-3 py-2 border rounded-md text-sm" />
+                  placeholder={tr('Residual Value', '殘值', '残值')} className="px-3 py-2 border rounded-md text-sm" />
                 <input value={form.notes} onChange={e => setForm({...form, notes: e.target.value})}
-                  placeholder="備註" className="px-3 py-2 border rounded-md text-sm col-span-2" />
+                  placeholder={tr('Notes', '備註', '备注')} className="px-3 py-2 border rounded-md text-sm col-span-2" />
               </div>
               <div className="flex gap-3 justify-end">
-                <button type="button" onClick={() => setShowForm(false)} className="px-4 py-2 border rounded-md text-sm">取消</button>
+                <button type="button" onClick={() => setShowForm(false)} className="px-4 py-2 border rounded-md text-sm">{tr('Cancel', '取消', '取消')}</button>
                 <button type="submit" disabled={createMut.isPending}
-                  className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm">建立</button>
+                  className="px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm">{tr('Create', '建立', '建立')}</button>
               </div>
             </form>
           </div>

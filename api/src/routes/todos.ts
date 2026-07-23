@@ -29,10 +29,10 @@ todos.get('/', async (c) => {
 // ── Create ──
 const createSchema = z.object({
   title: z.string().min(1),
-  description: z.string().optional(),
-  priority: z.string().optional(),
-  due_date: z.string().optional(),
-  customer_id: z.string().optional(),
+  description: z.string().nullish(),
+  priority: z.string().nullish(),
+  due_date: z.string().nullish(),
+  customer_id: z.string().nullish(),
 });
 
 todos.post('/', zValidator('json', createSchema), async (c) => {
@@ -47,7 +47,7 @@ todos.post('/', zValidator('json', createSchema), async (c) => {
 
   await db.prepare(
     'INSERT INTO todos (id, user_id, title, description, status, priority, due_date, customer_id, sort_order) VALUES (?,?,?,?,?,?,?,?,?)'
-  ).bind(id, user.id, data.title, data.description || null, 'pending', data.priority || 'medium', data.due_date || null, data.customer_id || null, sort).run();
+  ).bind(id, tenantId, data.title, data.description || null, 'pending', data.priority || 'medium', data.due_date || null, data.customer_id || null, sort).run();
 
   const row = await db.prepare('SELECT * FROM todos WHERE id = ?').bind(id).first();
   return c.json(row, 201);

@@ -41,7 +41,9 @@
     "compliance": "Compliance",
     "pricing": "Pricing",
     "subscription": "Subscription",
-    "recycleBin": "Recycle Bin"
+    "recycleBin": "Recycle Bin",
+    "telegramBills": "Telegram Bills",
+    "aiMemory": "AI Memory"
   },
   "auth": {
     "login": "Login",

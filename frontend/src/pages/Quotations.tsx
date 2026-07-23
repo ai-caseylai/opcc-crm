@@ -161,9 +161,9 @@ export default function Quotations() {
                   <div key={idx} className="grid grid-cols-12 gap-2 items-center">
                     <input required value={item.description} onChange={(e) => updateItem(idx, 'description', e.target.value)}
                       placeholder="描述" className="col-span-5 px-2 py-1 border rounded text-sm" />
-                    <input type="number" value={item.quantity} onChange={(e) => updateItem(idx, 'quantity', parseFloat(e.target.value))}
+                    <input type="number" min="0" step="1" value={item.quantity} onChange={(e) => updateItem(idx, 'quantity', Math.max(0, parseFloat(e.target.value) || 0))}
                       className="col-span-2 px-2 py-1 border rounded text-sm" placeholder="數量" />
-                    <input type="number" step="0.01" value={item.unit_price} onChange={(e) => updateItem(idx, 'unit_price', parseFloat(e.target.value))}
+                    <input type="number" min="0" step="0.01" value={item.unit_price} onChange={(e) => updateItem(idx, 'unit_price', Math.max(0, parseFloat(e.target.value) || 0))}
                       className="col-span-2 px-2 py-1 border rounded text-sm" placeholder="單價" />
                     <span className="col-span-2 text-sm text-right">{(item.amount || 0).toFixed(2)}</span>
                     <button type="button" onClick={() => { const items = form.items.filter((_, i) => i !== idx); setForm({ ...form, items: items.length ? items : [{ description: '', quantity: 1, unit_price: 0, amount: 0 }] }); }} className="col-span-1 text-destructive text-xs">✕</button>

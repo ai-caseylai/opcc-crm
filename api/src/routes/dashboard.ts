@@ -28,11 +28,24 @@ dashboard.get('/', async (c) => {
      WHERE je.user_id = ? AND jl.account_code LIKE '111%' AND je.status != 'stale' AND ${notOrphaned}`
   ).bind(tenantId).first<{ balance: number }>();
 
-  // Cash balance from bank transactions (always computed — used as fallback or primary)
+  // Cash balance — use latest confirmed closing balance per bank account (correct accounting approach)
+  // Lily test N02/P1: dashboard was showing movement-based sum instead of latest closing balance
   const cashFromBank = await db.prepare(
-    `SELECT COALESCE(SUM(deposit_amount) - SUM(withdrawal_amount), 0) as balance
-     FROM bank_transactions WHERE user_id = ? AND deleted_at IS NULL`
-  ).bind(tenantId).first<{ balance: number }>();
+    `SELECT COALESCE(SUM(latest_closing), 0) as balance FROM (
+       SELECT bs.closing_balance as latest_closing
+       FROM bank_statements bs
+       INNER JOIN (
+         SELECT account_number, currency, MAX(period_end) as max_period
+         FROM bank_statements
+         WHERE user_id = ? AND deleted_at IS NULL
+         AND closing_balance IS NOT NULL AND closing_balance != 0
+         GROUP BY account_number, currency
+       ) latest ON bs.account_number = latest.account_number
+         AND bs.currency = latest.currency
+         AND bs.period_end = latest.max_period
+       WHERE bs.user_id = ? AND bs.deleted_at IS NULL
+     )`
+  ).bind(tenantId, tenantId).first<{ balance: number }>();
 
   // Accounts Receivable from GL
   const arBalance = await db.prepare(

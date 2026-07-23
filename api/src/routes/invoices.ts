@@ -114,8 +114,8 @@ invoices.get('/:id', async (c) => {
 });
 
 const itemSchema = z.object({
-  product_id: z.string().optional(), description: z.string().min(1), quantity: z.number().min(0),
-  unit_price: z.number().min(0), amount: z.number().min(0), sort_order: z.number().optional(),
+  product_id: z.string().optional(), description: z.string().min(1), quantity: z.number(),
+  unit_price: z.number(), amount: z.number(), sort_order: z.number().optional(),
 });
 
 const createSchema = z.object({
@@ -152,12 +152,12 @@ invoices.post('/', zValidator('json', createSchema), async (c) => {
   const total = subtotal + taxAmount - discount;
 
   // Auto-fill BR number from company settings
-  const company = await db.prepare('SELECT br_number FROM company_settings WHERE user_id = ?').bind(user.id).first<{ br_number: string }>();
+  const company = await db.prepare('SELECT br_number FROM company_settings WHERE user_id = ?').bind(tenantId).first<{ br_number: string }>();
   const brNumber = company?.br_number || null;
 
   await db.prepare(
-    `INSERT INTO invoices (id, user_id, invoice_number, customer_id, supplier_id, status, issue_date, due_date, subtotal, tax_rate, tax_amount, discount_amount, total, currency, notes, terms, receipt_number, paid_date, attn, customer_phone, customer_email, customer_address, br_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(id, user.id, invoice_number, data.customer_id, data.supplier_id || null, data.status || 'draft', data.issue_date, data.due_date, subtotal, taxRate, taxAmount, discount, total, data.currency || 'HKD', data.notes || null, data.terms || null, data.receipt_number || null, data.paid_date || null, data.attn || null, data.customer_phone || null, data.customer_email || null, data.customer_address || null, brNumber).run();
+    `INSERT INTO invoices (id, user_id, invoice_number, customer_id, supplier_id, status, issue_date, due_date, subtotal, tax_rate, tax_amount, discount_amount, total, currency, notes, terms, receipt_number, paid_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(id, tenantId, invoice_number, data.customer_id, data.supplier_id || null, data.status || 'draft', data.issue_date, data.due_date, subtotal, taxRate, taxAmount, discount, total, data.currency || 'HKD', data.notes || null, data.terms || null, data.receipt_number || null, data.paid_date || null).run();
 
   for (let i = 0; i < data.items.length; i++) {
     const item = data.items[i];

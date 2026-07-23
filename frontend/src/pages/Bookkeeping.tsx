@@ -1,10 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
+import { useToast } from '../components/Toast';
 import { Plus, Calculator, Download, Save } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { tr } from '../lib/i18nHelpers';
 
 export default function Bookkeeping() {
+  const { i18n } = useTranslation();
+  const toast = useToast();
   const { user } = useAuth();
   const isStaff = user?.role === 'staff' || user?.role === 'viewer';
   const queryClient = useQueryClient();
@@ -69,7 +74,7 @@ export default function Bookkeeping() {
       queryClient.invalidateQueries({ queryKey: ['trial-balance'] });
       queryClient.invalidateQueries({ queryKey: ['income-statement'] });
       queryClient.invalidateQueries({ queryKey: ['balance-sheet'] });
-      alert(`已建立 ${data.created} 筆分錄（共 ${data.total_transactions} 筆銀行交易，跳過 ${data.skipped} 筆已存在）`);
+      toast.info(`已建立 ${data.created} 筆分錄（共 ${data.total_transactions} 筆銀行交易，跳過 ${data.skipped} 筆已存在）`);
     },
   });
 
@@ -79,10 +84,18 @@ export default function Bookkeeping() {
   });
 
   const exportCSV = async () => {
-    const csv = await api(`/bookkeeping/export?format=csv&start_date=${startDate}&end_date=${endDate}`);
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = 'bookkeeping-export.csv'; a.click();
+    try {
+      const token = localStorage.getItem('token') || '';
+      const res = await fetch(`https://opcc-crm-api.ruhan-farhan.workers.dev/api/bookkeeping/export?format=csv&start_date=${startDate}&end_date=${endDate}`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (!res.ok) { toast.info('Export failed'); return; }
+      const csv = await res.text();
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = 'bookkeeping-export.csv'; a.click();
+      URL.revokeObjectURL(url);
+    } catch (e: any) { toast.info('Export error: ' + (e?.message || 'unknown')); }
   };
 
   function addLine() {
@@ -182,7 +195,7 @@ export default function Bookkeeping() {
                       if (!confirm('確定要刪除此分錄嗎？此操作不可撤銷。')) return;
                       api(`/bookkeeping/entries/${e.id}`, { method: 'DELETE' }).then(() => {
                         queryClient.invalidateQueries({ queryKey: ['entries'] });
-                      }).catch(err => alert('刪除失敗：' + (err.message || '未知錯誤')));
+                      }).catch(err => toast.info('刪除失敗：' + (err.message || '未知錯誤')));
                     }} className="text-destructive text-xs hover:underline">刪除</button>
                   </td>
                 </tr>
@@ -397,8 +410,8 @@ export default function Bookkeeping() {
       {/* Export Tab */}
       {tab === 'export' && (
         <div className="bg-card border rounded-xl p-6 space-y-4">
-          <h3 className="font-semibold">導出給審計師 Export for Auditor</h3>
-          <p className="text-sm text-muted-foreground">選擇日期範圍後導出 CSV 檔案</p>
+          <h3 className="font-semibold">{tr('Export for Auditor', '導出給審計師 Export for Auditor', '导出給审计师 Export for Auditor')}</h3>
+          <p className="text-sm text-muted-foreground">{tr('Select a date range and export CSV file', '選擇日期範圍後導出 CSV 檔案', '选择日期范围後导出 CSV 档案')}</p>
           <div className="flex gap-3 items-center">
             <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)}
               className="px-3 py-2 border rounded-md bg-background text-sm" />
@@ -408,7 +421,7 @@ export default function Bookkeeping() {
             {!isStaff && (
             <button onClick={exportCSV}
               className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm hover:opacity-90">
-              <Download className="h-4 w-4" /> 導出 CSV
+              <Download className="h-4 w-4" /> {tr('Export CSV', '導出 CSV', '导出 CSV')}
             </button>
             )}
           </div>
@@ -491,6 +504,7 @@ export default function Bookkeeping() {
 // ═══════ Accounts Tab with B/F balance & fiscal period ═══════
 
 function AccountsTab({ accounts }: { accounts: any[] }) {
+  const toast = useToast();
   const queryClient = useQueryClient();
   const [bfEdits, setBfEdits] = useState<Record<string, string>>({});
   const [fiscalStart, setFiscalStart] = useState('');
@@ -561,7 +575,7 @@ function AccountsTab({ accounts }: { accounts: any[] }) {
             if (!start || !end) return;
             await api('/bookkeeping/close-period', { method: 'POST', body: { period_start: start, period_end: end } });
             fetchClosedPeriods();
-            alert('已關帳');
+            toast.info('已關帳');
           }} className="px-3 py-1.5 bg-amber-100 text-amber-800 rounded text-xs font-medium hover:bg-amber-200">
             關帳 Close Period
           </button>
@@ -570,7 +584,7 @@ function AccountsTab({ accounts }: { accounts: any[] }) {
             const date = prompt('財政年度結束日 (YYYY-MM-DD)：', fiscalEnd || '');
             if (!date) return;
             const res = await api('/bookkeeping/year-end-close', { method: 'POST', body: { fiscal_end_date: date } });
-            alert(`年結完成！\n收入：HKD ${res.revenue?.toLocaleString()}\n支出：HKD ${res.expenses?.toLocaleString()}\n淨利：HKD ${res.net_income?.toLocaleString()}`);
+            toast.info(`年結完成！\n收入：HKD ${res.revenue?.toLocaleString()}\n支出：HKD ${res.expenses?.toLocaleString()}\n淨利：HKD ${res.net_income?.toLocaleString()}`);
             queryClient.invalidateQueries({ queryKey: ['entries'] });
             queryClient.invalidateQueries({ queryKey: ['accounts'] });
           }} className="px-3 py-1.5 bg-blue-100 text-blue-800 rounded text-xs font-medium hover:bg-blue-200">
@@ -581,7 +595,7 @@ function AccountsTab({ accounts }: { accounts: any[] }) {
             const date = prompt('財政年度結束日 (YYYY-MM-DD)：', fiscalEnd || '');
             if (!date) return;
             const res = await api('/bookkeeping/profits-tax-provision', { method: 'POST', body: { fiscal_end_date: date } });
-            alert(`利得稅撥備完成！\n應評稅利潤：HKD ${res.net_income?.toLocaleString()}\n稅款：HKD ${res.tax_amount?.toLocaleString()}`);
+            toast.info(`利得稅撥備完成！\n應評稅利潤：HKD ${res.net_income?.toLocaleString()}\n稅款：HKD ${res.tax_amount?.toLocaleString()}`);
             queryClient.invalidateQueries({ queryKey: ['entries'] });
           }} className="px-3 py-1.5 bg-red-100 text-red-800 rounded text-xs font-medium hover:bg-red-200">
             利得稅撥備 Tax Provision

@@ -343,7 +343,7 @@ bookkeeping.get('/trial-balance', async (c) => {
   return c.json({ data: btData, as_of: asOf, source: 'bank' });
 });
 
-bookkeeping.get('/export', auditorMiddleware, async (c) => {
+bookkeeping.get('/export', authMiddleware, async (c) => {
   const user = c.get('user');
   const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;

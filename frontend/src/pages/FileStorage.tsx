@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { api, WORKER_API_BASE } from '../lib/api';
 import { Upload, Download, Trash2, Search, Pencil, X, Check, File, FileText, FileSpreadsheet, Image, FolderOpen, Folder, ChevronRight, ChevronDown, Zap } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { useToast } from '../components/Toast';
 
 function formatSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -198,6 +199,7 @@ export default function FileStorage() {
   const [editDesc, setEditDesc] = useState('');
 
   const navigate = useNavigate();
+  const toast = useToast();
 
   const { data: files, isLoading } = useQuery({
     queryKey: ['file-storage', filterFolder, searchQ],
@@ -231,7 +233,7 @@ export default function FileStorage() {
       }
     },
     onError: (err: any) => {
-      alert(`上傳失敗：${err?.message || err?.error || '未知錯誤'}`);
+      toast.error('Upload failed: ' + (err?.message || err?.error));
       setUploading(false);
     },
   });
@@ -252,11 +254,9 @@ export default function FileStorage() {
         return;
       }
       setProcessing(false);
-      alert(`匯入失敗：${err?.message || err?.error || '未知錯誤'}`);
+      toast.error('Import failed: ' + (err?.message || err?.error || 'Unknown error'));
     },
   });
-
-  
 
   const importInvMut = useMutation({
     mutationFn: (id: string) => api(`/file-storage/${id}/import-invoice`, { method: 'POST' }),
@@ -279,9 +279,22 @@ export default function FileStorage() {
     },
   });
 
-  const uploadFiles = useCallback((fileList: FileList | File[]) => {
+  const uploadFiles = useCallback(async (fileList: FileList | File[]) => {
     const arr = Array.from(fileList);
     if (arr.length === 0) return;
+    
+    // Check for duplicates before uploading
+    for (const file of arr) {
+      try {
+        const checkRes = await api('/file-storage/check-duplicate?filename=' + encodeURIComponent(file.name));
+        if (checkRes?.exists) {
+          toast.warning('File "' + file.name + '" already exists. Skipping.');
+          arr.splice(arr.indexOf(file), 1);
+        }
+      } catch {}
+    }
+    if (arr.length === 0) return;
+    
     setUploading(true);
     let pending = arr.length;
     arr.forEach((file) => {
@@ -365,7 +378,7 @@ export default function FileStorage() {
     mutationFn: () => api('/file-storage/auto-match-invoices', { method: 'POST' }),
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['file-storage'] });
-      alert(`配對完成：${data.matched?.length || 0} 筆成功，${data.unmatched || 0} 筆未配對`);
+      toast.success('Matched: ' + (data.matched?.length || 0) + ', unmatched: ' + (data.unmatched || 0));
     },
   });
 

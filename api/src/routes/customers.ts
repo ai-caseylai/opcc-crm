@@ -18,15 +18,9 @@ customers.get('/', async (c) => {
   const page = parseInt(c.req.query('page') || '1');
   const limit = parseInt(c.req.query('limit') || '50');
   const offset = (page - 1) * limit;
-  const excludeSelf = c.req.query('exclude_self') === 'true';
 
   let query = 'SELECT * FROM customers WHERE user_id = ? AND is_active = 1';
   const params: any[] = [tenantId];
-  // exclude_self: filter out the self-customer record (our own company, used for incoming invoices)
-  if (excludeSelf) {
-    const ownName = (await db.prepare('SELECT name FROM company_settings WHERE user_id = ?').bind(tenantId).first<{ name: string | null }>())?.name;
-    if (ownName) { query += ' AND name != ?'; params.push(ownName); }
-  }
   if (search) { query += ' AND (name LIKE ? OR company_name LIKE ? OR email LIKE ?)'; params.push(`%${search}%`, `%${search}%`, `%${search}%`); }
   query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
   params.push(limit, offset);
@@ -34,9 +28,8 @@ customers.get('/', async (c) => {
   const rows = await db.prepare(query).bind(...params).all();
   const countRow = await db.prepare(
     'SELECT COUNT(*) as count FROM customers WHERE user_id = ? AND is_active = 1' +
-    (excludeSelf ? ' AND name != ?' : '') +
     (search ? ' AND (name LIKE ? OR company_name LIKE ? OR email LIKE ?)' : '')
-  ).bind(...(excludeSelf && search ? [tenantId, params[1], `%${search}%`, `%${search}%`, `%${search}%`] : excludeSelf ? [tenantId, params[1]] : search ? [tenantId, `%${search}%`, `%${search}%`, `%${search}%`] : [tenantId])).first<{ count: number }>();
+  ).bind(...(search ? [tenantId, `%${search}%`, `%${search}%`, `%${search}%`] : [tenantId])).first<{ count: number }>();
 
   return c.json({ data: rows.results, total: countRow?.count || 0, page, limit });
 });
@@ -68,7 +61,7 @@ customers.post('/', zValidator('json', createSchema), async (c) => {
   await db.prepare(
     `INSERT INTO customers (id, user_id, name, company_name, email, phone, address, city, state, postal_code, country, notes, tax_id)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(id, user.id, data.name, data.company_name || null, data.email || null, data.phone || null,
+  ).bind(id, tenantId, data.name, data.company_name || null, data.email || null, data.phone || null,
     data.address || null, data.city || null, data.state || null, data.postal_code || null,
     data.country || 'Hong Kong', data.notes || null, data.tax_id || null).run();
 

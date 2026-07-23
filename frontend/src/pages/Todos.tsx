@@ -2,10 +2,11 @@ import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
+import { tr } from '../lib/i18nHelpers';
 import { Plus, Trash2, Check, Circle, GripVertical, ChevronDown } from 'lucide-react';
 
 const PRIORITIES = { high: '🔴', medium: '🟡', low: '🟢' } as const;
-const priorityLabel = (p: string) => ({ high: '高', medium: '中', low: '低' } as Record<string,string>)[p] || p;
+const priorityLabel = (p: string) => ({ high: tr('High', '高', '高'), medium: tr('Medium', '中', '中'), low: tr('Low', '低', '低') } as Record<string,string>)[p] || p;
 
 export default function Todos() {
   const { t } = useTranslation();
@@ -61,7 +62,7 @@ export default function Todos() {
             className="flex-1 px-3 py-2 border rounded-md bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
           <select value={priority} onChange={e => setPriority(e.target.value)}
             className="px-2 py-2 border rounded-md bg-background text-sm w-20">
-            <option value="high">🔴</option><option value="medium">🟡</option><option value="low">🟢</option>
+            <option value="high">🔴 {tr('High', '高', '高')}</option><option value="medium">🟡 {tr('Medium', '中', '中')}</option><option value="low">🟢 {tr('Low', '低', '低')}</option>
           </select>
           <button onClick={handleAdd} disabled={!title.trim() || createMut.isPending}
             className="bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:opacity-90 disabled:opacity-50">
@@ -73,13 +74,13 @@ export default function Todos() {
             className="w-40 px-3 py-1.5 border rounded-md bg-background text-sm" />
         )}
         <button onClick={() => setAdding(!adding)} className="text-xs text-muted-foreground hover:underline">
-          {adding ? '隱藏日期' : '+ 到期日'}
+          {adding ? tr('Hide date', '隱藏日期', '隐藏日期') : tr('+ Due date', '+ 到期日', '+ 到期日')}
         </button>
       </div>
 
       {/* Filter */}
       <div className="flex gap-2">
-        {[{k:'',l:'全部'},{k:'pending',l:'待辦'},{k:'completed',l:'已完成'}].map(f => (
+        {[{k:'',l:tr('All','全部','全部')},{k:'pending',l:tr('Pending','待辦','待办')},{k:'completed',l:tr('Completed','已完成','已完成')}].map(f => (
           <button key={f.k} onClick={() => setFilter(f.k)}
             className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${filter === f.k ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-accent'}`}>
             {f.l}
@@ -113,7 +114,7 @@ export default function Todos() {
           {completed.length > 0 && (
             <details>
               <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground py-2">
-                <ChevronDown className="h-3 w-3 inline mr-1" /> 已完成 ({completed.length})
+                <ChevronDown className="h-3 w-3 inline mr-1" /> {tr('Completed', '已完成', '已完成')} ({completed.length})
               </summary>
               <div className="space-y-2 mt-1">
                 {completed.map((td: any) => (

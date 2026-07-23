@@ -27,7 +27,7 @@ suppliers.get('/', async (c) => {
   const countRow = await db.prepare(
     'SELECT COUNT(*) as count FROM suppliers WHERE user_id = ? AND is_active = 1' +
     (search ? ' AND (name LIKE ? OR company_name LIKE ?)' : '')
-  ).bind(...(search ? [tenantId, `%${search}%`, `%${search}%`] : [user.id])).first<{ count: number }>();
+  ).bind(...(search ? [tenantId, `%${search}%`, `%${search}%`] : [tenantId])).first<{ count: number }>();
 
   return c.json({ data: rows.results, total: countRow?.count || 0, page, limit });
 });
@@ -58,7 +58,7 @@ suppliers.post('/', zValidator('json', createSchema), async (c) => {
   await db.prepare(
     `INSERT INTO suppliers (id, user_id, name, company_name, email, phone, address, city, state, postal_code, country, notes, tax_id, payment_terms)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(id, user.id, data.name, data.company_name || null, data.email || null, data.phone || null,
+  ).bind(id, tenantId, data.name, data.company_name || null, data.email || null, data.phone || null,
     data.address || null, data.city || null, data.state || null, data.postal_code || null,
     data.country || 'Hong Kong', data.notes || null, data.tax_id || null, data.payment_terms || null).run();
 

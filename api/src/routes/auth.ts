@@ -39,12 +39,22 @@ auth.post('/apply', authRateLimiter, zValidator('json', applySchema), async (c) 
   const { company_name, contact_name, email, phone, message } = c.req.valid('json');
   const db = c.env.DB;
 
-  // Check if email already applied or registered
-  const existingApp = await db.prepare('SELECT id FROM applications WHERE email = ?').bind(email).first();
-  if (existingApp) return c.json({ error: 'An application with this email already exists.' }, 409);
+  // Check if email already has an active application (pending or approved)
+  const existingApp = await db.prepare(
+    "SELECT id, status FROM applications WHERE email = ? ORDER BY created_at DESC LIMIT 1"
+  ).bind(email).first<{ id: string; status: string }>();
+  // Block only if pending or approved — allow re-apply after deregistered/rejected
+  if (existingApp && (existingApp.status === 'pending' || existingApp.status === 'approved')) {
+    return c.json({ error: 'An application with this email already exists.' }, 409);
+  }
 
-  const existingUser = await db.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
-  if (existingUser) return c.json({ error: 'This email is already registered.' }, 409);
+  // Check if email is an active supervisor/admin account (not legacy 'user' role)
+  const existingUser = await db.prepare(
+    "SELECT id, role FROM users WHERE email = ?"
+  ).bind(email).first<{ id: string; role: string }>();
+  if (existingUser && (existingUser.role === 'supervisor' || existingUser.role === 'admin')) {
+    return c.json({ error: 'This email is already registered as an active account.' }, 409);
+  }
 
   const id = `app-${uuidv4().slice(0, 8)}`;
   await db.prepare(
@@ -58,39 +68,9 @@ auth.post('/apply', authRateLimiter, zValidator('json', applySchema), async (c) 
   }, 201);
 });
 
-// ── LEGACY REGISTER (kept for first-time admin setup only) ───────────────
-const registerSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(8).regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/, 'Password must contain uppercase, lowercase, and number'),
-  name: z.string().min(1),
-  company_name: z.string().optional(),
-});
-
-auth.post('/register', authRateLimiter, zValidator('json', registerSchema), async (c) => {
-  const { email, password, name, company_name } = c.req.valid('json');
-  const db = c.env.DB;
-  const jwtSecret = getJwtSecret(c.env);
-
-  const existing = await db.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
-  if (existing) return c.json({ error: 'Email already registered' }, 409);
-
-  const id = `u-${uuidv4().slice(0, 8)}`;
-  const passwordHash = await hash(password, 12);
-
-  // First user ever → admin; all others must go through /apply flow
-  const countRow = await db.prepare('SELECT COUNT(*) as cnt FROM users').first<{ cnt: number }>();
-  if ((countRow?.cnt || 0) > 0) {
-    return c.json({ error: 'Registration is by invitation only. Please use the Apply form.' }, 403);
-  }
-  const role = 'admin';
-
-  await db.prepare(
-    'INSERT INTO users (id, email, password_hash, name, company_name, role, status) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  ).bind(id, email, passwordHash, name, company_name || null, role, 'active').run();
-
-  const user: AuthUser = { id, email, name, role, company_name };
-  const token = sign(user, jwtSecret, { expiresIn: '24h' });
-  return c.json({ user, token }, 201);
+// ── LEGACY REGISTER (disabled — all registration goes through /apply + admin approval) ──
+auth.post('/register', authRateLimiter, async (c) => {
+  return c.json({ error: 'Registration is by invitation only. Please use the Apply form at /apply.' }, 403);
 });
 
 // ── LOGIN ────────────────────────────────────────────────────────────────

@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { api, WORKER_API_BASE } from '../lib/api';
+import { tr } from '../lib/i18nHelpers';
 import { Trash2, Download, Search, Pencil } from 'lucide-react';
 
 // Download receipt PDF via authenticated fetch (same as Invoices page)
@@ -26,6 +28,7 @@ async function downloadReceiptPDF(receiptId: string, receiptNumber: string) {
 }
 
 export default function ExpenseReceipts() {
+  const { i18n } = useTranslation();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
@@ -52,11 +55,11 @@ export default function ExpenseReceipts() {
 
   const statusLabel = (s: string) => {
     const labels: Record<string, string> = {
-      draft: '草稿',
-      sent: '已發出',
-      paid: '已確認',
-      overdue: '逾期',
-      cancelled: '已取消',
+      draft: tr('Draft', '草稿', '草稿'),
+      sent: tr('Sent', '已發出', '已发出'),
+      paid: tr('Confirmed', '已確認', '已确认'),
+      overdue: tr('Overdue', '逾期', '逾期'),
+      cancelled: tr('Cancelled', '已取消', '已取消'),
     };
     return labels[s] || s;
   };
@@ -77,8 +80,8 @@ export default function ExpenseReceipts() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold">收據 Receipts</h2>
-          <p className="text-muted-foreground text-sm mt-1">管理付款收據</p>
+          <h2 className="text-2xl font-bold">{tr('Receipts', 'Receipts', 'Receipts')}</h2>
+          <p className="text-muted-foreground text-sm mt-1">{tr('Manage payment receipts', '管理付款收據', '管理付款收据')}</p>
         </div>
       </div>
 
@@ -90,7 +93,7 @@ export default function ExpenseReceipts() {
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="搜尋收據…"
+              placeholder={tr("Search receipts...", "搜尋收據…", "搜索收据…")}
               className="w-full pl-8 pr-3 py-1.5 border rounded-md bg-background text-sm"
             />
           </div>
@@ -99,19 +102,19 @@ export default function ExpenseReceipts() {
             onChange={(e) => setStatusFilter(e.target.value)}
             className="px-3 py-1.5 border rounded-md bg-background text-sm"
           >
-            <option value="">全部狀態</option>
-            <option value="draft">草稿</option>
-            <option value="paid">已確認</option>
-            <option value="cancelled">已取消</option>
+            <option value="">{tr('All Status', '全部狀態', '全部状态')}</option>
+            <option value="draft">{tr('Draft', '草稿', '草稿')}</option>
+            <option value="paid">{tr('Confirmed', '已確認', '已确认')}</option>
+            <option value="cancelled">{tr('Cancelled', '已取消', '已取消')}</option>
           </select>
         </div>
 
         {/* Table — mirrors Invoices exactly */}
         {isLoading ? (
-          <div className="text-center py-12 text-muted-foreground text-sm">載入中…</div>
+          <div className="text-center py-12 text-muted-foreground text-sm">{tr('Loading...', '載入中…', '载入中…')}</div>
         ) : receipts.length === 0 ? (
           <div className="text-center py-12 text-muted-foreground">
-            <p className="text-sm">未有收據記錄</p>
+            <p className="text-sm">{tr('No receipt records', '未有收據記錄', '未有收据记录')}</p>
             <p className="text-xs mt-2">
               Upload receipt PDFs through{' '}
               <a href="/file-storage" className="text-primary underline">File Storage</a>{' '}
@@ -122,12 +125,12 @@ export default function ExpenseReceipts() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-muted/50">
-                <th className="text-left p-3">收據號碼</th>
-                <th className="text-left p-3 hidden md:table-cell">付款方</th>
-                <th className="text-left p-3">狀態</th>
-                <th className="text-right p-3 hidden lg:table-cell">金額</th>
-                <th className="text-left p-3 hidden lg:table-cell">日期</th>
-                <th className="text-right p-3">操作</th>
+                <th className="text-left p-3">{tr('Receipt No.', '收據號碼', '收据号码')}</th>
+                <th className="text-left p-3 hidden md:table-cell">{tr('Payer', '付款方', '付款方')}</th>
+                <th className="text-left p-3">{tr('Status', '狀態', '状态')}</th>
+                <th className="text-right p-3 hidden lg:table-cell">{tr('Amount', '金額', '金额')}</th>
+                <th className="text-left p-3 hidden lg:table-cell">{tr('Date', '日期', '日期')}</th>
+                <th className="text-right p-3">{tr('Actions', '操作', '操作')}</th>
               </tr>
             </thead>
             <tbody>
@@ -156,14 +159,14 @@ export default function ExpenseReceipts() {
                     <button
                       onClick={() => navigate(`/invoices/review/${rec.id}`)}
                       className="p-1 hover:bg-muted rounded mr-1"
-                      title="編輯 Edit"
+                      title={tr("Edit", "編輯", "编辑")}
                     >
                       <Pencil className="h-4 w-4" />
                     </button>
                     <button
                       onClick={() => downloadReceiptPDF(rec.id, rec.receipt_number || rec.invoice_number)}
                       className="p-1 hover:bg-muted rounded mr-1"
-                      title="下載 PDF"
+                      title={tr("Download PDF", "下載 PDF", "下载 PDF")}
                     >
                       <Download className="h-4 w-4" />
                     </button>
@@ -172,11 +175,11 @@ export default function ExpenseReceipts() {
                         onClick={() => updateStatus.mutate({ id: rec.id, status: 'paid' })}
                         className="text-xs text-green-600 hover:underline mr-2"
                       >
-                        確認收款
+                        {tr('Confirm Payment', '確認收款', '确认收款')}
                       </button>
                     )}
                     <button
-                      onClick={() => { if (confirm('確定刪除此收據?')) deleteMut.mutate(rec.id); }}
+                      onClick={() => { if (confirm(tr('Delete this receipt?', '確定刪除此收據?', '确定删除此收据?'))) deleteMut.mutate(rec.id); }}
                       className="p-1 hover:bg-muted rounded text-destructive"
                     >
                       <Trash2 className="h-4 w-4" />
@@ -191,7 +194,7 @@ export default function ExpenseReceipts() {
 
       {/* Info tip */}
       <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-700">
-        <b>Tip:</b> To upload a receipt PDF (e.g. PNR Receipt 2025001), use{' '}
+        <b>Tip:</b> {tr('To upload a receipt PDF, use', '上傳收據 PDF，請使用', '上传收据 PDF，请使用')} {' '}
         <a href="/file-storage" className="underline font-medium">File Storage</a>.
         The system automatically identifies it as a receipt and shows it here.
       </div>

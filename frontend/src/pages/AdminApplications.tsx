@@ -7,6 +7,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { useToast } from '../components/Toast';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 
@@ -33,6 +34,7 @@ export default function AdminApplications() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const toast = useToast();
   const [filter, setFilter] = useState<'pending' | 'approved' | 'rejected' | 'all'>('pending');
   const [approvedCreds, setApprovedCreds] = useState<{ email: string; temp_password: string; company: string } | null>(null);
 
@@ -60,14 +62,20 @@ export default function AdminApplications() {
         temp_password: res.temp_password,
         company: app?.company_name || '',
       });
+      // Alert admin about email status
+      if (res.email_sent) {
+        // Email sent successfully - no extra alert needed, the creds panel shows
+      } else {
+        toast.info(`Account created but email could NOT be sent to ${res.email}.\n\n${res.email_error || 'Unknown reason'}\n\nPlease use the "Copy Credentials" button below to share login details manually.`);
+      }
     },
-    onError: (err: any) => alert(`Failed to approve: ${err?.message || 'Unknown error'}`),
+    onError: (err: any) => toast.info(`Failed to approve: ${err?.message || 'Unknown error'}`),
   });
 
   const rejectMut = useMutation({
     mutationFn: (appId: string) => api(`/admin/applications/${appId}/reject`, { method: 'POST' }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-applications'] }),
-    onError: (err: any) => alert(`Failed to reject: ${err?.message || 'Unknown error'}`),
+    onError: (err: any) => toast.info(`Failed to reject: ${err?.message || 'Unknown error'}`),
   });
 
   const statusBadge = (status: string) => {
@@ -90,10 +98,12 @@ export default function AdminApplications() {
       </div>
 
       {/* Approved credentials popup */}
-      {approvedCreds && (
+      {approvedCreds && (() => {
+        const credText = `Email: ${approvedCreds.email}\nTemporary Password: ${approvedCreds.temp_password}\nLogin URL: https://sme.techforliving.net/login\n\nPlease change your password on first login.`;
+        return (
         <div className="bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded-xl p-5">
           <div className="flex items-start justify-between">
-            <div>
+            <div className="flex-1">
               <div className="font-semibold text-green-800 dark:text-green-300 mb-1">
                 ✅ {approvedCreds.company} — Account Created
               </div>
@@ -103,7 +113,24 @@ export default function AdminApplications() {
               <div className="bg-white dark:bg-green-900/20 rounded-lg p-3 font-mono text-sm space-y-1 border border-green-200">
                 <div>Email: <strong>{approvedCreds.email}</strong></div>
                 <div>Temporary Password: <strong>{approvedCreds.temp_password}</strong></div>
-                <div>Login URL: <strong>https://1ef6f9fa.opcc-crm.pages.dev/login</strong></div>
+                <div>Login URL: <strong>https://sme.techforliving.net/login</strong></div>
+              </div>
+              <div className="flex gap-2 mt-3">
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(credText);
+                    toast.info('Credentials copied to clipboard! You can paste them in WhatsApp or email.');
+                  }}
+                  className="bg-green-600 text-white px-4 py-1.5 rounded-md text-sm font-medium hover:bg-green-700"
+                >
+                  📋 Copy Credentials
+                </button>
+                <a
+                  href={`mailto:${approvedCreds.email}?subject=Your Tech Connect SME Account&body=${encodeURIComponent(credText)}`}
+                  className="border border-green-400 text-green-700 px-4 py-1.5 rounded-md text-sm font-medium hover:bg-green-100"
+                >
+                  ✉️ Send via Email
+                </a>
               </div>
             </div>
             <button
@@ -114,7 +141,8 @@ export default function AdminApplications() {
             </button>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Filter tabs */}
       <div className="flex gap-1 border-b border-border">

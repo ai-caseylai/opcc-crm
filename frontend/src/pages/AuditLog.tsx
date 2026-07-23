@@ -28,6 +28,9 @@ const ACTION_LABELS: Record<string, { label: string; color: string }> = {
   upload:              { label: 'Upload',               color: 'text-green-600 bg-green-50 dark:bg-green-900/30' },
   delete:              { label: 'Delete',               color: 'text-red-600 bg-red-50 dark:bg-red-900/30' },
   soft_delete:         { label: 'Moved to Bin',         color: 'text-orange-600 bg-orange-50 dark:bg-orange-900/30' },
+  purge:               { label: 'Purge (permanent)',    color: 'text-red-700 bg-red-100 dark:bg-red-900/40' },
+  restore:             { label: 'Restore from Bin',     color: 'text-green-700 bg-green-50 dark:bg-green-900/30' },
+  confirm:             { label: 'Confirm',              color: 'text-green-600 bg-green-50 dark:bg-green-900/30' },
   import:              { label: 'Import',               color: 'text-purple-600 bg-purple-50 dark:bg-purple-900/30' },
   update:              { label: 'Edit',                 color: 'text-yellow-700 bg-yellow-50 dark:bg-yellow-900/30' },
   confirm_match:       { label: 'Confirm Match',        color: 'text-teal-600 bg-teal-50 dark:bg-teal-900/30' },
@@ -36,6 +39,8 @@ const ACTION_LABELS: Record<string, { label: string; color: string }> = {
   create_user:         { label: 'Create User',          color: 'text-green-700 bg-green-50 dark:bg-green-900/30' },
   role_change:         { label: 'Role Change',          color: 'text-purple-700 bg-purple-50 dark:bg-purple-900/30' },
   auto_categorize:     { label: 'Auto-Categorize',      color: 'text-blue-600 bg-blue-50 dark:bg-blue-900/30' },
+  deregister_company:  { label: 'Deregister Company',   color: 'text-red-800 bg-red-100 dark:bg-red-900/50' },
+  purge_old:           { label: 'Purge (bulk)',         color: 'text-red-700 bg-red-100 dark:bg-red-900/40' },
 };
 
 export default function AuditLog() {

@@ -7,6 +7,7 @@ import { api } from '../lib/api';
 import Chatbot from './Chatbot';
 import CookieConsent from './CookieConsent';
 import FirmClientSwitcher from './FirmClientSwitcher';
+import { tr } from '../lib/i18nHelpers';
 import {
   LayoutDashboard, Users, Truck, Package, FileText, FileSpreadsheet, Mail,
   Calculator, Upload, Settings, LogOut, Menu, X, MessageCircle, Calendar, Briefcase, FolderOpen, Plug, SlidersHorizontal, Landmark, Receipt, CheckSquare, Globe, CreditCard, Smartphone, HardDrive, ShoppingCart, ClipboardList, AlertCircle, BookOpen, ChevronLeft, ChevronRight, Building2, Shield, Tag, Bot, Link2, Trash2, ClipboardCheck, UserCog,
@@ -24,7 +25,7 @@ const navGroups = [
     ],
   },
   {
-    label: '文件處理',
+    label: 'fileProcessing',
     items: [
       { to: '/bank-statements', icon: Landmark, key: 'bankStatements' },
       { to: '/invoices', icon: FileText, key: 'invoices' },
@@ -34,7 +35,7 @@ const navGroups = [
     ],
   },
   {
-    label: '會計',
+    label: 'accounting',
     items: [
       { to: '/bookkeeping', icon: Calculator, key: 'bookkeeping' },
       { to: '/fixed-assets', icon: Building2, key: 'fixedAssets' },
@@ -77,7 +78,7 @@ const navGroups = [
     ],
   },
   {
-    label: '會計師樓',
+    label: 'firmManagement',
     hidden: true,
     items: [
       { to: '/firm/manage', icon: Building2, key: 'firmManagement' },
@@ -112,6 +113,30 @@ const languages = [
   { code: 'zh-Hant', label: '繁' },
   { code: 'zh-Hans', label: '简' },
   { code: 'en', label: 'EN' },
+];
+
+// Admin sees a completely different sidebar
+const adminNavGroups = [
+  {
+    label: '',
+    items: [
+      { to: '/', icon: LayoutDashboard, key: 'dashboard' },
+    ],
+  },
+  {
+    label: 'administration',
+    items: [
+      { to: '/admin/applications', icon: ClipboardCheck, key: 'applications' },
+      { to: '/settings/users', icon: UserCog, key: 'userManagement' },
+      { to: '/audit-log', icon: BookOpen, key: 'auditLog' },
+    ],
+  },
+  {
+    label: '',
+    items: [
+      { to: '/settings', icon: Settings, key: 'settings' },
+    ],
+  },
 ];
 
 // Nav key → feature flag mapping
@@ -213,18 +238,32 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       {/* Company header */}
       {collapsed ? (
         <div className="border-b flex justify-center w-16 py-3">
-          <div className="w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-sm font-bold">
-            {(activeCompany?.name || 'O').charAt(0)}
+          <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
+            user?.role === 'admin' ? 'bg-red-600 text-white' : 'bg-primary text-primary-foreground'
+          }`}>
+            {user?.role === 'admin' ? '⚙' : (activeCompany?.name || 'O').charAt(0)}
           </div>
         </div>
       ) : (
         <div className="p-6 border-b">
-          <h1 className="text-xl font-bold text-primary">
-            {activeClient?.display_name || activeClient?.company_name || activeCompany?.name || t('app.title')}
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            {activeClient ? (activeCompany?.name || user?.company_name || 'Firm') : (activeCompany?.domain || user?.company_name || user?.name)}
-          </p>
+          {user?.role === 'admin' ? (
+            <>
+              <h1 className="text-xl font-bold text-primary">{t('app.title')}</h1>
+              <p className="text-sm text-muted-foreground mt-1 flex items-center gap-1.5">
+                <Shield className="h-3.5 w-3.5 text-red-500" />
+                {tr('Platform Admin', '平台管理員', '平台管理员')}
+              </p>
+            </>
+          ) : (
+            <>
+              <h1 className="text-xl font-bold text-primary">
+                {activeClient?.display_name || activeClient?.company_name || activeCompany?.name || t('app.title')}
+              </h1>
+              <p className="text-sm text-muted-foreground mt-1">
+                {activeClient ? (activeCompany?.name || user?.company_name || 'Firm') : (activeCompany?.domain || user?.company_name || user?.name)}
+              </p>
+            </>
+          )}
         </div>
       )}
 
@@ -250,9 +289,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
       {/* Navigation */}
       <nav className={`flex-1 space-y-0.5 overflow-y-auto ${collapsed ? 'p-0' : 'p-2'}`}>
-        {navGroups.map((group, gi) => {
+        {(user?.role === 'admin' ? adminNavGroups : navGroups).map((group, gi) => {
+          const activeNavGroups = user?.role === 'admin' ? adminNavGroups : navGroups;
           const visibleItems = group.items.filter(item => {
             if ((item as any).hidden && !showAll) return false;
+            if (user?.role === 'admin') return true; // admin sidebar items are always visible
             if (item.key === 'firmManagement') return isFirmUser;
             if (item.key === 'applications') return user?.role === 'admin';
             if (item.key === 'userManagement') return ['admin', 'supervisor', 'accountant'].includes(user?.role || '');
@@ -268,7 +309,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             <div key={gi}>
               {group.label && !collapsed && (
                 <div className="text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-wider px-3 pt-3 pb-1">
-                  {group.label}
+                  {group.label === 'fileProcessing' ? (tr('FILE PROCESSING', '文件處理', '文件处理')) :
+                   group.label === 'accounting' ? (tr('ACCOUNTING', '會計', '会计')) :
+                   group.label === 'firmManagement' ? (tr('FIRM', '會計師樓', '会计师楼')) :
+                   group.label === 'administration' ? (tr('ADMINISTRATION', '管理', '管理')) :
+                   group.label}
                 </div>
               )}
               {visibleItems.map((item) => {
@@ -296,7 +341,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   </Link>
                 );
               })}
-              {!collapsed && gi < navGroups.length - 1 && group.label && visibleItems.length > 0 && (
+              {!collapsed && gi < activeNavGroups.length - 1 && group.label && visibleItems.length > 0 && (
                 <div className="mx-3 mt-2 border-b border-border/50" />
               )}
             </div>
@@ -317,7 +362,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer hover:text-foreground">
             <input type="checkbox" checked={showAll} onChange={e => setShowAll(e.target.checked)}
               className="rounded border-muted-foreground/30" />
-            顯示全部功能
+            {tr('Show all features', '顯示全部功能', '显示全部功能')}
           </label>
           <div className="text-sm text-muted-foreground">{user?.email}</div>
           <button onClick={handleLogout}

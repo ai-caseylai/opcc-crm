@@ -404,9 +404,152 @@ bank.get('/transactions', async (c) => {
     `SELECT id, bank_statement_id, transaction_date, description, deposit_amount, withdrawal_amount,
             balance, account_type, account_code, reference, invoice_id, match_status, match_confidence
      FROM bank_transactions WHERE user_id = ? AND deleted_at IS NULL
+     AND UPPER(description) NOT LIKE '%B/F BALANCE%'
+     AND UPPER(description) NOT LIKE '%C/F BALANCE%'
+     AND UPPER(description) NOT LIKE '%OPENING BALANCE%'
+     AND UPPER(description) NOT LIKE '%CLOSING BALANCE%'
+     AND UPPER(description) NOT LIKE 'B/F%'
+     AND UPPER(description) NOT LIKE 'C/F%'
      ORDER BY transaction_date DESC, sort_order DESC`
   ).bind(tenantId).all();
   return c.json({ data: rows.results });
+});
+
+// ── Continuity Chain Analysis ──────────────────────────────────────────────
+// Groups confirmed statements by (account_number, currency), sorts by period,
+// and checks for gaps, overlaps, duplicates, and balance mismatches.
+bank.get('/continuity', async (c) => {
+  const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
+
+  const rows = await c.env.DB.prepare(
+    `SELECT id, bank_name, account_number, branch, currency,
+            statement_year, statement_month, period_start, period_end,
+            opening_balance, closing_balance, status
+     FROM bank_statements
+     WHERE user_id = ? AND deleted_at IS NULL
+     ORDER BY account_number, currency, statement_year ASC, statement_month ASC`
+  ).bind(tenantId).all();
+
+  const stmts = (rows.results || []) as any[];
+  // Filter out rows with no year/month (incomplete uploads)
+  const validStmts = stmts.filter((s: any) => s.statement_year && s.statement_month);
+  if (validStmts.length === 0) return c.json({ groups: [] });
+
+  // Normalize account numbers (strip spaces, dashes for grouping)
+  const normAcct = (s: string) => (s || 'unknown').replace(/[\s\-]/g, '');
+
+  // Group by (normalized account_number, currency)
+  const groupMap = new Map<string, any[]>();
+  for (const s of validStmts) {
+    const key = `${normAcct(s.account_number)}||${s.currency || 'HKD'}`;
+    if (!groupMap.has(key)) groupMap.set(key, []);
+    groupMap.get(key)!.push(s);
+  }
+
+  const groups: any[] = [];
+
+  for (const [key, items] of groupMap.entries()) {
+    const [accountNumber, currency] = key.split('||');
+    const bankName = items[0]?.bank_name || null;
+
+    // Build chain: for each consecutive pair, compute link status
+    const chain: any[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const curr = items[i];
+      const entry: any = {
+        id: curr.id,
+        statement_year: curr.statement_year,
+        statement_month: curr.statement_month,
+        period_start: curr.period_start,
+        period_end: curr.period_end,
+        opening_balance: curr.opening_balance,
+        closing_balance: curr.closing_balance,
+        issues: [] as string[],
+      };
+
+      if (i > 0) {
+        const prev = items[i - 1];
+        const prevYear = prev.statement_year;
+        const prevMonth = prev.statement_month;
+        const currYear = curr.statement_year;
+        const currMonth = curr.statement_month;
+
+        // Check for duplicate period
+        if (prevYear === currYear && prevMonth === currMonth) {
+          entry.issues.push('duplicate');
+        } else {
+          // Check gap: expect consecutive months
+          const prevTotal = prevYear * 12 + prevMonth;
+          const currTotal = currYear * 12 + currMonth;
+          const diff = currTotal - prevTotal;
+
+          if (diff > 1) {
+            // There's a gap — list missing months
+            const missing: string[] = [];
+            for (let m = 1; m < diff; m++) {
+              const totalMonth = prevTotal + m;
+              const y = Math.floor((totalMonth - 1) / 12);
+              const mo = ((totalMonth - 1) % 12) + 1;
+              missing.push(`${y}-${String(mo).padStart(2, '0')}`);
+            }
+            entry.issues.push('gap');
+            entry.missing_months = missing;
+          } else if (diff < 1) {
+            entry.issues.push('overlap');
+          }
+
+          // Also check by period_end / period_start dates if available
+          if (prev.period_end && curr.period_start) {
+            const prevEnd = new Date(prev.period_end);
+            const currStart = new Date(curr.period_start);
+            const daysDiff = (currStart.getTime() - prevEnd.getTime()) / 86400000;
+            if (daysDiff < 0) {
+              if (!entry.issues.includes('overlap')) entry.issues.push('date_overlap');
+            }
+          }
+        }
+
+        // Check balance continuity: prev closing should equal curr opening
+        if (prev.closing_balance != null && curr.opening_balance != null) {
+          if (Math.abs(prev.closing_balance - curr.opening_balance) > 0.005) {
+            entry.issues.push('balance_mismatch');
+            entry.expected_opening = prev.closing_balance;
+            entry.actual_opening = curr.opening_balance;
+            entry.mismatch_amount = curr.opening_balance - prev.closing_balance;
+          }
+        }
+
+        // If no issues, it's matched
+        if (entry.issues.length === 0) {
+          entry.issues.push('matched');
+        }
+      } else {
+        // First statement in group: no predecessor to compare
+        entry.issues.push('first');
+      }
+
+      chain.push(entry);
+    }
+
+    // Overall group status
+    const hasGap = chain.some((c: any) => c.issues.includes('gap'));
+    const hasMismatch = chain.some((c: any) => c.issues.includes('balance_mismatch'));
+    const hasDuplicate = chain.some((c: any) => c.issues.includes('duplicate'));
+    const hasOverlap = chain.some((c: any) => c.issues.includes('overlap') || c.issues.includes('date_overlap'));
+    const allMatched = chain.every((c: any) => c.issues.includes('matched') || c.issues.includes('first'));
+
+    groups.push({
+      account_number: accountNumber,
+      currency,
+      bank_name: bankName,
+      statement_count: items.length,
+      status: allMatched ? 'complete' : hasGap ? 'has_gaps' : hasMismatch ? 'has_mismatches' : hasDuplicate ? 'has_duplicates' : hasOverlap ? 'has_overlaps' : 'issues',
+      chain,
+    });
+  }
+
+  return c.json({ groups });
 });
 
 // ── Get single (with transactions) ──

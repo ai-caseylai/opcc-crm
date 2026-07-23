@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { ToastProvider } from './components/Toast';
 import { api } from './lib/api';
 import Layout from './components/Layout';
 import Login from './pages/Login';
@@ -30,6 +31,7 @@ import BankStatementReview from './pages/BankStatementReview';
 import Apply from './pages/Apply';
 import UserManagement from './pages/UserManagement';
 import AdminApplications from './pages/AdminApplications';
+import AdminCompanyView from './pages/AdminCompanyView';
 import AuditLog from './pages/AuditLog';
 import Reconciliation from './pages/Reconciliation';
 import RecycleBin from './pages/RecycleBin';
@@ -112,6 +114,7 @@ function AppRoutes() {
       <Route path="/register" element={<Apply />} />
       <Route path="/settings/users" element={<ProtectedRoute><UserManagement /></ProtectedRoute>} />
       <Route path="/admin/applications" element={<ProtectedRoute><AdminApplications /></ProtectedRoute>} />
+      <Route path="/admin/company/:userId" element={<ProtectedRoute><AdminCompanyView /></ProtectedRoute>} />
       <Route path="/audit-log" element={<ProtectedRoute><AuditLog /></ProtectedRoute>} />
       <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
       <Route path="/compliance" element={<ProtectedRoute><FeatureGuard><Compliance /></FeatureGuard></ProtectedRoute>} />
@@ -160,7 +163,9 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <AuthProvider>
-          <AppRoutes />
+          <ToastProvider>
+            <AppRoutes />
+          </ToastProvider>
         </AuthProvider>
       </BrowserRouter>
     </QueryClientProvider>
