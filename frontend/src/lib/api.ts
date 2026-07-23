@@ -48,7 +48,10 @@ export async function api(path: string, options: ApiOptions = {}) {
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || 'Request failed');
+    const e: any = new Error(err.error || 'Request failed');
+    // Attach full response body so callers can access fields like invoice_id/statement_id
+    Object.assign(e, err);
+    throw e;
   }
 
   const contentType = res.headers.get('content-type');

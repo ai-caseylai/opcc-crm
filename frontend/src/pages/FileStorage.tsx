@@ -222,19 +222,9 @@ export default function FileStorage() {
       setDescription('');
       // Auto-import: if invoice or bank statement, redirect to review page
       if (data?.category === 'invoice' || data?.category === 'receipt') {
-        api('/file-storage/' + data.id + '/import-invoice', { method: 'POST' })
-          .then((res: any) => {
-            queryClient.invalidateQueries({ queryKey: ['invoices'] });
-            navigate('/invoices/review/' + res.invoice_id);
-          })
-          .catch(() => {}); // already handled by manual button
+        importInvMut.mutate(data.id);
       } else if (data?.category === 'bank_statement') {
-        api('/file-storage/' + data.id + '/import-statement', { method: 'POST' })
-          .then((res: any) => {
-            queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
-            navigate('/bank-statements/review/' + res.statement_id);
-          })
-          .catch(() => {});
+        importStmtMut.mutate(data.id);
       }
     },
     onError: (err: any) => {
@@ -248,14 +238,14 @@ export default function FileStorage() {
       queryClient.invalidateQueries({ queryKey: ['file-storage'] });
       queryClient.invalidateQueries({ queryKey: ['file-storage-folders'] });
       queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
-      // Redirect to review page so user can check/edit transactions
-      if (data.ocr_failed) {
-        navigate('/bank-statements/review/' + data.statement_id);
-      } else {
-        navigate('/bank-statements/review/' + data.statement_id);
-      }
+      navigate('/bank-statements/review/' + data.statement_id);
     },
     onError: (err: any) => {
+      // If already imported, redirect to existing statement review
+      if (err?.statement_id) {
+        navigate('/bank-statements/review/' + err.statement_id);
+        return;
+      }
       alert(`匯入失敗：${err?.message || err?.error || '未知錯誤'}`);
     },
   });
@@ -272,6 +262,11 @@ export default function FileStorage() {
       navigate('/invoices/review/' + data.invoice_id);
     },
     onError: (err: any) => {
+      // If already imported, redirect to existing invoice review
+      if (err?.invoice_id) {
+        navigate('/invoices/review/' + err.invoice_id);
+        return;
+      }
       alert(`匯入失敗：${err?.message || err?.error || '未知錯誤'}`);
     },
   });
