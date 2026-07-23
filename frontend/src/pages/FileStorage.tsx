@@ -191,6 +191,7 @@ export default function FileStorage() {
   const [filterFolder, setFilterFolder] = useState('');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [dragOver, setDragOver] = useState(false);
+  const [processing, setProcessing] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editFolder, setEditFolder] = useState('');
@@ -222,8 +223,10 @@ export default function FileStorage() {
       setDescription('');
       // Auto-import: if invoice or bank statement, redirect to review page
       if (data?.category === 'invoice' || data?.category === 'receipt') {
+        setProcessing(true);
         importInvMut.mutate(data.id);
       } else if (data?.category === 'bank_statement') {
+        setProcessing(true);
         importStmtMut.mutate(data.id);
       }
     },
@@ -238,14 +241,17 @@ export default function FileStorage() {
       queryClient.invalidateQueries({ queryKey: ['file-storage'] });
       queryClient.invalidateQueries({ queryKey: ['file-storage-folders'] });
       queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
+      setProcessing(false);
       navigate('/bank-statements/review/' + data.statement_id);
     },
     onError: (err: any) => {
       // If already imported, redirect to existing statement review
       if (err?.statement_id) {
+        setProcessing(false);
         navigate('/bank-statements/review/' + err.statement_id);
         return;
       }
+      setProcessing(false);
       alert(`匯入失敗：${err?.message || err?.error || '未知錯誤'}`);
     },
   });
@@ -259,11 +265,13 @@ export default function FileStorage() {
       queryClient.invalidateQueries({ queryKey: ['file-storage-folders'] });
       queryClient.invalidateQueries({ queryKey: ['invoices'] });
       // Always redirect to review page so user can check/edit data
+      setProcessing(false);
       navigate('/invoices/review/' + data.invoice_id);
     },
     onError: (err: any) => {
       // If already imported, redirect to existing invoice review
       if (err?.invoice_id) {
+        setProcessing(false);
         navigate('/invoices/review/' + err.invoice_id);
         return;
       }
@@ -324,10 +332,12 @@ export default function FileStorage() {
       deleteMut.mutate(f.id);
     } else if (action === 'import-statement') {
       if (confirm(`確定要將「${f.filename}」匯入為銀行月結單嗎？系統會自動 OCR 辨識並解析交易紀錄。`)) {
+        setProcessing(true);
         importStmtMut.mutate(f.id);
       }
     } else if (action === 'import-invoice') {
       if (confirm(`確定要將「${f.filename}」匯入為發票嗎？系統會自動 OCR 辨識並解析品項。`)) {
+        setProcessing(true);
         importInvMut.mutate(f.id);
       }
     }
@@ -374,6 +384,19 @@ export default function FileStorage() {
   const fileList = (files?.data || []) as FileItem[];
   const folderList = (folders?.data || []) as string[];
   const tree = useMemo(() => buildTree(fileList), [fileList]);
+
+    // ── Processing overlay ──
+  if (processing) {
+    return (
+      <div className="flex items-center justify-center h-[calc(100vh-4rem)]">
+        <div className="text-center space-y-4">
+          <div className="animate-spin h-10 w-10 border-4 border-primary border-t-transparent rounded-full mx-auto" />
+          <p className="text-lg font-medium">Processing document… 處理文件中…</p>
+          <p className="text-sm text-muted-foreground">Running OCR and extracting data, please wait.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
