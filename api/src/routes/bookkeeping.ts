@@ -183,7 +183,43 @@ bookkeeping.post('/entries/:id/reverse', bookkeeperMiddleware, async (c) => {
 bookkeeping.get('/accounts', async (c) => {
   const user = c.get('user');
   const tenantId = c.get('client_user_id') || user.id;
-  const rows = await c.env.DB.prepare('SELECT * FROM accounts WHERE user_id = ? AND is_active = 1 ORDER BY account_code').bind(tenantId).all();
+  const db = c.env.DB;
+  const asOf = c.req.query('as_of');
+
+  const rows = await db.prepare('SELECT * FROM accounts WHERE user_id = ? AND is_active = 1 ORDER BY account_code').bind(tenantId).all();
+
+  // Compute current_balance for each account if as_of is provided
+  if (asOf) {
+    const balanceRows = await db.prepare(
+      `SELECT jl.account_code,
+              COALESCE(SUM(jl.debit), 0) as total_debit,
+              COALESCE(SUM(jl.credit), 0) as total_credit
+       FROM journal_lines jl
+       JOIN journal_entries je ON jl.entry_id = je.id
+       WHERE je.user_id = ? AND je.entry_date <= ? AND je.status != 'stale'
+       GROUP BY jl.account_code`
+    ).bind(tenantId, asOf).all();
+    const balanceMap = new Map<string, { debit: number; credit: number }>();
+    for (const r of balanceRows.results as any[]) {
+      balanceMap.set(r.account_code, { debit: r.total_debit, credit: r.total_credit });
+    }
+
+    const data = (rows.results as any[]).map(a => {
+      const b = balanceMap.get(a.account_code);
+      const opening = a.opening_balance || 0;
+      const debit = b?.debit || 0;
+      const credit = b?.credit || 0;
+      const code = a.account_code || '';
+      const name = (a.account_name || '').toLowerCase();
+      const isContra = code.startsWith('123') || name.includes('accumulated depreciation')
+        || name.includes('累計折舊') || name.includes('allowance') || name.includes('減值');
+      const isDebitNatural = !isContra && (a.account_type === 'asset' || a.account_type === 'expense');
+      const currentBalance = isDebitNatural ? opening + debit - credit : opening + credit - debit;
+      return { ...a, total_debit: debit, total_credit: credit, current_balance: Math.round(currentBalance * 100) / 100 };
+    });
+    return c.json({ data, as_of: asOf });
+  }
+
   return c.json({ data: rows.results });
 });
 
@@ -398,6 +434,69 @@ bookkeeping.post('/accounts', bookkeeperMiddleware, zValidator('json', createAcc
   await auditLog(db, user.id, 'create', 'account', data.account_code, { account_name: data.account_name, account_type: data.account_type });
   const account = await db.prepare('SELECT * FROM accounts WHERE id = ?').bind(id).first();
   return c.json(account, 201);
+});
+
+// Get transaction history for a specific account with running balance
+bookkeeping.get('/accounts/:code/transactions', async (c) => {
+  const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
+  const db = c.env.DB;
+  const code = c.req.param('code');
+  const startDate = c.req.query('start_date');
+  const endDate = c.req.query('end_date');
+
+  // Get account info
+  const account = await db.prepare('SELECT * FROM accounts WHERE user_id = ? AND account_code = ?')
+    .bind(tenantId, code).first();
+  if (!account) return c.json({ error: 'Account not found' }, 404);
+
+  const sDate = startDate || '2000-01-01';
+  const eDate = endDate || '2099-12-31';
+
+  // Get journal lines for this account
+  const rows = await db.prepare(
+    `SELECT jl.account_code, jl.account_name, jl.description as line_description,
+            jl.debit, jl.credit, jl.sort_order,
+            je.entry_date, je.description as entry_description, je.entry_number,
+            je.reference_type, je.reference_id, je.id as entry_id
+     FROM journal_lines jl
+     JOIN journal_entries je ON jl.entry_id = je.id
+     WHERE jl.account_code = ? AND je.user_id = ?
+       AND je.entry_date >= ? AND je.entry_date <= ?
+       AND je.status != 'stale'
+     ORDER BY je.entry_date, jl.sort_order`
+  ).bind(code, tenantId, sDate, eDate).all();
+
+  const opening = (account as any).opening_balance || 0;
+  const acctCode = (account as any).account_code || '';
+  const acctName = ((account as any).account_name || '').toLowerCase();
+  const isContra = acctCode.startsWith('123') || acctName.includes('accumulated depreciation')
+    || acctName.includes('累計折舊') || acctName.includes('allowance') || acctName.includes('減值');
+  const isDebitNatural = !isContra && ((account as any).account_type === 'asset' || (account as any).account_type === 'expense');
+
+  const transactions: any[] = [];
+  let runningBalance = opening;
+  for (const r of rows.results as any[]) {
+    const change = isDebitNatural ? (r.debit - r.credit) : (r.credit - r.debit);
+    runningBalance += change;
+    transactions.push({
+      entry_date: r.entry_date,
+      description: r.line_description || r.entry_description,
+      debit: r.debit,
+      credit: r.credit,
+      running_balance: Math.round(runningBalance * 100) / 100,
+      entry_number: r.entry_number,
+      reference_type: r.reference_type,
+      reference_id: r.reference_id,
+      entry_id: r.entry_id,
+    });
+  }
+
+  return c.json({
+    account: { ...account, opening_balance: opening },
+    transactions,
+    period: { start: sDate, end: eDate },
+  });
 });
 
 // PATCH opening balance for an account
