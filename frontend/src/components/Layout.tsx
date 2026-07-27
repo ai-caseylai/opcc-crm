@@ -10,103 +10,76 @@ import FirmClientSwitcher from './FirmClientSwitcher';
 import { tr } from '../lib/i18nHelpers';
 import {
   LayoutDashboard, Users, Truck, Package, FileText, FileSpreadsheet, Mail,
-  Calculator, Upload, Settings, LogOut, Menu, X, MessageCircle, Calendar, Briefcase, FolderOpen, Plug, SlidersHorizontal, Landmark, Receipt, CheckSquare, Globe, CreditCard, Smartphone, HardDrive, ShoppingCart, ClipboardList, AlertCircle, BookOpen, ChevronLeft, ChevronRight, Building2, Shield, Tag, Bot, Link2, Trash2, ClipboardCheck, UserCog,
+  Calculator, Upload, Settings, LogOut, Menu, X, MessageCircle, Calendar, Briefcase, FolderOpen, Plug, SlidersHorizontal, Landmark, Receipt, CheckSquare, Globe, CreditCard, Smartphone, HardDrive, ShoppingCart, ClipboardList, AlertCircle, BookOpen, ChevronLeft, ChevronRight, ChevronDown, Building2, Shield, Tag, Bot, Link2, Trash2, ClipboardCheck, UserCog, List, Dot,
 } from 'lucide-react';
 
+// P1 Navigation — accounting-workflow structure with expandable groups
 const navGroups = [
-  {
-    label: '',
-    items: [
-      { to: '/', icon: LayoutDashboard, key: 'dashboard' },
-      { to: '/compliance', icon: Shield, key: 'compliance', hidden: true },
-      { to: '/file-storage', icon: HardDrive, key: 'fileStorage' },
-      { to: '/expense-receipts', icon: Bot, key: 'telegramBills' },
-      { to: '/ai-memory', icon: BookOpen, key: 'aiMemory', hidden: true },
-    ],
-  },
-  {
-    label: 'fileProcessing',
-    items: [
-      { to: '/bank-statements', icon: Landmark, key: 'bankStatements' },
-      { to: '/invoices', icon: FileText, key: 'invoices' },
-      { to: '/expense-receipts', icon: Receipt, key: 'expenseReceipts' },
-      { to: '/reconciliation', icon: Link2, key: 'reconciliation' },
-      { to: '/recycle-bin', icon: Trash2, key: 'recycleBin' },
-    ],
-  },
-  {
-    label: 'accounting',
-    items: [
-      { to: '/bookkeeping', icon: Calculator, key: 'bookkeeping' },
-      { to: '/fixed-assets', icon: Building2, key: 'fixedAssets' },
-    ],
-  },
-  {
-    label: '客戶',
-    hidden: true,
-    items: [
-      { to: '/customers', icon: Users, key: 'customers' },
-      { to: '/suppliers', icon: Truck, key: 'suppliers' },
-      { to: '/quotations', icon: FileSpreadsheet, key: 'quotations' },
-    ],
-  },
-  {
-    label: '銷售',
-    hidden: true,
-    items: [
-      { to: '/products', icon: Package, key: 'products' },
-      { to: '/services', icon: Briefcase, key: 'services' },
-      { to: '/purchase-orders', icon: ShoppingCart, key: 'purchaseOrders' },
-      { to: '/service-orders', icon: ClipboardList, key: 'serviceOrders' },
-    ],
-  },
-  {
-    label: '通訊',
-    hidden: true,
-    items: [
-      { to: '/calendar', icon: Calendar, key: 'calendar' },
-      { to: '/messages', icon: MessageCircle, key: 'messages' },
-      { to: '/mail', icon: Mail, key: 'mail' },
-    ],
-  },
-  {
-    label: '工具',
-    hidden: true,
-    items: [
-      { to: '/todos', icon: CheckSquare, key: 'todos' },
-      { to: '/documents', icon: FolderOpen, key: 'documents' },
-    ],
-  },
-  {
-    label: 'firmManagement',
-    hidden: true,
-    items: [
-      { to: '/firm/manage', icon: Building2, key: 'firmManagement' },
-    ],
-  },
-  {
-    label: '',
-    items: [
-      { to: '/settings', icon: Settings, key: 'settings' },
-      { to: '/settings/users', icon: UserCog, key: 'userManagement' },
-      { to: '/admin/applications', icon: ClipboardCheck, key: 'applications' },
-      { to: '/audit-log', icon: BookOpen, key: 'auditLog' },
-    ],
-  },
-  {
-    label: '',
-    hidden: true,
-    items: [
-      { to: '/pricing', icon: Tag, key: 'pricing' },
-      { to: '/subscription', icon: CreditCard, key: 'subscription' },
-      { to: '/website-generator', icon: Globe, key: 'websiteGenerator' },
-      { to: '/card-generator', icon: CreditCard, key: 'cardGenerator' },
-      { to: '/modules', icon: SlidersHorizontal, key: 'modules' },
-      { to: '/payment', icon: CreditCard, key: 'payment' },
-      { to: '/communication', icon: Smartphone, key: 'communication' },
-      { to: '/integrations', icon: Plug, key: 'integrations' },
-    ],
-  },
+  { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, to: '/' },
+  { key: 'documents', label: 'Documents', icon: FolderOpen, expandable: true, alwaysOpen: true, children: [
+    { key: 'fileUpload', label: 'File Upload', to: '/file-upload', sub: 'Upload bank statements, invoices, receipts' },
+    { key: 'fileStorage', label: 'File Storage', to: '/file-storage', sub: 'By financial year' },
+  ]},
+  { key: 'coa', label: 'Chart of Accounts (COA)', icon: List, to: '/coa' },
+  { key: 'generalLedger', label: 'General Ledger (總帳)', icon: BookOpen, to: '/general-ledger' },
+  { key: 'bookkeeping', label: 'Bookkeeping', icon: Calculator, expandable: true, children: [
+    { key: 'bankStatements', label: 'Bank Statements', to: '/bank-statements', sub: 'By account & period' },
+    { key: 'cardStatements', label: 'Card Statements', to: '/card-statements', sub: 'By account & period' },
+    { key: 'invoices', label: 'Invoices', to: '/invoices', sub: 'By period' },
+    { key: 'receipts', label: 'Receipts', to: '/expense-receipts', sub: 'By period' },
+    { key: 'reconciliation', label: 'Bank Reconciliation', to: '/reconciliation', sub: 'By period' },
+    { key: 'ap', label: 'Accounts Payable (AP)', to: '/ap', sub: 'By year & supplier' },
+    { key: 'ar', label: 'Accounts Receivable (AR)', to: '/ar', sub: 'By year & customer' },
+    { key: 'payroll', label: 'Payroll', to: '/payroll', sub: 'By year & employer' },
+    { key: 'pettyCash', label: 'Petty Cash', to: '/petty-cash', sub: 'By period' },
+    { key: 'mpf', label: 'MPF', to: '/mpf', sub: 'By year & employer' },
+  ]},
+  { key: 'assets', label: 'Assets', icon: Building2, expandable: true, children: [
+    { key: 'fixedAssets', label: 'Fixed Assets', to: '/fixed-assets' },
+  ]},
+  { key: 'financialStatements', label: 'Financial Statements', icon: FileText, expandable: true, children: [
+    { key: 'fsOverview', label: 'Financial Statements', to: '/financial-statements' },
+    { key: 'entries', label: 'Entries', to: '/entries' },
+    { key: 'incomeStatement', label: 'Income Statement', to: '/income-statement' },
+    { key: 'trialBalance', label: 'Trial Balance', to: '/trial-balance' },
+    { key: 'balanceSheet', label: 'Balance Sheet', to: '/balance-sheet' },
+    { key: 'glReport', label: 'General Ledger Report', to: '/gl-report' },
+  ]},
+  { key: 'companyInfo', label: 'Company Information', icon: Briefcase, expandable: true, children: [
+    { key: 'br', label: 'Business Registration (BR)', to: '/company/br' },
+    { key: 'ci', label: 'Certificate of Incorporation', to: '/company/ci' },
+    { key: 'ei', label: 'Employer Information (EI)', to: '/company/ei' },
+    { key: 'contracts', label: 'Contracts', to: '/contracts' },
+  ]},
+  { key: 'companyAcct', label: 'Company Accounting Info', icon: SlidersHorizontal, expandable: true, children: [
+    { key: 'financialYear', label: 'Financial Year', to: '/company/financial-year' },
+    { key: 'openingYear', label: 'Opening Year', to: '/company/opening-year' },
+    { key: 'accountingInfo', label: 'Accounting Information', to: '/company/accounting-info' },
+  ]},
+  { key: 'settings', label: 'Settings', icon: Settings, to: '/settings' },
+];
+
+// Additional items shown when "Show all functions" is checked
+const extraNavItems = [
+  { key: 'userManagement', label: 'User Management', icon: UserCog, to: '/settings/users' },
+  { key: 'applications', label: 'Applications', icon: ClipboardCheck, to: '/admin/applications' },
+  { key: 'auditLog', label: 'Audit Log', icon: BookOpen, to: '/audit-log' },
+  { key: 'compliance', label: 'Compliance', icon: Shield, to: '/compliance' },
+  { key: 'aiMemory', label: 'AI Memory', icon: BookOpen, to: '/ai-memory' },
+  { key: 'customers', label: 'Customers', icon: Users, to: '/customers' },
+  { key: 'suppliers', label: 'Suppliers', icon: Truck, to: '/suppliers' },
+  { key: 'quotations', label: 'Quotations', icon: FileSpreadsheet, to: '/quotations' },
+  { key: 'products', label: 'Products', icon: Package, to: '/products' },
+  { key: 'services', label: 'Services', icon: Briefcase, to: '/services' },
+  { key: 'purchaseOrders', label: 'Purchase Orders', icon: ShoppingCart, to: '/purchase-orders' },
+  { key: 'serviceOrders', label: 'Service Orders', icon: ClipboardList, to: '/service-orders' },
+  { key: 'calendar', label: 'Calendar', icon: Calendar, to: '/calendar' },
+  { key: 'messages', label: 'Messages', icon: MessageCircle, to: '/messages' },
+  { key: 'mail', label: 'Mail', icon: Mail, to: '/mail' },
+  { key: 'todos', label: 'Todos', icon: CheckSquare, to: '/todos' },
+  { key: 'documents', label: 'Company Docs', icon: FolderOpen, to: '/documents' },
+  { key: 'pricing', label: 'Pricing', icon: Tag, to: '/pricing' },
+  { key: 'websiteGen', label: 'Website Generator', icon: Globe, to: '/website-generator' },
 ];
 
 const languages = [
@@ -117,26 +90,11 @@ const languages = [
 
 // Admin sees a completely different sidebar
 const adminNavGroups = [
-  {
-    label: '',
-    items: [
-      { to: '/', icon: LayoutDashboard, key: 'dashboard' },
-    ],
-  },
-  {
-    label: 'administration',
-    items: [
-      { to: '/admin/applications', icon: ClipboardCheck, key: 'applications' },
-      { to: '/settings/users', icon: UserCog, key: 'userManagement' },
-      { to: '/audit-log', icon: BookOpen, key: 'auditLog' },
-    ],
-  },
-  {
-    label: '',
-    items: [
-      { to: '/settings', icon: Settings, key: 'settings' },
-    ],
-  },
+  { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, to: '/' },
+  { key: 'applications', label: 'Applications', icon: ClipboardCheck, to: '/admin/applications' },
+  { key: 'userManagement', label: 'User Management', icon: UserCog, to: '/settings/users' },
+  { key: 'auditLog', label: 'Audit Log', icon: BookOpen, to: '/audit-log' },
+  { key: 'settings', label: 'Settings', icon: Settings, to: '/settings' },
 ];
 
 // Nav key → feature flag mapping
@@ -175,6 +133,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [chatDesktopOpen, setChatDesktopOpen] = React.useState(true);
   const [chatWidth, setChatWidth] = React.useState(420);
   const [showAll, setShowAll] = React.useState(false);
+  const [expandedGroups, setExpandedGroups] = React.useState<Record<string, boolean>>({ documents: true });
+
+  const toggleGroup = (key: string) => {
+    if (key === 'documents') return; // Documents always open
+    setExpandedGroups(prev => ({ ...prev, [key]: !prev[key] }));
+  };
 
   // Resize handler for chat panel
   const resizingRef = React.useRef(false);
@@ -289,64 +253,115 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
       {/* Navigation */}
       <nav className={`flex-1 space-y-0.5 overflow-y-auto ${collapsed ? 'p-0' : 'p-2'}`}>
-        {(user?.role === 'admin' ? adminNavGroups : navGroups).map((group, gi) => {
-          const activeNavGroups = user?.role === 'admin' ? adminNavGroups : navGroups;
-          const visibleItems = group.items.filter(item => {
-            if ((item as any).hidden && !showAll) return false;
-            if (user?.role === 'admin') return true; // admin sidebar items are always visible
-            if (item.key === 'firmManagement') return isFirmUser;
-            if (item.key === 'applications') return user?.role === 'admin';
-            if (item.key === 'userManagement') return ['admin', 'supervisor', 'accountant'].includes(user?.role || '');
-            if (item.key === 'settings') return !['staff', 'viewer'].includes(user?.role || '');
-            if (item.key === 'auditLog') return ['admin', 'supervisor', 'accountant'].includes(user?.role || '');
-            const featKey = NAV_FEATURE_MAP[item.key];
-            if (!featKey) return true;
-            return features[featKey] !== false;
-          });
-          if (group.label && visibleItems.length === 0) return null;
-          if ((group as any).hidden && !showAll) return null;
+        {(user?.role === 'admin' ? adminNavGroups : navGroups).map((group: any) => {
+          // Feature gate check for simple nav items
+          if (!group.expandable) {
+            const featKey = NAV_FEATURE_MAP[group.key];
+            if (featKey && features[featKey] === false) return null;
+            // Role checks
+            if (group.key === 'firmManagement' && !isFirmUser) return null;
+            if (group.key === 'applications' && user?.role !== 'admin') return null;
+            if (group.key === 'userManagement' && !['admin', 'supervisor', 'accountant'].includes(user?.role || '')) return null;
+            if (group.key === 'settings' && ['staff', 'viewer'].includes(user?.role || '')) return null;
+            if (group.key === 'auditLog' && !['admin', 'supervisor', 'accountant'].includes(user?.role || '')) return null;
+          }
+
+          if (group.expandable) {
+            const isOpen = group.alwaysOpen ? true : (expandedGroups[group.key] !== false ? expandedGroups[group.key] !== false : false);
+            const isCollapsible = !group.alwaysOpen;
+            const GroupIcon = group.icon;
+            return (
+              <div key={group.key}>
+                {!collapsed ? (
+                  <>
+                    <div
+                      className={`flex items-center gap-2 text-xs font-semibold uppercase tracking-wider px-3 pt-3 pb-1 cursor-pointer select-none text-foreground`}
+                      onClick={() => isCollapsible && toggleGroup(group.key)}
+                    >
+                      <GroupIcon className="h-3.5 w-3.5 flex-shrink-0" />
+                      <span className="flex-1">{tr(group.label, '', '')}</span>
+                      {isCollapsible && (
+                        <ChevronDown className={`h-3 w-3 transition-transform duration-200 ${isOpen ? '' : '-rotate-90'}`} />
+                      )}
+                    </div>
+                    <div className={`overflow-hidden transition-all duration-200 ${isOpen ? 'max-h-[600px] opacity-100' : 'max-h-0 opacity-0'}`}>
+                      {group.children.map((child: any) => {
+                        const ChildIcon = Dot;
+                        const isActive = location.pathname === child.to;
+                        const featKey = NAV_FEATURE_MAP[child.key];
+                        if (featKey && features[featKey] === false) return null;
+                        return (
+                          <Link key={child.to} to={child.to} onClick={() => setSidebarOpen(false)}
+                            className={`relative flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
+                              isActive ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-muted'
+                            }`}>
+                            <ChildIcon className="h-4 w-4 flex-shrink-0 text-muted-foreground/30" />
+                            <span className="flex-1">{tr(child.label, '', '')}</span>
+                            {child.sub && !collapsed && (
+                              <span className="text-[10px] text-muted-foreground/40">{child.sub}</span>
+                            )}
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  </>
+                ) : (
+                  /* Collapsed: just show the group icon */
+                  <div key={group.key} className="flex justify-center py-1">
+                    <GroupIcon className="h-5 w-5 text-muted-foreground" />
+                  </div>
+                )}
+              </div>
+            );
+          }
+
+          // Simple nav item (no children)
+          const Icon = group.icon;
+          const isActive = location.pathname === (group.to || '/');
           return (
-            <div key={gi}>
-              {group.label && !collapsed && (
-                <div className="text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-wider px-3 pt-3 pb-1">
-                  {group.label === 'fileProcessing' ? (tr('FILE PROCESSING', '文件處理', '文件处理')) :
-                   group.label === 'accounting' ? (tr('ACCOUNTING', '會計', '会计')) :
-                   group.label === 'firmManagement' ? (tr('FIRM', '會計師樓', '会计师楼')) :
-                   group.label === 'administration' ? (tr('ADMINISTRATION', '管理', '管理')) :
-                   group.label}
-                </div>
+            <Link key={group.to || group.key} to={group.to || '/'} onClick={() => setSidebarOpen(false)}
+              title={collapsed ? tr(group.label, '', '') : undefined}
+              className={`relative flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
+                collapsed ? 'justify-center px-0 w-16 h-10' : ''
+              } ${isActive ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-muted'}`}>
+              <Icon className={`flex-shrink-0 ${collapsed ? 'h-5 w-5' : 'h-4 w-4'}`} />
+              {!collapsed && <span className="flex-1">{tr(group.label, '', '')}</span>}
+              {!collapsed && group.key === 'fileStorage' && issueCount > 0 && (
+                <span className="flex items-center gap-0.5 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none">
+                  <AlertCircle className="h-2.5 w-2.5" />{issueCount}
+                </span>
               )}
-              {visibleItems.map((item) => {
-                const Icon = item.icon;
-                const isActive = location.pathname === item.to;
-                return (
-                  <Link key={item.to} to={item.to} onClick={() => setSidebarOpen(false)}
-                    title={collapsed ? t(`nav.${item.key}`) : undefined}
-                    className={`relative flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
-                      collapsed ? 'justify-center px-0 w-16 h-10' : ''
-                    } ${isActive ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-muted'}`}>
-                    <Icon className={`flex-shrink-0 ${collapsed ? 'h-5 w-5' : 'h-4 w-4'}`} />
-                    {!collapsed && <span className="flex-1">{t(`nav.${item.key}`)}</span>}
-                    {!collapsed && item.key === 'fileStorage' && issueCount > 0 && (
-                      <span className="flex items-center gap-0.5 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none">
-                        <AlertCircle className="h-2.5 w-2.5" />
-                        {issueCount}
-                      </span>
-                    )}
-                    {collapsed && item.key === 'fileStorage' && issueCount > 0 && (
-                      <span className="absolute -top-0.5 -right-0.5 bg-red-500 text-white text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center leading-none">
-                        {issueCount > 9 ? '9+' : issueCount}
-                      </span>
-                    )}
-                  </Link>
-                );
-              })}
-              {!collapsed && gi < activeNavGroups.length - 1 && group.label && visibleItems.length > 0 && (
-                <div className="mx-3 mt-2 border-b border-border/50" />
-              )}
-            </div>
+            </Link>
           );
         })}
+        {/* Extra items shown when "Show all functions" is checked */}
+        {showAll && !collapsed && (
+          <>
+            <div className="border-t border-border/50 my-2 mx-3" />
+            <div className="text-xs font-semibold uppercase tracking-wider px-3 pt-3 pb-1 text-muted-foreground/60">
+              {tr('Additional Functions', '額外功能', '额外功能')}
+            </div>
+            {extraNavItems.map((item: any) => {
+              const Icon = item.icon;
+              const isActive = location.pathname === item.to;
+              const featKey = NAV_FEATURE_MAP[item.key];
+              if (featKey && features[featKey] === false) return null;
+              if (item.key === 'firmManagement' && !isFirmUser) return null;
+              if (item.key === 'applications' && user?.role !== 'admin') return null;
+              if (item.key === 'userManagement' && !['admin', 'supervisor', 'accountant'].includes(user?.role || '')) return null;
+              if (item.key === 'auditLog' && !['admin', 'supervisor', 'accountant'].includes(user?.role || '')) return null;
+              return (
+                <Link key={item.to} to={item.to} onClick={() => setSidebarOpen(false)}
+                  className={`relative flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
+                    isActive ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-muted'
+                  }`}>
+                  <Icon className="h-4 w-4 flex-shrink-0" />
+                  <span className="flex-1">{tr(item.label, '', '')}</span>
+                </Link>
+              );
+            })}
+          </>
+        )}
       </nav>
 
       {/* Footer */}

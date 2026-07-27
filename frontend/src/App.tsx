@@ -49,6 +49,7 @@ import Compliance from './pages/Compliance';
 import AiMemory from './pages/AiMemory';
 import PricingPage from './pages/PricingPage';
 import SubscriptionPage from './pages/SubscriptionPage';
+import StubPage from './pages/StubPage';
 
 const queryClient = new QueryClient();
 
@@ -153,6 +154,29 @@ function AppRoutes() {
       <Route path="/card-generator" element={<ProtectedRoute><CardGenerator /></ProtectedRoute>} />
       <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
       <Route path="/firm/manage" element={<ProtectedRoute><FirmManagement /></ProtectedRoute>} />
+      {/* P1 Stub Pages */}
+      <Route path="/file-upload" element={<ProtectedRoute><StubPage title="File Upload" zhHant="上傳文件" zhHans="上传文件" /></ProtectedRoute>} />
+      <Route path="/coa" element={<ProtectedRoute><StubPage title="Chart of Accounts (COA)" zhHant="會計科目表" zhHans="会计科目表" /></ProtectedRoute>} />
+      <Route path="/general-ledger" element={<ProtectedRoute><StubPage title="General Ledger (總帳)" zhHant="總帳" zhHans="总帐" /></ProtectedRoute>} />
+      <Route path="/card-statements" element={<ProtectedRoute><StubPage title="Card Statements" zhHant="信用卡月結單" zhHans="信用卡月结单" /></ProtectedRoute>} />
+      <Route path="/ap" element={<ProtectedRoute><StubPage title="Accounts Payable (AP)" zhHant="應付賬款" zhHans="应付账款" /></ProtectedRoute>} />
+      <Route path="/ar" element={<ProtectedRoute><StubPage title="Accounts Receivable (AR)" zhHant="應收賬款" zhHans="应收账款" /></ProtectedRoute>} />
+      <Route path="/payroll" element={<ProtectedRoute><StubPage title="Payroll" zhHant="薪資" zhHans="薪资" /></ProtectedRoute>} />
+      <Route path="/petty-cash" element={<ProtectedRoute><StubPage title="Petty Cash" zhHant="零用金" zhHans="零用金" /></ProtectedRoute>} />
+      <Route path="/mpf" element={<ProtectedRoute><StubPage title="MPF" zhHant="強積金" zhHans="强积金" /></ProtectedRoute>} />
+      <Route path="/financial-statements" element={<ProtectedRoute><StubPage title="Financial Statements" zhHant="財務報表總覽" zhHans="财务报表总览" /></ProtectedRoute>} />
+      <Route path="/entries" element={<ProtectedRoute><StubPage title="Entries" zhHant="分錄" zhHans="分录" /></ProtectedRoute>} />
+      <Route path="/income-statement" element={<ProtectedRoute><StubPage title="Income Statement" zhHant="損益表" zhHans="损益表" /></ProtectedRoute>} />
+      <Route path="/trial-balance" element={<ProtectedRoute><StubPage title="Trial Balance" zhHant="試算表" zhHans="试算表" /></ProtectedRoute>} />
+      <Route path="/balance-sheet" element={<ProtectedRoute><StubPage title="Balance Sheet" zhHant="資產負債表" zhHans="资产负债表" /></ProtectedRoute>} />
+      <Route path="/gl-report" element={<ProtectedRoute><StubPage title="General Ledger Report" zhHant="總帳報告" zhHans="总帐报告" /></ProtectedRoute>} />
+      <Route path="/company/br" element={<ProtectedRoute><StubPage title="Business Registration (BR)" zhHant="商業登記證" zhHans="商业登记证" /></ProtectedRoute>} />
+      <Route path="/company/ci" element={<ProtectedRoute><StubPage title="Certificate of Incorporation" zhHant="公司註冊證書" zhHans="公司注册证书" /></ProtectedRoute>} />
+      <Route path="/company/ei" element={<ProtectedRoute><StubPage title="Employer Information (EI)" zhHant="僱主資料" zhHans="雇主资料" /></ProtectedRoute>} />
+      <Route path="/contracts" element={<ProtectedRoute><StubPage title="Contracts" zhHant="合約" zhHans="合约" /></ProtectedRoute>} />
+      <Route path="/company/financial-year" element={<ProtectedRoute><StubPage title="Financial Year" zhHant="會計年度" zhHans="会计年度" /></ProtectedRoute>} />
+      <Route path="/company/opening-year" element={<ProtectedRoute><StubPage title="Opening Year" zhHant="開始年度" zhHans="开始年度" /></ProtectedRoute>} />
+      <Route path="/company/accounting-info" element={<ProtectedRoute><StubPage title="Accounting Information" zhHant="會計資料" zhHans="会计资料" /></ProtectedRoute>} />
       <Route path="*" element={<Navigate to="/" />} />
     </Routes>
   );
