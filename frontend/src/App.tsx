@@ -50,6 +50,7 @@ import AiMemory from './pages/AiMemory';
 import PricingPage from './pages/PricingPage';
 import SubscriptionPage from './pages/SubscriptionPage';
 import StubPage from './pages/StubPage';
+import NewClient from './pages/NewClient';
 
 const queryClient = new QueryClient();
 
@@ -155,6 +156,7 @@ function AppRoutes() {
       <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
       <Route path="/firm/manage" element={<ProtectedRoute><FirmManagement /></ProtectedRoute>} />
       {/* P1 Stub Pages */}
+      <Route path="/new-client" element={<ProtectedRoute><NewClient /></ProtectedRoute>} />
       <Route path="/file-upload" element={<ProtectedRoute><StubPage title="File Upload" zhHant="上傳文件" zhHans="上传文件" /></ProtectedRoute>} />
       <Route path="/coa" element={<ProtectedRoute><StubPage title="Chart of Accounts (COA)" zhHant="會計科目表" zhHans="会计科目表" /></ProtectedRoute>} />
       <Route path="/general-ledger" element={<ProtectedRoute><StubPage title="General Ledger (總帳)" zhHant="總帳" zhHans="总帐" /></ProtectedRoute>} />

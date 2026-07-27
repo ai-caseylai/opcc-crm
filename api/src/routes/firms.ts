@@ -205,54 +205,97 @@ firms.get('/:id/clients', async (c) => {
   return c.json({ data: rows.results });
 });
 
+// POST /api/firms/my/clients — add client for current firm user
+firms.post('/my/clients', async (c) => {
+  const user = c.get('user');
+  if (!user.firm_id || user.firm_role !== 'admin') {
+    return c.json({ error: 'Access denied. Firm admin only.' }, 403);
+  }
+  const body = await c.req.json();
+  const { company_name, email, display_name, contact_name, initial_password, permission_tier, industry, fy_start, fy_end } = body as any;
+  if (!company_name || !email) return c.json({ error: 'company_name and email required' }, 400);
+
+  const clientUserId = `u-${uuidv4().slice(0, 8)}`;
+  const pw = (initial_password && initial_password.length >= 6) ? initial_password : uuidv4().slice(0, 12);
+  const passwordHash = await hash(pw, 10);
+  const name = contact_name || company_name;
+
+  await c.env.DB.prepare(
+    `INSERT INTO users (id, email, password_hash, name, company_name, role, permission_tier)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).bind(clientUserId, email, passwordHash, name, company_name, 'supervisor', permission_tier || 'higher').run();
+
+  await c.env.DB.prepare(
+    `INSERT INTO company_settings (user_id, name, legal_name, industry, fiscal_year_start, fiscal_year_end)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).bind(clientUserId, company_name, company_name, industry || 'general', fy_start || null, fy_end || null).run();
+
+  const firmClientId = `fc-${uuidv4().slice(0, 8)}`;
+  await c.env.DB.prepare(
+    'INSERT INTO firm_clients (id, firm_id, client_user_id, display_name) VALUES (?, ?, ?, ?)'
+  ).bind(firmClientId, user.firm_id, clientUserId, display_name || null).run();
+
+  // Seed compliance + COA (same as /:id/clients)
+  await seedClientData(c, clientUserId, user.id);
+
+  return c.json({
+    id: firmClientId, client_user_id: clientUserId, user_id: clientUserId,
+    company_name, email, password: pw, display_name: display_name || null,
+  }, 201);
+});
+
 // POST /api/firms/:id/clients — add client (creates user + company_settings + firm_clients)
 firms.post('/:id/clients', async (c) => {
   const user = c.get('user');
   if (!user.firm_id || user.firm_id !== c.req.param('id') || user.firm_role !== 'admin') {
     return c.json({ error: 'Access denied' }, 403);
   }
-
   const body = await c.req.json();
-  const { company_name, email, display_name } = body as { company_name: string; email: string; display_name?: string };
+  const { company_name, email, display_name, contact_name, initial_password, permission_tier, industry, fy_start, fy_end } = body as any;
   if (!company_name || !email) return c.json({ error: 'company_name and email required' }, 400);
 
-  // Create user for the client company
   const clientUserId = `u-${uuidv4().slice(0, 8)}`;
-  const tempPassword = uuidv4().slice(0, 12);
-  const passwordHash = await hash(tempPassword, 10);
-  await c.env.DB.prepare(
-    'INSERT INTO users (id, email, password_hash, name, company_name, role) VALUES (?, ?, ?, ?, ?, ?)'
-  ).bind(clientUserId, email, passwordHash, company_name, company_name, 'user').run();
+  const pw = (initial_password && initial_password.length >= 6) ? initial_password : uuidv4().slice(0, 12);
+  const passwordHash = await hash(pw, 10);
+  const name = contact_name || company_name;
 
-  // Create company_settings
   await c.env.DB.prepare(
-    `INSERT INTO company_settings (user_id, name, legal_name)
-     VALUES (?, ?, ?)`
-  ).bind(clientUserId, company_name, company_name).run();
+    `INSERT INTO users (id, email, password_hash, name, company_name, role, permission_tier)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).bind(clientUserId, email, passwordHash, name, company_name, 'supervisor', permission_tier || 'higher').run();
 
-  // Link to firm
+  await c.env.DB.prepare(
+    `INSERT INTO company_settings (user_id, name, legal_name, industry, fiscal_year_start, fiscal_year_end)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).bind(clientUserId, company_name, company_name, industry || 'general', fy_start || null, fy_end || null).run();
+
   const firmClientId = `fc-${uuidv4().slice(0, 8)}`;
   await c.env.DB.prepare(
     'INSERT INTO firm_clients (id, firm_id, client_user_id, display_name) VALUES (?, ?, ?, ?)'
   ).bind(firmClientId, user.firm_id, clientUserId, display_name || null).run();
 
-  // Seed compliance records for the new client
+  await seedClientData(c, clientUserId, user.id);
+
+  return c.json({
+    id: firmClientId, client_user_id: clientUserId, user_id: clientUserId,
+    company_name, email, password: pw, display_name: display_name || null,
+  }, 201);
+});
+
+async function seedClientData(c: any, clientUserId: string, adminUserId: string) {
   const templates = await c.env.DB.prepare('SELECT id FROM compliance_templates WHERE is_required = 1').all();
   for (const t of templates.results as any[]) {
     await c.env.DB.prepare(
       'INSERT OR IGNORE INTO member_compliance (id, user_id, template_id, status) VALUES (?, ?, ?, ?)'
     ).bind(`mc-${uuidv4().slice(0, 8)}`, clientUserId, t.id, 'pending').run();
   }
-
-  // Copy chart of accounts — prefer canonical COA (from u-hayson seed), fallback to admin's
   const canonicalAccounts = await c.env.DB.prepare(
     "SELECT account_code, account_name, account_type, parent_code, opening_balance FROM accounts WHERE user_id = 'u-hayson'"
   ).all();
   const sourceAccounts = canonicalAccounts.results.length > 0 ? canonicalAccounts.results
     : (await c.env.DB.prepare(
       'SELECT account_code, account_name, account_type, parent_code, opening_balance FROM accounts WHERE user_id = ?'
-    ).bind(user.id).all()).results;
-
+    ).bind(adminUserId).all()).results;
   if (sourceAccounts.length > 0) {
     for (const a of sourceAccounts as any[]) {
       await c.env.DB.prepare(
@@ -260,15 +303,7 @@ firms.post('/:id/clients', async (c) => {
       ).bind(`acc-${uuidv4().slice(0, 8)}`, clientUserId, a.account_code, a.account_name, a.account_type, a.parent_code || null, a.opening_balance || 0).run();
     }
   }
-
-  return c.json({
-    id: firmClientId,
-    client_user_id: clientUserId,
-    company_name,
-    email,
-    display_name: display_name || null,
-  }, 201);
-});
+}
 
 // PATCH /api/firms/:id/clients/:cid — update client (archive/restore)
 firms.patch('/:id/clients/:cid', async (c) => {
