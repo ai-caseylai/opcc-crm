@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <script>
+      // Dynamic favicon from company logo
+      fetch('/api/company')
+        .then(r => r.json())
+        .then(c => {
+          if (c.logo_url && c.logo_url.startsWith('data:image')) {
+            const link = document.querySelector('link[rel="icon"]');
+            if (link) link.href = c.logo_url;
+          }
+        })
+        .catch(() => {});
+    </script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OPCC CRM</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

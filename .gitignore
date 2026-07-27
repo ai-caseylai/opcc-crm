@@ -1,0 +1,21 @@
+node_modules/
+dist/
+.env
+.dev.vars
+*.log
+.DS_Store
+.wrangler/
+
+# Sensitive config files
+api/wrangler.toml
+frontend/.env
+frontend/.env.local
+
+# Skill config with API tokens
+.claude/
+
+# Deployment context (local notes, not for repo)
+DEPLOYMENT_CONTEXT.md
+TeCS_DEVELOPMENT_ROADMAP.md
+demo-redesign.html
+fix-admin-password.sql
