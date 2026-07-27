@@ -46,7 +46,7 @@
     "aiMemory": "AI Memory",
     "fileUpload": "File Upload",
     "coa": "Chart of Accounts (COA)",
-    "generalLedger": "General Ledger (總帳)",
+    "generalLedger": "General Ledger",
     "cardStatements": "Card Statements",
     "receipts": "Receipts",
     "ap": "Accounts Payable (AP)",
@@ -70,7 +70,8 @@
     "companyAcct": "Company Accounting Info",
     "financialYear": "Financial Year",
     "openingYear": "Opening Year",
-    "accountingInfo": "Accounting Information"
+    "accountingInfo": "Accounting Information",
+    "export": "Export"
   },
   "auth": {
     "login": "Login",

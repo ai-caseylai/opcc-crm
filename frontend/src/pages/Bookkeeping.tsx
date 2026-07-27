@@ -7,13 +7,14 @@ import { Plus, Calculator, Download, Save } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { tr } from '../lib/i18nHelpers';
 
-export default function Bookkeeping() {
+export default function Bookkeeping({ initialTab, hideTabs }: { initialTab?: 'entries' | 'accounts' | 'trial' | 'pl' | 'bs' | 'ledger' | 'export'; hideTabs?: boolean }) {
   const { i18n } = useTranslation();
   const toast = useToast();
   const { user } = useAuth();
   const isStaff = user?.role === 'staff' || user?.role === 'viewer';
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<'entries' | 'accounts' | 'trial' | 'pl' | 'bs' | 'ledger' | 'export'>('entries');
+  const [tab, setTab] = useState<'entries' | 'accounts' | 'trial' | 'pl' | 'bs' | 'ledger' | 'export'>(initialTab || 'entries');
+  useEffect(() => { if (initialTab) setTab(initialTab); }, [initialTab]);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [showEntryForm, setShowEntryForm] = useState(false);
@@ -125,6 +126,28 @@ export default function Bookkeeping() {
 
   return (
     <div className="space-y-6">
+      {hideTabs ? (
+        <div>
+          <h2 className="text-2xl font-bold">
+            {tab === 'entries' ? tr('Entries', '分錄', '分录')
+             : tab === 'pl' ? tr('Income Statement', '損益表', '损益表')
+             : tab === 'trial' ? tr('Trial Balance', '試算表', '试算表')
+             : tab === 'bs' ? tr('Balance Sheet', '資產負債表', '资产负债表')
+             : tab === 'ledger' ? tr('General Ledger Report', '總帳報告', '总帐报告')
+             : tab === 'export' ? tr('Export', '匯出', '导出')
+             : tr('Entries', '分錄', '分录')}
+          </h2>
+          <p className="text-muted-foreground mt-1">
+            {tab === 'entries' ? tr('All journal entries supporting the financial statements.', '所有支援財務報表的日記帳分錄。', '所有支援财务报表的日记帐分录。')
+             : tab === 'pl' ? tr('Revenue, expenses, and profit/loss for the selected period.', '所選期間的收入、支出及損益。', '所选期间的收入、支出及损益。')
+             : tab === 'trial' ? tr('Debit and credit balances for all accounts at period end.', '期末所有科目的借方及貸方餘額。', '期末所有科目的借方及贷方余额。')
+             : tab === 'bs' ? tr('Assets, liabilities, and equity as at the selected date.', '截至選定日期的資產、負債及權益。', '截至选定日期的资产、负债及权益。')
+             : tab === 'ledger' ? tr('Detailed transaction report by account and period.', '按科目及期間的詳細交易報告。', '按科目及期间的详细交易报告。')
+             : tab === 'export' ? tr('Export your bookkeeping data to CSV.', '將記帳數據匯出為 CSV。', '将记帐数据导出为 CSV。')
+             : ''}
+          </p>
+        </div>
+      ) : (
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold">記帳 Bookkeeping</h2>
@@ -135,8 +158,10 @@ export default function Bookkeeping() {
           <Plus className="h-4 w-4" /> 新增分錄
         </button>
       </div>
+      )}
 
       {/* Tabs */}
+      {!hideTabs && (
       <div className="flex gap-1 border-b">
         {tabs.map((t) => (
           <button key={t.id} onClick={() => setTab(t.id)}
@@ -145,6 +170,7 @@ export default function Bookkeeping() {
           </button>
         ))}
       </div>
+      )}
 
       {/* Date filters for relevant tabs */}
       {(tab === 'entries' || tab === 'pl' || tab === 'ledger' || tab === 'export') && (

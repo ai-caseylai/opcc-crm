@@ -71,7 +71,8 @@
     "companyAcct": "公司会计设定",
     "financialYear": "会计年度",
     "openingYear": "开始年度",
-    "accountingInfo": "会计资料"
+    "accountingInfo": "会计资料",
+    "export": "导出"
   },
   "auth": {
     "login": "登录",

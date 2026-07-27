@@ -73,7 +73,8 @@
     "companyAcct": "公司會計設定",
     "financialYear": "會計年度",
     "openingYear": "開始年度",
-    "accountingInfo": "會計資料"
+    "accountingInfo": "會計資料",
+    "export": "匯出"
   },
   "auth": {
     "login": "登入",

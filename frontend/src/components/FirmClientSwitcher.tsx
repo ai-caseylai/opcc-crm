@@ -17,17 +17,21 @@ export default function CompanySwitcher() {
 
   if (!showCompanySelector) return null;
 
-  const clients = isFirmUser ? (firmClients || []) : [];
+  // For non-firm users, show their own company
+  const ownCompany = !isFirmUser && user?.company_name ? { id: user.id, display_name: user.company_name, company_name: user.company_name, email: user.email, user_name: user.name } : null;
+  const clients = isFirmUser ? (firmClients || []) : (ownCompany ? [ownCompany] : []);
   const filtered = search.trim()
     ? clients.filter(c =>
         (c.display_name || c.company_name || '').toLowerCase().includes(search.toLowerCase()) ||
         (c.email || '').toLowerCase().includes(search.toLowerCase()))
     : clients;
 
+  const displayName = activeClient?.display_name || activeClient?.company_name || ownCompany?.company_name || tr('Select company', '選擇公司', '选择公司');
+
   const handleSwitch = (client: { id: string } | null) => {
     setOpen(false);
     setSearch('');
-    if (client) {
+    if (client && isFirmUser) {
       switchClient(client.id);
     } else {
       switchClient(null);
@@ -44,7 +48,7 @@ export default function CompanySwitcher() {
           className="flex-1 flex items-center gap-2 px-3 py-2 rounded-md text-sm border bg-background hover:bg-muted transition-colors">
           <Building2 className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
           <span className="flex-1 text-left truncate text-xs">
-            {activeClient?.display_name || activeClient?.company_name || tr('Select company', '選擇公司', '选择公司')}
+            {displayName}
           </span>
         </button>
         {canCreateClient && (

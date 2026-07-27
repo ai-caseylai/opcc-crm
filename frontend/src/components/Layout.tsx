@@ -37,7 +37,7 @@ const navGroups = [
     { key: 'fileStorage', label: 'File Storage', to: '/file-storage', sub: 'By financial year' },
   ]},
   { key: 'coa', label: 'Chart of Accounts (COA)', icon: List, to: '/coa' },
-  { key: 'generalLedger', label: 'General Ledger (總帳)', icon: BookOpen, to: '/general-ledger' },
+  { key: 'generalLedger', label: 'General Ledger', icon: BookOpen, to: '/general-ledger' },
   { key: 'bookkeeping', label: 'Bookkeeping', icon: Calculator, expandable: true, children: [
     { key: 'bankStatements', label: 'Bank Statements', to: '/bank-statements', sub: 'By account & period' },
     { key: 'cardStatements', label: 'Card Statements', to: '/card-statements', sub: 'By account & period' },
@@ -54,12 +54,12 @@ const navGroups = [
     { key: 'fixedAssets', label: 'Fixed Assets', to: '/fixed-assets' },
   ]},
   { key: 'financialStatements', label: 'Financial Statements', icon: FileText, expandable: true, children: [
-    { key: 'fsOverview', label: 'Financial Statements', to: '/financial-statements' },
     { key: 'entries', label: 'Entries', to: '/entries' },
     { key: 'incomeStatement', label: 'Income Statement', to: '/income-statement' },
     { key: 'trialBalance', label: 'Trial Balance', to: '/trial-balance' },
     { key: 'balanceSheet', label: 'Balance Sheet', to: '/balance-sheet' },
     { key: 'glReport', label: 'General Ledger Report', to: '/gl-report' },
+    { key: 'export', label: 'Export', to: '/bookkeeping?tab=export' },
   ]},
   { key: 'companyInfo', label: 'Company Information', icon: Briefcase, expandable: true, children: [
     { key: 'br', label: 'Business Registration (BR)', to: '/company/br' },
@@ -237,10 +237,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           ) : (
             <>
               <h1 className="text-xl font-bold text-primary">
-                {activeClient?.display_name || activeClient?.company_name || activeCompany?.name || t('app.title')}
+                {user?.name || t('app.title')}
               </h1>
               <p className="text-sm text-muted-foreground mt-1">
-                {activeClient ? (activeCompany?.name || user?.company_name || 'Firm') : (activeCompany?.domain || user?.company_name || user?.name)}
+                {activeClient?.display_name || activeClient?.company_name || user?.company_name || activeCompany?.name || ''}
               </p>
             </>
           )}
@@ -460,7 +460,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </aside>
 
         {/* CENTER: Main content */}
-        <main className="min-w-0 overflow-y-auto overflow-x-hidden">
+        <main className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden">
           <div className="p-6">
             {children}
           </div>
