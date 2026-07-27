@@ -230,7 +230,7 @@ async function main() {
     for (let retry = 0; retry < 18; retry++) {
       await sleep(5000);
       try {
-        statements = await api('/bank-statements', { token });
+        statements = await api('/bank-statements?show_drafts=1', { token });
         const stmtList = statements.data || statements.results || [];
         if (stmtList.length > 0) {
           statementsFound = true;
