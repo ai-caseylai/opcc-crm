@@ -201,6 +201,205 @@ bookkeeping.get('/accounts/search', async (c) => {
   return c.json({ data: rows.results });
 });
 
+// Seed COA with HK industry template
+bookkeeping.post('/accounts/seed', bookkeeperMiddleware, async (c) => {
+  const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
+  const db = c.env.DB;
+
+  // Check if user already has accounts
+  const existing = await db.prepare('SELECT COUNT(*) as cnt FROM accounts WHERE user_id = ?').bind(tenantId).first<{ cnt: number }>();
+  if ((existing?.cnt || 0) > 0) {
+    return c.json({ error: 'Account already has accounts. Cannot seed over existing COA.' }, 400);
+  }
+
+  // HK 5-digit COA template: [code, name, type, parentCode]
+  const template: [string, string, string, string | null][] = [
+    // Assets
+    ['10000', '資產 Assets', 'asset', null],
+    ['11000', '流動資產 Current Assets', 'asset', '10000'],
+    ['12000', '固定資產 Fixed Assets', 'asset', '10000'],
+    ['11100', '現金及銀行存款 Cash & Bank', 'asset', '11000'],
+    ['11200', '應收賬款及票據 AR & Notes', 'asset', '11000'],
+    ['11300', '其他應收款 Other Receivables', 'asset', '11000'],
+    ['11400', '預付及按金 Prepayments & Deposits', 'asset', '11000'],
+    ['12100', '物業房產 Property', 'asset', '12000'],
+    ['12200', '設備及器材 Equipment', 'asset', '12000'],
+    ['12300', '累計折舊 Accumulated Depreciation', 'asset', '12000'],
+    ['11101', '庫存現金 Cash on Hand', 'asset', '11100'],
+    ['11102', '匯豐銀行 HSBC', 'asset', '11100'],
+    ['11103', '其他銀行 Other Bank', 'asset', '11100'],
+    ['11201', '應收賬款 Trade Debtors', 'asset', '11200'],
+    ['11301', '應收董事款項 Director Loan to Co', 'asset', '11300'],
+    ['11302', '暫付款 Sundry Debtors', 'asset', '11300'],
+    ['11401', '預付費用 Prepayments', 'asset', '11400'],
+    ['11402', '租金按金 Rental Deposit', 'asset', '11400'],
+    ['11403', '其他按金 Other Deposits', 'asset', '11400'],
+    ['12201', '辦公設備 Office Equipment', 'asset', '12200'],
+    ['12202', '電腦設備 Computer Equipment', 'asset', '12200'],
+    ['12203', '汽車 Vehicles', 'asset', '12200'],
+    ['12301', '累計折舊-設備 Accumulated Depn-Equip', 'asset', '12300'],
+    ['12302', '累計折舊-電腦 Accumulated Depn-Computer', 'asset', '12300'],
+    // Liabilities
+    ['20000', '負債 Liabilities', 'liability', null],
+    ['21000', '流動負債 Current Liabilities', 'liability', '20000'],
+    ['22000', '長期負債 Long-term Liabilities', 'liability', '20000'],
+    ['21100', '應付賬款及票據 AP & Notes', 'liability', '21000'],
+    ['21200', '其他應付款 Other Payables', 'liability', '21000'],
+    ['21300', '應付稅項 Tax Payable', 'liability', '21000'],
+    ['21400', '預收及應計 Accruals & Deferred', 'liability', '21000'],
+    ['21101', '應付賬款 Trade Creditors', 'liability', '21100'],
+    ['21201', '應付董事款項 Director Loan from Dir', 'liability', '21200'],
+    ['21202', '暫收款 Sundry Creditors', 'liability', '21200'],
+    ['21203', '應付薪金 Salary Payable', 'liability', '21200'],
+    ['21204', '應付強積金 MPF Payable', 'liability', '21200'],
+    ['21301', '應付利得稅 Profits Tax Payable', 'liability', '21300'],
+    ['21401', '預收收入 Deferred Revenue', 'liability', '21400'],
+    ['21402', '應計費用 Accrued Expenses', 'liability', '21400'],
+    // Equity
+    ['30000', '資本及儲備 Equity & Reserves', 'equity', null],
+    ['31000', '股本及往來 Share Capital & Current', 'equity', '30000'],
+    ['32000', '儲備及損益 Reserves & P&L', 'equity', '30000'],
+    ['31100', '股本 Share Capital', 'equity', '31000'],
+    ['31200', '董事往來 Director Current Account', 'equity', '31000'],
+    ['32100', '留存盈利 Retained Earnings', 'equity', '32000'],
+    ['32200', '本年損益 Current Year P&L', 'equity', '32000'],
+    ['31101', '普通股本 Ordinary Shares', 'equity', '31100'],
+    ['31201', '董事往來-往來帳 Director Current A/C', 'equity', '31200'],
+    ['31202', '董事酬金 Director Remuneration', 'equity', '31200'],
+    ['32101', '上年度保留盈利 Retained Earnings b/f', 'equity', '32100'],
+    // Revenue
+    ['40000', '收入 Revenue', 'revenue', null],
+    ['41000', '營業收入 Operating Revenue', 'revenue', '40000'],
+    ['42000', '其他收益 Other Income', 'revenue', '40000'],
+    ['41100', '服務收入 Service Income', 'revenue', '41000'],
+    ['41200', '銷售收入 Sales Revenue', 'revenue', '41000'],
+    ['41300', '顧問收入 Consulting Income', 'revenue', '41000'],
+    ['42100', '利息及投資收入 Interest & Investment', 'revenue', '42000'],
+    ['42200', '非經常性收入 Non-recurring Income', 'revenue', '42000'],
+    ['41101', '專業服務收入 Professional Services', 'revenue', '41100'],
+    ['41102', '技術服務收入 Technical Services', 'revenue', '41100'],
+    ['42101', '銀行利息收入 Bank Interest', 'revenue', '42100'],
+    ['42201', '政府補貼 Government Subsidy', 'revenue', '42200'],
+    ['42202', '匯兌收益 Exchange Gain', 'revenue', '42200'],
+    // Direct Costs
+    ['50000', '直接成本 Direct Costs', 'expense', null],
+    ['51000', '服務成本 Cost of Services', 'expense', '50000'],
+    ['52000', '銷售成本 Cost of Sales', 'expense', '50000'],
+    ['51100', '外判及顧問費 Subcontractor & Consultant', 'expense', '51000'],
+    ['51200', '直接人工 Direct Labour', 'expense', '51000'],
+    ['51101', '外判工作費用 Subcontractor Fees', 'expense', '51100'],
+    ['51102', '專業顧問費 Professional Consultant', 'expense', '51100'],
+    ['51201', '項目人員薪酬 Project Staff Salary', 'expense', '51200'],
+    // Operating Expenses
+    ['60000', '營運支出 Operating Expenses', 'expense', null],
+    ['61000', '員工支出 Staff Costs', 'expense', '60000'],
+    ['62000', '辦公室支出 Office Costs', 'expense', '60000'],
+    ['63000', '專業及合規 Professional & Compliance', 'expense', '60000'],
+    ['64000', '銷售及推廣 Sales & Marketing', 'expense', '60000'],
+    ['65000', '財務及銀行 Finance & Banking', 'expense', '60000'],
+    ['66000', '其他營運支出 Other Operating', 'expense', '60000'],
+    ['61100', '董事及管理層 Director & Management', 'expense', '61000'],
+    ['61101', '董事袍金 Director Fee', 'expense', '61100'],
+    ['61102', '管理層薪金 Management Salary', 'expense', '61100'],
+    ['61200', '員工薪酬 Staff Remuneration', 'expense', '61000'],
+    ['61201', '員工薪金 Staff Salaries', 'expense', '61200'],
+    ['61202', '強積金僱主供款 MPF Employer Contribution', 'expense', '61200'],
+    ['61203', '員工福利 Staff Benefits', 'expense', '61200'],
+    ['62100', '租金 Rent', 'expense', '62000'],
+    ['62101', '辦公室租金 Office Rent', 'expense', '62100'],
+    ['62102', '差餉及管理費 Rates & Management', 'expense', '62100'],
+    ['62200', '水電煤 Utilities', 'expense', '62000'],
+    ['62201', '電費 Electricity', 'expense', '62200'],
+    ['62202', '水費 Water', 'expense', '62200'],
+    ['62300', '電訊及科技 Telecom & IT', 'expense', '62000'],
+    ['62301', '電話及上網 Phone & Internet', 'expense', '62300'],
+    ['62302', '網站寄存及域名 Web Hosting & Domain', 'expense', '62300'],
+    ['62303', '軟件訂閱費 Software Subscriptions', 'expense', '62300'],
+    ['62400', '辦公雜項 Office Miscellaneous', 'expense', '62000'],
+    ['62401', '文具及印刷 Stationery & Printing', 'expense', '62400'],
+    ['62402', '茶水及清潔 Pantry & Cleaning', 'expense', '62400'],
+    ['63100', '專業服務 Professional Services', 'expense', '63000'],
+    ['63101', '審計費用 Audit Fee', 'expense', '63100'],
+    ['63102', '公司秘書費 Company Secretary Fee', 'expense', '63100'],
+    ['63103', '法律顧問費 Legal Fee', 'expense', '63100'],
+    ['63200', '政府規費 Government Fees', 'expense', '63000'],
+    ['63201', '商業登記費 BR Renewal Fee', 'expense', '63200'],
+    ['63202', '公司周年申報費 Annual Return Fee', 'expense', '63200'],
+    ['63300', '保險 Insurance', 'expense', '63000'],
+    ['63301', '勞工保險 EC Insurance', 'expense', '63300'],
+    ['63302', '專業責任保險 Professional Indemnity', 'expense', '63300'],
+    ['64100', '市場推廣 Marketing', 'expense', '64000'],
+    ['64101', '廣告費用 Advertising', 'expense', '64100'],
+    ['64102', '網站推廣 Website Promotion', 'expense', '64100'],
+    ['64200', '業務拓展 Business Development', 'expense', '64000'],
+    ['64201', '佣金支出 Commission Expense', 'expense', '64200'],
+    ['64202', '交際應酬費 Entertainment', 'expense', '64200'],
+    ['64300', '差旅交通 Travel & Transport', 'expense', '64000'],
+    ['64301', '本地交通 Local Transport', 'expense', '64300'],
+    ['64302', '海外差旅 Overseas Travel', 'expense', '64300'],
+    ['65100', '銀行費用 Bank Charges', 'expense', '65000'],
+    ['65101', '銀行手續費 Bank Service Fee', 'expense', '65100'],
+    ['65102', '貸款利息 Loan Interest', 'expense', '65100'],
+    ['65200', '匯兌差額 Exchange Difference', 'expense', '65000'],
+    ['65201', '匯兌損失 Exchange Loss', 'expense', '65200'],
+    ['66100', '折舊 Depreciation', 'expense', '66000'],
+    ['66101', '折舊-設備 Depreciation-Equipment', 'expense', '66100'],
+    ['66102', '折舊-電腦 Depreciation-Computer', 'expense', '66100'],
+    ['66200', '雜項支出 Sundry Expenses', 'expense', '66000'],
+    ['66201', '罰款及附加費 Penalties & Surcharges', 'expense', '66200'],
+    ['66202', '捐款 Donations', 'expense', '66200'],
+    ['66203', '其他雜項 Miscellaneous', 'expense', '66200'],
+    // Profits Tax
+    ['80000', '利得稅 Profits Tax', 'expense', null],
+    ['81100', '香港利得稅 HK Profits Tax', 'expense', '80000'],
+    ['81101', '本年度利得稅 Current Year Profits Tax', 'expense', '81100'],
+    ['81102', '遞延稅項 Deferred Tax', 'expense', '81100'],
+  ];
+
+  let created = 0;
+  for (const [code, name, type, parentCode] of template) {
+    const id = `acc-${uuidv4().slice(0, 8)}`;
+    await db.prepare(
+      'INSERT OR IGNORE INTO accounts (id, user_id, account_code, account_name, account_type, parent_code) VALUES (?, ?, ?, ?, ?, ?)'
+    ).bind(id, tenantId, code, name, type, parentCode).run();
+    created++;
+  }
+
+  await auditLog(db, user.id, 'seed_coa', 'account', null, { template: 'hk-5digit', accounts_created: created });
+  return c.json({ success: true, accounts_created: created }, 201);
+});
+
+// Create a single account manually
+const createAccountSchema = z.object({
+  account_code: z.string().min(1).max(20),
+  account_name: z.string().min(1).max(200),
+  account_type: z.enum(['asset', 'liability', 'equity', 'revenue', 'expense']),
+  parent_code: z.string().max(20).optional(),
+  opening_balance: z.number().optional(),
+});
+
+bookkeeping.post('/accounts', bookkeeperMiddleware, zValidator('json', createAccountSchema), async (c) => {
+  const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
+  const db = c.env.DB;
+  const data = c.req.valid('json');
+
+  // Check for duplicate code
+  const existing = await db.prepare('SELECT id FROM accounts WHERE user_id = ? AND account_code = ?')
+    .bind(tenantId, data.account_code).first();
+  if (existing) return c.json({ error: 'Account code already exists' }, 409);
+
+  const id = `acc-${uuidv4().slice(0, 8)}`;
+  await db.prepare(
+    'INSERT INTO accounts (id, user_id, account_code, account_name, account_type, parent_code, opening_balance) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).bind(id, tenantId, data.account_code, data.account_name, data.account_type, data.parent_code || null, data.opening_balance || 0).run();
+
+  await auditLog(db, user.id, 'create', 'account', data.account_code, { account_name: data.account_name, account_type: data.account_type });
+  const account = await db.prepare('SELECT * FROM accounts WHERE id = ?').bind(id).first();
+  return c.json(account, 201);
+});
+
 // PATCH opening balance for an account
 bookkeeping.patch('/accounts/:code', authMiddleware, bookkeeperMiddleware, async (c) => {
   const user = c.get('user');
