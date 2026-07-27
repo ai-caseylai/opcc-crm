@@ -13,6 +13,22 @@ import {
   Calculator, Upload, Settings, LogOut, Menu, X, MessageCircle, Calendar, Briefcase, FolderOpen, Plug, SlidersHorizontal, Landmark, Receipt, CheckSquare, Globe, CreditCard, Smartphone, HardDrive, ShoppingCart, ClipboardList, AlertCircle, BookOpen, ChevronLeft, ChevronRight, ChevronDown, Building2, Shield, Tag, Bot, Link2, Trash2, ClipboardCheck, UserCog, List, Dot,
 } from 'lucide-react';
 
+// Subtitle translations map
+const subMap: Record<string, [string, string, string]> = {
+  'By financial year':          ['By financial year',        '按會計年度',   '按会计年度'],
+  'By account & period':        ['By account & period',      '按帳戶及期間', '按帐户及期间'],
+  'By period':                  ['By period',                '按期',         '按期'],
+  'By year & supplier':         ['By year & supplier',       '按年及供應商', '按年及供应商'],
+  'By year & customer':         ['By year & customer',       '按年及客戶',   '按年及客户'],
+  'By year & employer':         ['By year & employer',       '按年及僱主',   '按年及雇主'],
+  'Upload bank statements, invoices, receipts': ['Upload statements, invoices, receipts', '上傳月結單、發票、收據', '上传月结单、发票、收据'],
+};
+function subT(key: string | undefined): string {
+  if (!key) return '';
+  const e = subMap[key];
+  return e ? tr(e[0], e[1], e[2]) : key;
+}
+
 // P1 Navigation — accounting-workflow structure with expandable groups
 const navGroups = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, to: '/' },
@@ -279,7 +295,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                       onClick={() => isCollapsible && toggleGroup(group.key)}
                     >
                       <GroupIcon className="h-3.5 w-3.5 flex-shrink-0" />
-                      <span className="flex-1">{tr(group.label, '', '')}</span>
+                      <span className="flex-1 truncate">{t(`nav.${group.key}`) as string}</span>
                       {isCollapsible && (
                         <ChevronDown className={`h-3 w-3 transition-transform duration-200 ${isOpen ? '' : '-rotate-90'}`} />
                       )}
@@ -296,9 +312,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                               isActive ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-muted'
                             }`}>
                             <ChildIcon className="h-4 w-4 flex-shrink-0 text-muted-foreground/30" />
-                            <span className="flex-1">{tr(child.label, '', '')}</span>
+                            <span className="flex-1 truncate">{t(`nav.${child.key}`) as string}</span>
                             {child.sub && !collapsed && (
-                              <span className="text-[10px] text-muted-foreground/40">{child.sub}</span>
+                              <span className="text-[10px] text-muted-foreground/40">{subT(child.sub)}</span>
                             )}
                           </Link>
                         );
@@ -320,12 +336,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           const isActive = location.pathname === (group.to || '/');
           return (
             <Link key={group.to || group.key} to={group.to || '/'} onClick={() => setSidebarOpen(false)}
-              title={collapsed ? tr(group.label, '', '') : undefined}
+              title={collapsed ? t(`nav.${group.key}`) as string : undefined}
               className={`relative flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
                 collapsed ? 'justify-center px-0 w-16 h-10' : ''
               } ${isActive ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-muted'}`}>
               <Icon className={`flex-shrink-0 ${collapsed ? 'h-5 w-5' : 'h-4 w-4'}`} />
-              {!collapsed && <span className="flex-1">{tr(group.label, '', '')}</span>}
+              {!collapsed && <span className="flex-1 truncate">{t(`nav.${group.key}`) as string}</span>}
               {!collapsed && group.key === 'fileStorage' && issueCount > 0 && (
                 <span className="flex items-center gap-0.5 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none">
                   <AlertCircle className="h-2.5 w-2.5" />{issueCount}
@@ -356,7 +372,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                     isActive ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-muted'
                   }`}>
                   <Icon className="h-4 w-4 flex-shrink-0" />
-                  <span className="flex-1">{tr(item.label, '', '')}</span>
+                  <span className="flex-1">{t(`nav.${item.key}`) as string}</span>
                 </Link>
               );
             })}
@@ -421,11 +437,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       )}
 
       {/* ====== DESKTOP 3-PANEL LAYOUT ====== */}
-      <div className="hidden lg:grid lg:h-screen" style={{ gridTemplateColumns: `${sidebarDesktopOpen ? 256 : 64}px 1fr ${chatDesktopOpen ? chatWidth : 0}px` }}>
+      <div className="hidden lg:flex lg:h-screen">
 
         {/* LEFT: Sidebar */}
-        <aside className="bg-card border-r flex flex-col relative panel-transition overflow-y-auto overflow-x-hidden">
-          <div className={sidebarDesktopOpen ? 'w-[256px]' : 'w-[64px]'} style={{ minWidth: sidebarDesktopOpen ? 256 : 64 }}>
+        <aside className="bg-card border-r flex flex-col relative overflow-y-auto overflow-x-hidden shrink-0" style={{
+          width: sidebarDesktopOpen ? 'min(20vw, 320px)' : '64px',
+          minWidth: sidebarDesktopOpen ? '260px' : '64px',
+          transition: 'width 300ms cubic-bezier(0.4, 0, 0.2, 1), min-width 300ms cubic-bezier(0.4, 0, 0.2, 1)',
+        }}>
+          <div style={{ width: sidebarDesktopOpen ? 'min(20vw, 320px)' : '64px', minWidth: sidebarDesktopOpen ? '260px' : '64px' }}>
             {renderSidebarContent(sidebarCollapsed)}
           </div>
           {/* Collapse toggle */}
@@ -447,7 +467,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </main>
 
         {/* RIGHT: Chat panel */}
-        <aside className={`bg-card overflow-hidden flex flex-col relative ${chatDesktopOpen ? 'border-l' : ''}`}>
+        <aside className="bg-card overflow-hidden flex flex-col relative shrink-0" style={{
+          width: chatDesktopOpen ? chatWidth : 0,
+          borderLeft: chatDesktopOpen ? '1px solid hsl(var(--border))' : 'none',
+          transition: 'width 300ms cubic-bezier(0.4, 0, 0.2, 1)',
+        }}>
           {/* Resize handle */}
           {chatDesktopOpen && (
             <div
