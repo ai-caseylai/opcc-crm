@@ -33,6 +33,10 @@ function getDepth(code: string): number {
   return Math.max(0, stripped.length - 1);
 }
 
+function isParentCode(code: string): boolean {
+  return /00$/.test(code || '');
+}
+
 function formatBalance(v: number | null | undefined, forceZero = false): string {
   if (v == null) return '—';
   if (v === 0 && !forceZero) return '—';
@@ -133,9 +137,8 @@ export default function ChartOfAccounts() {
   const selectedFYOption = useMemo(() => fyOptions.find(o => o.label === selectedFY), [fyOptions, selectedFY]);
 
   const queryAsOf = useMemo(() => {
-    if (!selectedFYOption) return asOfDate || '';
-    return selectedFYOption.endDate < (asOfDate || '2099-12-31') ? selectedFYOption.endDate : asOfDate;
-  }, [selectedFYOption, asOfDate]);
+    return asOfDate || '';
+  }, [asOfDate]);
 
   const { data, isLoading } = useQuery({
     queryKey: ['accounts', queryAsOf],
@@ -456,13 +459,12 @@ export default function ChartOfAccounts() {
                   {hasCurrentBalance && (
                     <th className="px-4 py-2 font-medium text-right text-muted-foreground">{tr('Balance', '結餘', '结余')}</th>
                   )}
-                  <th className="px-4 py-2 font-medium text-left text-muted-foreground">{tr('Parent', '上級', '上级')}</th>
                   <th className="px-4 py-2 font-medium text-left text-muted-foreground">{tr('Status', '狀態', '状态')}</th>
                 </tr>
               </thead>
               <tbody>
                 {grouped[type].map((a: any, i: number) => {
-                  const depth = getDepth(a.account_code);
+                  const isParent = isParentCode(a.account_code);
                   const isExpanded = !!expandedAccounts[a.account_code];
                   const txns = accountTxns[a.account_code];
                   const txnLoading = accountTxnLoading[a.account_code];
@@ -472,13 +474,13 @@ export default function ChartOfAccounts() {
                         onClick={() => toggleAccount(a.account_code)}
                         className={`${i % 2 ? 'bg-muted/5' : ''} hover:bg-muted/30 transition-colors cursor-pointer`}
                       >
-                        <td className="px-4 py-2.5 font-mono text-xs" style={{ paddingLeft: `${16 + depth * 20}px` }}>
+                        <td className={`px-4 py-2.5 font-mono text-xs ${isParent ? 'font-bold' : ''}`}>
                           <span className="inline-flex items-center gap-1">
                             {isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
                             {a.account_code || ''}
                           </span>
                         </td>
-                        <td className="px-4 py-2.5" style={{ paddingLeft: `${16 + depth * 20}px` }}>
+                        <td className={`px-4 py-2.5 ${isParent ? 'font-bold' : ''}`}>
                           {a.account_name || ''}
                         </td>
                         <td className="px-4 py-2.5 text-right font-mono text-xs">
@@ -492,7 +494,6 @@ export default function ChartOfAccounts() {
                             {formatBalance(a.current_balance, true)}
                           </td>
                         )}
-                        <td className="px-4 py-2.5 text-xs text-muted-foreground font-mono">{a.parent_code || '—'}</td>
                         <td className="px-4 py-2.5">
                           <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${a.is_active !== 0 ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'}`}>
                             {a.is_active !== 0 ? tr('Active', '啟用', '启用') : tr('Inactive', '停用', '停用')}
@@ -502,7 +503,7 @@ export default function ChartOfAccounts() {
                       {/* Expanded transaction rows */}
                       {isExpanded && (
                         <tr>
-                          <td colSpan={hasCurrentBalance ? 6 : 5} className="px-0 py-0">
+                          <td colSpan={hasCurrentBalance ? 5 : 4} className="px-0 py-0">
                             <div className="bg-muted/10 border-t border-b px-4 py-3">
                               {txnLoading ? (
                                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -527,10 +528,10 @@ export default function ChartOfAccounts() {
                                       <td className="pr-3 py-1.5 italic">{tr('Opening Balance', '期初結餘', '期初结余')}</td>
                                       <td className="pr-3 py-1.5 text-right font-mono">—</td>
                                       <td className="pr-3 py-1.5 text-right font-mono">—</td>
-                                      <td className="pr-3 py-1.5 text-right font-mono font-semibold">{formatBalance(txns.length > 0 ? txns[0].running_balance - (txns[0].debit - txns[0].credit) : 0, true)}</td>
-                                      <td className="py-1.5">—</td>
-                                    </tr>
-                                    {txns.map((tx: any, j: number) => (
+                                    <td className="pr-3 py-1.5 text-right font-mono font-semibold">{formatBalance(txns.length > 0 ? txns[0].running_balance - (txns[0].debit - txns[0].credit) : 0, true)}</td>
+                                    <td className="py-1.5">—</td>
+                                  </tr>
+                                  {txns.map((tx: any, j: number) => (
                                       <tr key={j} className="hover:bg-muted/20 transition-colors">
                                         <td className="pr-3 py-1.5 font-mono">{tx.entry_date}</td>
                                         <td className="pr-3 py-1.5 max-w-64 truncate">{tx.description}</td>

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { Building2, Plus, Search } from 'lucide-react';
+import { Building2, ChevronDown, Plus, Search } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { tr } from '../lib/i18nHelpers';
 
@@ -44,13 +44,28 @@ export default function CompanySwitcher() {
   return (
     <div className="relative px-3 mb-2">
       <div className="flex items-center gap-1">
-        <button onClick={() => setOpen(!open)}
-          className="flex-1 flex items-center gap-2 px-3 py-2 rounded-md text-sm border bg-background hover:bg-muted transition-colors">
-          <Building2 className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
-          <span className="flex-1 text-left truncate text-xs">
-            {displayName}
-          </span>
-        </button>
+        <div className="flex-1 relative">
+          {open ? (
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              onFocus={() => setOpen(true)}
+              placeholder={tr('Search or select company...', '搜尋或選擇公司...', '搜寻或选择公司...')}
+              className="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm border bg-background focus:outline-none focus:ring-2 focus:ring-ring pr-8"
+              autoFocus
+            />
+          ) : (
+            <button onClick={() => { setOpen(true); setSearch(''); }}
+              className="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm border bg-background hover:bg-muted transition-colors text-left">
+              <Building2 className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+              <span className="flex-1 truncate text-xs">
+                {displayName}
+              </span>
+            </button>
+          )}
+          <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+        </div>
         {canCreateClient && (
           <button onClick={() => navigate('/new-client')}
             className="px-2 py-2 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition flex items-center gap-1 shrink-0"

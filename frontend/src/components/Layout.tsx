@@ -33,7 +33,7 @@ function subT(key: string | undefined): string {
 const navGroups = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, to: '/' },
   { key: 'documents', label: 'Documents', icon: FolderOpen, expandable: true, alwaysOpen: true, children: [
-    { key: 'fileUpload', label: 'File Upload', to: '/file-upload', sub: 'Upload bank statements, invoices, receipts' },
+    { key: 'fileUpload', label: 'File Upload', to: '/file-upload' },
     { key: 'fileStorage', label: 'File Storage', to: '/file-storage', sub: 'By financial year' },
   ]},
   { key: 'coa', label: 'Chart of Accounts (COA)', icon: List, to: '/coa' },

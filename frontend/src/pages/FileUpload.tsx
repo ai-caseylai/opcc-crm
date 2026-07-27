@@ -94,10 +94,7 @@ export default function FileUpload() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold">{tr('File Upload', '上傳文件', '上传文件')}</h2>
-        <p className="text-muted-foreground mt-1">{tr('Upload bank statements, invoices, receipts, contracts, and other supporting files.', '上傳銀行月結單、發票、收據、合約及其他支援文件。', '上传银行月结单、发票、收据、合约及其他支援文件。')}</p>
-      </div>
+      <h2 className="text-2xl font-bold">{tr('File Upload', '上傳文件', '上传文件')}</h2>
 
       {/* Upload area */}
       <div onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}
