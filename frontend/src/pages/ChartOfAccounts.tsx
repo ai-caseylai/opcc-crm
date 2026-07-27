@@ -137,8 +137,9 @@ export default function ChartOfAccounts() {
   const selectedFYOption = useMemo(() => fyOptions.find(o => o.label === selectedFY), [fyOptions, selectedFY]);
 
   const queryAsOf = useMemo(() => {
-    return asOfDate || '';
-  }, [asOfDate]);
+    if (!selectedFYOption) return asOfDate || '';
+    return selectedFYOption.endDate < (asOfDate || '2099-12-31') ? selectedFYOption.endDate : asOfDate;
+  }, [selectedFYOption, asOfDate]);
 
   const { data, isLoading } = useQuery({
     queryKey: ['accounts', queryAsOf],
@@ -242,6 +243,13 @@ export default function ChartOfAccounts() {
   }
 
   const hasAccounts = accounts.length > 0;
+
+  const nonZeroByType: Record<string, number> = {};
+  if (hasCurrentBalance) {
+    for (const t of TYPE_ORDER) {
+      nonZeroByType[t] = (grouped[t] || []).filter((a: any) => a.current_balance && Math.abs(a.current_balance) > 0.001).length;
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -447,6 +455,11 @@ export default function ChartOfAccounts() {
             <span className="text-xs text-muted-foreground">
               {grouped[type].length} {tr('accounts', '個科目', '个科目')}
             </span>
+            {hasCurrentBalance && nonZeroByType[type] > 0 && (
+              <span className="text-xs text-green-600 dark:text-green-400 font-medium ml-auto">
+                {nonZeroByType[type]} {tr('non-zero', '非零', '非零')}
+              </span>
+            )}
           </button>
 
           {expandedTypes[type] && (
