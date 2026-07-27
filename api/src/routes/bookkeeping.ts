@@ -9,7 +9,7 @@ const bookkeeping = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 bookkeeping.use('*', authMiddleware);
 
 // HK COA account name lookup (from coa-hk.sql template)
-const HK_COA_NAMES: Record<string, { name: string; type: string; parent: string | null }> = {
+export const HK_COA_NAMES: Record<string, { name: string; type: string; parent: string | null }> = {
   '10000': { name: '資產 Assets', type: 'asset', parent: null },
   '11000': { name: '流動資產 Current Assets', type: 'asset', parent: '10000' },
   '12000': { name: '固定資產 Fixed Assets', type: 'asset', parent: '10000' },
@@ -145,7 +145,7 @@ const HK_COA_NAMES: Record<string, { name: string; type: string; parent: string 
   '81102': { name: '遞延稅項 Deferred Tax', type: 'expense', parent: '81100' },
 };
 
-function getCodeType(code: string): string {
+export function getCodeType(code: string): string {
   if (code.startsWith('1')) return 'asset';
   if (code.startsWith('2')) return 'liability';
   if (code.startsWith('3')) return 'equity';

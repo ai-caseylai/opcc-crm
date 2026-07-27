@@ -313,6 +313,82 @@ ${ocrText.slice(0, 8000)}` }],
     }
   } catch { /* non-critical */ }
 
+  // Auto-generate journal entries from categorized bank transactions
+  try {
+    const usedCodes = await db.prepare(
+      'SELECT DISTINCT account_code FROM bank_transactions WHERE bank_statement_id = ? AND account_code IS NOT NULL'
+    ).bind(stmtId).all();
+    const codeList = (usedCodes.results as any[]).map(r => r.account_code).filter(Boolean);
+    if (codeList.length > 0) {
+      // Ensure accounts exist
+      const existingAccts = await db.prepare(
+        `SELECT account_code FROM accounts WHERE user_id = ? AND account_code IN (${codeList.map(() => '?').join(',')})`
+      ).bind(userId, ...codeList).all();
+      const existSet = new Set((existingAccts.results as any[]).map(r => r.account_code));
+      for (const code of codeList) {
+        if (!existSet.has(code)) {
+          const type = code.startsWith('1') ? 'asset' : code.startsWith('2') ? 'liability' : code.startsWith('3') ? 'equity' : code.startsWith('4') ? 'revenue' : 'expense';
+          await db.prepare(
+            'INSERT INTO accounts (id, user_id, account_code, account_name, account_type) VALUES (?, ?, ?, ?, ?)'
+          ).bind(`acc-${uuidv4().slice(0, 8)}`, userId, code, code, type).run();
+        }
+      }
+
+      // Load account map
+      const allAccts = await db.prepare(
+        'SELECT account_code, account_name FROM accounts WHERE user_id = ? AND is_active = 1'
+      ).bind(userId).all();
+      const acctMap = new Map<string, string>();
+      for (const r of allAccts.results as any[]) acctMap.set(r.account_code, r.account_name);
+
+      // Get unprocessed transactions
+      const existingRefs = await db.prepare(
+        "SELECT reference_id FROM journal_entries WHERE user_id = ? AND reference_type = 'bank_transaction'"
+      ).bind(userId).all();
+      const refSet = new Set((existingRefs.results as any[]).map(r => r.reference_id));
+
+      const txs = await db.prepare(
+        'SELECT * FROM bank_transactions WHERE bank_statement_id = ? AND deleted_at IS NULL ORDER BY transaction_date'
+      ).bind(stmtId).all();
+      let created = 0;
+      for (const tx of txs.results as any[]) {
+        if (refSet.has(tx.id)) continue;
+        const desc = tx.description || '';
+        const entryId = `je-${uuidv4().slice(0, 8)}`;
+        const entryNum = `JE-AUTO-${String(Date.now()).slice(-6)}-${uuidv4().slice(0, 4)}`;
+        const lines: { code: string; name: string; debit: number; credit: number }[] = [];
+
+        if (tx.deposit_amount > 0) {
+          lines.push({ code: '11101', name: acctMap.get('11101') || 'Cash on Hand', debit: tx.deposit_amount, credit: 0 });
+          const assignedCode = tx.account_code || '41101';
+          if (assignedCode !== '11101') {
+            lines.push({ code: assignedCode, name: acctMap.get(assignedCode) || assignedCode, debit: 0, credit: tx.deposit_amount });
+          }
+        }
+        if (tx.withdrawal_amount > 0) {
+          const assignedCode = tx.account_code || '62303';
+          if (assignedCode !== '11101') {
+            lines.push({ code: assignedCode, name: acctMap.get(assignedCode) || assignedCode, debit: tx.withdrawal_amount, credit: 0 });
+          }
+          lines.push({ code: '11101', name: acctMap.get('11101') || 'Cash on Hand', debit: 0, credit: tx.withdrawal_amount });
+        }
+
+        if (lines.length > 0) {
+          await db.prepare(
+            'INSERT INTO journal_entries (id, user_id, entry_number, entry_date, description, reference_type, reference_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
+          ).bind(entryId, userId, entryNum, tx.transaction_date, desc, 'bank_transaction', tx.id).run();
+          for (let i = 0; i < lines.length; i++) {
+            const l = lines[i];
+            await db.prepare(
+              'INSERT INTO journal_lines (id, entry_id, account_code, account_name, description, debit, credit, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+            ).bind(`jl-${uuidv4().slice(0, 8)}`, entryId, l.code, l.name, desc, l.debit, l.credit, i).run();
+          }
+          created++;
+        }
+      }
+    }
+  } catch { /* non-critical - auto-generation is best-effort */ }
+
   return {
     success: true,
     statement_id: stmtId,
