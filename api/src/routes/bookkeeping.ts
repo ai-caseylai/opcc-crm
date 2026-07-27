@@ -8,6 +8,210 @@ import { authMiddleware, auditorMiddleware, bookkeeperMiddleware } from '../midd
 const bookkeeping = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 bookkeeping.use('*', authMiddleware);
 
+// HK COA account name lookup (from coa-hk.sql template)
+const HK_COA_NAMES: Record<string, { name: string; type: string; parent: string | null }> = {
+  '10000': { name: '資產 Assets', type: 'asset', parent: null },
+  '11000': { name: '流動資產 Current Assets', type: 'asset', parent: '10000' },
+  '12000': { name: '固定資產 Fixed Assets', type: 'asset', parent: '10000' },
+  '11100': { name: '現金及銀行存款 Cash & Bank', type: 'asset', parent: '11000' },
+  '11200': { name: '應收賬款及票據 AR & Notes', type: 'asset', parent: '11000' },
+  '11300': { name: '其他應收款 Other Receivables', type: 'asset', parent: '11000' },
+  '11400': { name: '預付及按金 Prepayments & Deposits', type: 'asset', parent: '11000' },
+  '12100': { name: '物業房產 Property', type: 'asset', parent: '12000' },
+  '12200': { name: '設備及器材 Equipment', type: 'asset', parent: '12000' },
+  '12300': { name: '累計折舊 Accumulated Depreciation', type: 'asset', parent: '12000' },
+  '11101': { name: '庫存現金 Cash on Hand', type: 'asset', parent: '11100' },
+  '11102': { name: '匯豐銀行 HSBC', type: 'asset', parent: '11100' },
+  '11103': { name: '其他銀行 Other Bank', type: 'asset', parent: '11100' },
+  '11201': { name: '應收賬款 Trade Debtors', type: 'asset', parent: '11200' },
+  '11301': { name: '應收董事款項 Director Loan to Co', type: 'asset', parent: '11300' },
+  '11302': { name: '暫付款 Sundry Debtors', type: 'asset', parent: '11300' },
+  '11401': { name: '預付費用 Prepayments', type: 'asset', parent: '11400' },
+  '11402': { name: '租金按金 Rental Deposit', type: 'asset', parent: '11400' },
+  '11403': { name: '其他按金 Other Deposits', type: 'asset', parent: '11400' },
+  '12201': { name: '辦公設備 Office Equipment', type: 'asset', parent: '12200' },
+  '12202': { name: '電腦設備 Computer Equipment', type: 'asset', parent: '12200' },
+  '12203': { name: '汽車 Vehicles', type: 'asset', parent: '12200' },
+  '12301': { name: '累計折舊-設備 Accumulated Depn-Equip', type: 'asset', parent: '12300' },
+  '12302': { name: '累計折舊-電腦 Accumulated Depn-Computer', type: 'asset', parent: '12300' },
+  '20000': { name: '負債 Liabilities', type: 'liability', parent: null },
+  '21000': { name: '流動負債 Current Liabilities', type: 'liability', parent: '20000' },
+  '22000': { name: '長期負債 Long-term Liabilities', type: 'liability', parent: '20000' },
+  '21100': { name: '應付賬款及票據 AP & Notes', type: 'liability', parent: '21000' },
+  '21200': { name: '其他應付款 Other Payables', type: 'liability', parent: '21000' },
+  '21300': { name: '應付稅項 Tax Payable', type: 'liability', parent: '21000' },
+  '21400': { name: '預收及應計 Accruals & Deferred', type: 'liability', parent: '21000' },
+  '21101': { name: '應付賬款 Trade Creditors', type: 'liability', parent: '21100' },
+  '21201': { name: '應付董事款項 Director Loan from Dir', type: 'liability', parent: '21200' },
+  '21202': { name: '暫收款 Sundry Creditors', type: 'liability', parent: '21200' },
+  '21203': { name: '應付薪金 Salary Payable', type: 'liability', parent: '21200' },
+  '21204': { name: '應付強積金 MPF Payable', type: 'liability', parent: '21200' },
+  '21301': { name: '應付利得稅 Profits Tax Payable', type: 'liability', parent: '21300' },
+  '21401': { name: '預收收入 Deferred Revenue', type: 'liability', parent: '21400' },
+  '21402': { name: '應計費用 Accrued Expenses', type: 'liability', parent: '21400' },
+  '30000': { name: '資本及儲備 Equity & Reserves', type: 'equity', parent: null },
+  '31000': { name: '股本及往來 Share Capital & Current', type: 'equity', parent: '30000' },
+  '32000': { name: '儲備及損益 Reserves & P&L', type: 'equity', parent: '30000' },
+  '31100': { name: '股本 Share Capital', type: 'equity', parent: '31000' },
+  '31200': { name: '董事往來 Director Current Account', type: 'equity', parent: '31000' },
+  '32100': { name: '留存盈利 Retained Earnings', type: 'equity', parent: '32000' },
+  '32200': { name: '本年損益 Current Year P&L', type: 'equity', parent: '32000' },
+  '31101': { name: '普通股本 Ordinary Shares', type: 'equity', parent: '31100' },
+  '31201': { name: '董事往來-往來帳 Director Current A/C', type: 'equity', parent: '31200' },
+  '31202': { name: '董事酬金 Director Remuneration', type: 'equity', parent: '31200' },
+  '32101': { name: '上年度保留盈利 Retained Earnings b/f', type: 'equity', parent: '32100' },
+  '40000': { name: '收入 Revenue', type: 'revenue', parent: null },
+  '41000': { name: '營業收入 Operating Revenue', type: 'revenue', parent: '40000' },
+  '42000': { name: '其他收益 Other Income', type: 'revenue', parent: '40000' },
+  '41100': { name: '服務收入 Service Income', type: 'revenue', parent: '41000' },
+  '41200': { name: '銷售收入 Sales Revenue', type: 'revenue', parent: '41000' },
+  '41300': { name: '顧問收入 Consulting Income', type: 'revenue', parent: '41000' },
+  '42100': { name: '利息及投資收入 Interest & Investment', type: 'revenue', parent: '42000' },
+  '42200': { name: '非經常性收入 Non-recurring Income', type: 'revenue', parent: '42000' },
+  '41101': { name: '專業服務收入 Professional Services', type: 'revenue', parent: '41100' },
+  '41102': { name: '技術服務收入 Technical Services', type: 'revenue', parent: '41100' },
+  '42101': { name: '銀行利息收入 Bank Interest', type: 'revenue', parent: '42100' },
+  '42201': { name: '政府補貼 Government Subsidy', type: 'revenue', parent: '42200' },
+  '42202': { name: '匯兌收益 Exchange Gain', type: 'revenue', parent: '42200' },
+  '50000': { name: '直接成本 Direct Costs', type: 'expense', parent: null },
+  '51000': { name: '服務成本 Cost of Services', type: 'expense', parent: '50000' },
+  '52000': { name: '銷售成本 Cost of Sales', type: 'expense', parent: '50000' },
+  '51100': { name: '外判及顧問費 Subcontractor & Consultant', type: 'expense', parent: '51000' },
+  '51200': { name: '直接人工 Direct Labour', type: 'expense', parent: '51000' },
+  '51101': { name: '外判工作費用 Subcontractor Fees', type: 'expense', parent: '51100' },
+  '51102': { name: '專業顧問費 Professional Consultant', type: 'expense', parent: '51100' },
+  '51201': { name: '項目人員薪酬 Project Staff Salary', type: 'expense', parent: '51200' },
+  '60000': { name: '營運支出 Operating Expenses', type: 'expense', parent: null },
+  '61000': { name: '員工支出 Staff Costs', type: 'expense', parent: '60000' },
+  '62000': { name: '辦公室支出 Office Costs', type: 'expense', parent: '60000' },
+  '63000': { name: '專業及合規 Professional & Compliance', type: 'expense', parent: '60000' },
+  '64000': { name: '銷售及推廣 Sales & Marketing', type: 'expense', parent: '60000' },
+  '65000': { name: '財務及銀行 Finance & Banking', type: 'expense', parent: '60000' },
+  '66000': { name: '其他營運支出 Other Operating', type: 'expense', parent: '60000' },
+  '61100': { name: '董事及管理層 Director & Management', type: 'expense', parent: '61000' },
+  '61101': { name: '董事袍金 Director Fee', type: 'expense', parent: '61100' },
+  '61102': { name: '管理層薪金 Management Salary', type: 'expense', parent: '61100' },
+  '61200': { name: '員工薪酬 Staff Remuneration', type: 'expense', parent: '61000' },
+  '61201': { name: '員工薪金 Staff Salaries', type: 'expense', parent: '61200' },
+  '61202': { name: '強積金僱主供款 MPF Employer Contribution', type: 'expense', parent: '61200' },
+  '61203': { name: '員工福利 Staff Benefits', type: 'expense', parent: '61200' },
+  '62100': { name: '租金 Rent', type: 'expense', parent: '62000' },
+  '62101': { name: '辦公室租金 Office Rent', type: 'expense', parent: '62100' },
+  '62102': { name: '差餉及管理費 Rates & Management', type: 'expense', parent: '62100' },
+  '62200': { name: '水電煤 Utilities', type: 'expense', parent: '62000' },
+  '62201': { name: '電費 Electricity', type: 'expense', parent: '62200' },
+  '62202': { name: '水費 Water', type: 'expense', parent: '62200' },
+  '62300': { name: '電訊及科技 Telecom & IT', type: 'expense', parent: '62000' },
+  '62301': { name: '電話及上網 Phone & Internet', type: 'expense', parent: '62300' },
+  '62302': { name: '網站寄存及域名 Web Hosting & Domain', type: 'expense', parent: '62300' },
+  '62303': { name: '軟件訂閱費 Software Subscriptions', type: 'expense', parent: '62300' },
+  '62400': { name: '辦公雜項 Office Miscellaneous', type: 'expense', parent: '62000' },
+  '62401': { name: '文具及印刷 Stationery & Printing', type: 'expense', parent: '62400' },
+  '62402': { name: '茶水及清潔 Pantry & Cleaning', type: 'expense', parent: '62400' },
+  '63100': { name: '專業服務 Professional Services', type: 'expense', parent: '63000' },
+  '63101': { name: '審計費用 Audit Fee', type: 'expense', parent: '63100' },
+  '63102': { name: '公司秘書費 Company Secretary Fee', type: 'expense', parent: '63100' },
+  '63103': { name: '法律顧問費 Legal Fee', type: 'expense', parent: '63100' },
+  '63200': { name: '政府規費 Government Fees', type: 'expense', parent: '63000' },
+  '63201': { name: '商業登記費 BR Renewal Fee', type: 'expense', parent: '63200' },
+  '63202': { name: '公司周年申報費 Annual Return Fee', type: 'expense', parent: '63200' },
+  '63300': { name: '保險 Insurance', type: 'expense', parent: '63000' },
+  '63301': { name: '勞工保險 EC Insurance', type: 'expense', parent: '63300' },
+  '63302': { name: '專業責任保險 Professional Indemnity', type: 'expense', parent: '63300' },
+  '64100': { name: '市場推廣 Marketing', type: 'expense', parent: '64000' },
+  '64101': { name: '廣告費用 Advertising', type: 'expense', parent: '64100' },
+  '64102': { name: '網站推廣 Website Promotion', type: 'expense', parent: '64100' },
+  '64200': { name: '業務拓展 Business Development', type: 'expense', parent: '64000' },
+  '64201': { name: '佣金支出 Commission Expense', type: 'expense', parent: '64200' },
+  '64202': { name: '交際應酬費 Entertainment', type: 'expense', parent: '64200' },
+  '64300': { name: '差旅交通 Travel & Transport', type: 'expense', parent: '64000' },
+  '64301': { name: '本地交通 Local Transport', type: 'expense', parent: '64300' },
+  '64302': { name: '海外差旅 Overseas Travel', type: 'expense', parent: '64300' },
+  '65100': { name: '銀行費用 Bank Charges', type: 'expense', parent: '65000' },
+  '65101': { name: '銀行手續費 Bank Service Fee', type: 'expense', parent: '65100' },
+  '65102': { name: '貸款利息 Loan Interest', type: 'expense', parent: '65100' },
+  '65200': { name: '匯兌差額 Exchange Difference', type: 'expense', parent: '65000' },
+  '65201': { name: '匯兌損失 Exchange Loss', type: 'expense', parent: '65200' },
+  '66100': { name: '折舊 Depreciation', type: 'expense', parent: '66000' },
+  '66101': { name: '折舊-設備 Depreciation-Equipment', type: 'expense', parent: '66100' },
+  '66102': { name: '折舊-電腦 Depreciation-Computer', type: 'expense', parent: '66100' },
+  '66200': { name: '雜項支出 Sundry Expenses', type: 'expense', parent: '66000' },
+  '66201': { name: '罰款及附加費 Penalties & Surcharges', type: 'expense', parent: '66200' },
+  '66202': { name: '捐款 Donations', type: 'expense', parent: '66200' },
+  '66203': { name: '其他雜項 Miscellaneous', type: 'expense', parent: '66200' },
+  '80000': { name: '利得稅 Profits Tax', type: 'expense', parent: null },
+  '81100': { name: '香港利得稅 HK Profits Tax', type: 'expense', parent: '80000' },
+  '81101': { name: '本年度利得稅 Current Year Profits Tax', type: 'expense', parent: '81100' },
+  '81102': { name: '遞延稅項 Deferred Tax', type: 'expense', parent: '81100' },
+};
+
+function getCodeType(code: string): string {
+  if (code.startsWith('1')) return 'asset';
+  if (code.startsWith('2')) return 'liability';
+  if (code.startsWith('3')) return 'equity';
+  if (code.startsWith('4')) return 'revenue';
+  if (code.startsWith('5') || code.startsWith('6') || code.startsWith('8')) return 'expense';
+  return 'expense';
+}
+
+function getParentCandidates(code: string): string[] {
+  const parents: string[] = [];
+  if (code.length >= 5) parents.push(code.slice(0, 3) + '00');
+  if (code.length >= 4) parents.push(code[0] + '000');
+  return parents;
+}
+
+async function ensureMissingAccounts(db: any, tenantId: string, codes: string[], created: number[]) {
+  const existingRows = await db.prepare(
+    `SELECT account_code FROM accounts WHERE user_id = ? AND account_code IN (${codes.map(() => '?').join(',')})`
+  ).bind(tenantId, ...codes).all();
+  const existingSet = new Set((existingRows.results as any[]).map(r => r.account_code));
+
+  for (const code of codes) {
+    if (existingSet.has(code)) continue;
+    const info = HK_COA_NAMES[code];
+    const name = info?.name || `${code} (${getCodeType(code)})`;
+    const type = info?.type || getCodeType(code);
+    const parentCode = info?.parent || null;
+    await db.prepare(
+      'INSERT INTO accounts (id, user_id, account_code, account_name, account_type, parent_code) VALUES (?, ?, ?, ?, ?, ?)'
+    ).bind(`acc-${uuidv4().slice(0, 8)}`, tenantId, code, name, type, parentCode).run();
+    created[0]++;
+  }
+}
+
+async function collectTransactionCodes(db: any, tenantId: string): Promise<string[]> {
+  const codeSet = new Set<string>();
+
+  // Collect from bank_transactions
+  const btRows = await db.prepare(
+    `SELECT DISTINCT account_code FROM bank_transactions WHERE user_id = ? AND account_code IS NOT NULL AND account_code != ''`
+  ).bind(tenantId).all();
+  for (const r of btRows.results as any[]) codeSet.add(r.account_code);
+
+  // Collect from journal_lines
+  const jlRows = await db.prepare(
+    `SELECT DISTINCT jl.account_code FROM journal_lines jl
+     JOIN journal_entries je ON jl.entry_id = je.id
+     WHERE je.user_id = ? AND je.status != 'stale'`
+  ).bind(tenantId).all();
+  for (const r of jlRows.results as any[]) codeSet.add(r.account_code);
+
+  // Also include hierarchy parents
+  const fullSet = new Set(codeSet);
+  for (const code of codeSet) {
+    for (const parent of getParentCandidates(code)) {
+      if (HK_COA_NAMES[parent]) fullSet.add(parent);
+    }
+  }
+
+  // Add the 6 essential accounts if not already present
+  const essentials = ['11101', '21201', '41101', '42101', '51101', '62303'];
+  for (const e of essentials) fullSet.add(e);
+
+  return Array.from(fullSet).filter(Boolean).sort();
+}
+
 // Audit log helper
 async function auditLog(db: any, userId: string, action: string, entityType: string, entityId: string | null | undefined, changes?: object) {
   const id = `al-${uuidv4().slice(0, 8)}`;
@@ -243,12 +447,6 @@ bookkeeping.post('/accounts/seed', bookkeeperMiddleware, async (c) => {
   const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
 
-  // Check if user already has accounts
-  const existing = await db.prepare('SELECT COUNT(*) as cnt FROM accounts WHERE user_id = ?').bind(tenantId).first<{ cnt: number }>();
-  if ((existing?.cnt || 0) > 0) {
-    return c.json({ error: 'Account already has accounts. Cannot seed over existing COA.' }, 400);
-  }
-
   // HK 5-digit COA template: [code, name, type, parentCode]
   const template: [string, string, string, string | null][] = [
     // Assets
@@ -404,6 +602,25 @@ bookkeeping.post('/accounts/seed', bookkeeperMiddleware, async (c) => {
 
   await auditLog(db, user.id, 'seed_coa', 'account', null, { template: 'hk-5digit', accounts_created: created });
   return c.json({ success: true, accounts_created: created }, 201);
+});
+
+// GET /accounts/missing-codes — detect transaction codes not yet in COA
+bookkeeping.get('/accounts/missing-codes', async (c) => {
+  const user = c.get('user');
+  const tenantId = c.get('client_user_id') || user.id;
+  const db = c.env.DB;
+
+  const codes = await collectTransactionCodes(db, tenantId);
+  const existingRows = await db.prepare(
+    `SELECT account_code FROM accounts WHERE user_id = ? AND is_active = 1`
+  ).bind(tenantId).all();
+  const existingSet = new Set((existingRows.results as any[]).map(r => r.account_code));
+  const missing = codes.filter(c => !existingSet.has(c)).map(code => ({
+    code,
+    name: HK_COA_NAMES[code]?.name || null,
+    type: HK_COA_NAMES[code]?.type || getCodeType(code),
+  }));
+  return c.json({ missing, total_existing: existingSet.size, total_expected: codes.length });
 });
 
 // Create a single account manually
@@ -1040,23 +1257,10 @@ bookkeeping.post('/auto-generate-entries', bookkeeperMiddleware, async (c) => {
      ORDER BY bt.transaction_date`
   ).bind(tenantId).all();
 
-  // Ensure chart of accounts exists for this user
-  const ensureAccount = async (code: string, name: string, type: string, parentCode?: string) => {
-    const existing = await db.prepare(
-      'SELECT id FROM accounts WHERE user_id = ? AND account_code = ?'
-    ).bind(tenantId, code).first();
-    if (!existing) {
-      await db.prepare(
-        'INSERT INTO accounts (id, user_id, account_code, account_name, account_type, parent_code) VALUES (?, ?, ?, ?, ?, ?)'
-      ).bind(`acc-${uuidv4().slice(0, 8)}`, tenantId, code, name, type, parentCode || null).run();
-    }
-  };
-  await ensureAccount('11101', '庫存現金 Cash on Hand', 'asset', '11100');
-  await ensureAccount('21201', '應付董事款項 Director Loan from Dir', 'liability', '21200');
-  await ensureAccount('41101', '專業服務收入 Professional Services', 'revenue', '41100');
-  await ensureAccount('42101', '銀行利息收入 Bank Interest', 'revenue', '42100');
-  await ensureAccount('51101', '外判工作費用 Subcontractor Fees', 'expense', '51100');
-  await ensureAccount('62303', '軟件訂閱費 Software Subscriptions', 'expense', '62300');
+  // Dynamically ensure all transaction codes exist in COA
+  const createdCount: number[] = [0];
+  const codes = await collectTransactionCodes(db, tenantId);
+  await ensureMissingAccounts(db, tenantId, codes, createdCount);
 
   const isDirector = (desc: string) => /JOSEPH|LIN PUI|LAI KIN|RAYMOND|SZETO/i.test(desc);
 
@@ -1091,7 +1295,6 @@ bookkeeping.post('/auto-generate-entries', bookkeeperMiddleware, async (c) => {
         // Use pre-assigned account_code if available
         const assigned = tx.account_code ? accountMap.get(tx.account_code) : null;
         if (assigned && tx.account_code !== '11101' && tx.account_code !== '21201') {
-          await ensureAccount(tx.account_code, assigned.name, assigned.type);
           lines.push({ code: tx.account_code, name: assigned.name, debit: 0, credit: tx.deposit_amount });
         } else if (isDirector(desc)) {
           lines.push({ code: '21201', name: 'Director Loan', debit: 0, credit: tx.deposit_amount });
@@ -1120,7 +1323,6 @@ bookkeeping.post('/auto-generate-entries', bookkeeperMiddleware, async (c) => {
         if (assigned && tx.account_code !== '11101' && tx.account_code !== '21201') {
           expCode = tx.account_code;
           expName = assigned.name;
-          await ensureAccount(expCode, expName, assigned.type);
         } else {
           expCode = tx.supplier_id ? '51101' : '62303';
           expName = tx.supplier_id ? 'Subcontractor Fees' : 'Software Subscriptions';
@@ -1169,18 +1371,8 @@ bookkeeping.post('/post-invoice/:id', bookkeeperMiddleware, async (c) => {
   ).bind(invoiceId, tenantId).first();
   if (existing) return c.json({ error: 'Invoice already posted to GL', entry_id: (existing as any).id }, 409);
 
-  // Ensure AR and Revenue accounts exist
-  const ensureAccount = async (code: string, name: string, type: string) => {
-    const ex = await db.prepare('SELECT id FROM accounts WHERE user_id = ? AND account_code = ?')
-      .bind(tenantId, code).first();
-    if (!ex) {
-      await db.prepare(
-        'INSERT INTO accounts (id, user_id, account_code, account_name, account_type) VALUES (?,?,?,?,?)'
-      ).bind(`acc-${uuidv4().slice(0, 8)}`, tenantId, code, name, type).run();
-    }
-  };
-  await ensureAccount('11201', 'Trade Debtors 應收賬款', 'asset');
-  await ensureAccount('41101', 'Professional Services 專業服務收入', 'revenue');
+  // Ensure AR and Revenue accounts exist via dynamic missing-account creation
+  await ensureMissingAccounts(db, tenantId, ['11201', '41101'], [0]);
 
   const jeId = `je-${uuidv4().slice(0, 8)}`;
   const jeNum = `JE-INV-${inv.invoice_number}`;

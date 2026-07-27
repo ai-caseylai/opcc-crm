@@ -167,6 +167,23 @@ export default function ChartOfAccounts() {
     mutationFn: () => api('/bookkeeping/auto-generate-entries', { method: 'POST' }),
     onSuccess: (result: any) => {
       queryClient.invalidateQueries({ queryKey: ['accounts'] });
+      queryClient.invalidateQueries({ queryKey: ['missing-codes'] });
+    },
+  });
+
+  const { data: missingCodesData, isLoading: missingLoading } = useQuery({
+    queryKey: ['missing-codes'],
+    queryFn: () => api('/bookkeeping/accounts/missing-codes') as Promise<{ missing: any[]; total_existing: number; total_expected: number }>,
+    enabled: accounts.length > 0,
+    refetchOnWindowFocus: false,
+  });
+  const missingCodes = missingCodesData?.missing || [];
+
+  const createMissingMut = useMutation({
+    mutationFn: () => api('/bookkeeping/auto-generate-entries', { method: 'POST' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['accounts'] });
+      queryClient.invalidateQueries({ queryKey: ['missing-codes'] });
     },
   });
 
@@ -264,6 +281,35 @@ export default function ChartOfAccounts() {
           </div>
           {seedMut.isError && <p className="text-sm text-destructive">{(seedMut.error as Error).message}</p>}
           {seedMut.isSuccess && <p className="text-sm text-green-600">{tr('COA seeded successfully!', '科目表建立成功！', '科目表建立成功！')}</p>}
+        </div>
+      )}
+
+      {/* Sparse COA banner */}
+      {hasAccounts && !missingLoading && missingCodes.length > 0 && (
+        <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg px-4 py-3 flex items-center justify-between flex-wrap gap-2">
+          <p className="text-sm text-amber-700 dark:text-amber-300">
+            <span className="font-semibold">{missingCodes.length}</span> {tr(
+              'transaction codes are not yet in the Chart of Accounts.',
+              '個交易代碼尚未在會計科目表中。',
+              '个交易代码尚未在会计科目表中。',
+            )}
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => createMissingMut.mutate()}
+              disabled={createMissingMut.isPending}
+              className="px-3 py-1.5 text-xs font-medium bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-50"
+            >
+              {createMissingMut.isPending ? tr('Creating...', '建立中...', '建立中...') : tr('Create Missing', '建立缺失科目', '建立缺失科目')}
+            </button>
+            <button
+              onClick={() => seedMut.mutate()}
+              disabled={seedMut.isPending}
+              className="px-3 py-1.5 text-xs font-medium border border-amber-300 dark:border-amber-700 rounded-lg hover:bg-amber-100 dark:hover:bg-amber-800/30 disabled:opacity-50"
+            >
+              {tr('Use Industry Template', '使用行業模板', '使用行业模板')}
+            </button>
+          </div>
         </div>
       )}
 
