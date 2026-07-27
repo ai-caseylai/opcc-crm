@@ -6,7 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { api } from '../lib/api';
 import Chatbot from './Chatbot';
 import CookieConsent from './CookieConsent';
-import FirmClientSwitcher from './FirmClientSwitcher';
+import CompanySwitcher from './FirmClientSwitcher';
 import { tr } from '../lib/i18nHelpers';
 import {
   LayoutDashboard, Users, Truck, Package, FileText, FileSpreadsheet, Mail,
@@ -249,7 +249,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       )}
 
       {/* Firm client switcher */}
-      {!collapsed && <FirmClientSwitcher />}
+      {!collapsed && <CompanySwitcher />}
 
       {/* Navigation */}
       <nav className={`flex-1 space-y-0.5 overflow-y-auto ${collapsed ? 'p-0' : 'p-2'}`}>
