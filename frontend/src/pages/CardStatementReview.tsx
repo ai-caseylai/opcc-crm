@@ -91,6 +91,7 @@ export default function CardStatementReview() {
       // Invalidate queries before navigating to avoid stale cache flash
       queryClient.invalidateQueries({ queryKey: ['card-statements'] });
       queryClient.invalidateQueries({ queryKey: ['card-statement', id] });
+      queryClient.invalidateQueries({ queryKey: ['card-continuity'] });
       await confirmMut.mutateAsync({
         balance_status: mismatch ? 'mismatch' : hasTxEdits ? 'corrected' : 'ok',
         balance_check: mismatch ? { expected: expectedClosing, actual: stmt.closing_balance, diff: (stmt.closing_balance ?? 0) - expectedClosing } : null,

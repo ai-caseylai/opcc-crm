@@ -17,6 +17,7 @@ export default function ContinuityChain({ endpoint, queryKey, type }: Props) {
   const { data, isLoading } = useQuery({
     queryKey: [queryKey],
     queryFn: () => api(endpoint),
+    staleTime: 0, // never serve stale — continuity must always reflect current DB state
   });
 
   const groups: any[] = (data as any)?.groups || [];

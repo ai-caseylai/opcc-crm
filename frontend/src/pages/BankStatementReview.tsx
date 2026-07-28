@@ -191,6 +191,7 @@ export default function BankStatementReview() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
       queryClient.invalidateQueries({ queryKey: ['bank-statements-drafts'] });
+      queryClient.invalidateQueries({ queryKey: ['bank-continuity'] });
       toast.success(tr('Saved to database! This statement is now confirmed.', '已儲存至數據庫！此月結單已確認。', '已储存至数据库！此月结单已确认。'));
       navigate('/bank-statements');
     },
@@ -204,6 +205,7 @@ export default function BankStatementReview() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
       queryClient.invalidateQueries({ queryKey: ['bank-statements-drafts'] });
+      queryClient.invalidateQueries({ queryKey: ['bank-continuity'] });
       navigate('/file-storage');
     },
   });

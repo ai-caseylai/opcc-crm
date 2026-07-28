@@ -67,6 +67,7 @@ export default function BankStatements() {
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
       queryClient.invalidateQueries({ queryKey: ['bank-statements-drafts'] });
+      queryClient.invalidateQueries({ queryKey: ['bank-continuity'] });
       queryClient.invalidateQueries({ queryKey: ['bank-transactions-flat'] });
       queryClient.invalidateQueries({ queryKey: ['file-storage'] });
       setExpandedId(null);

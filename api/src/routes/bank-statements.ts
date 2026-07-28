@@ -431,7 +431,7 @@ bank.get('/continuity', async (c) => {
             statement_year, statement_month, period_start, period_end,
             opening_balance, closing_balance, status
      FROM bank_statements
-     WHERE user_id = ? AND deleted_at IS NULL
+     WHERE user_id = ? AND deleted_at IS NULL AND (status IS NULL OR status != 'draft')
      ORDER BY account_number, currency, statement_year ASC, statement_month ASC`
   ).bind(tenantId).all();
 

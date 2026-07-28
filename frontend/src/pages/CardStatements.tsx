@@ -199,6 +199,10 @@ export default function CardStatements() {
                         <Eye className="h-4 w-4" />
                       </a>
                     )}
+                    <button onClick={(e) => { e.stopPropagation(); nav(`/card-statements/review/${s.id}`); }}
+                      className="p-1.5 rounded hover:bg-muted text-muted-foreground" title={tr('Edit statement', '編輯月結單', '编辑月结单')}>
+                      <Pencil className="h-4 w-4" />
+                    </button>
                     <button onClick={() => { if (confirm(tr('Delete this statement?', '刪除此月結單？', '删除此月结单？'))) deleteMut.mutate(s.id); }}
                       className="p-1.5 rounded hover:bg-red-50 text-muted-foreground hover:text-red-500">
                       <Trash2 className="h-4 w-4" />

@@ -121,7 +121,7 @@ card.get('/continuity', async (c) => {
             statement_year, statement_month, period_start, period_end,
             opening_balance, closing_balance, status
      FROM card_statements
-     WHERE user_id = ? AND deleted_at IS NULL
+     WHERE user_id = ? AND deleted_at IS NULL AND (status IS NULL OR status != 'draft')
      ORDER BY card_number_last4, currency, statement_year ASC, statement_month ASC`
   ).bind(tenantId).all();
 
