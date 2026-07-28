@@ -112,11 +112,20 @@ export async function firmContextMiddleware(c: AppContext, next: AppNext) {
   const db = c.env.DB;
 
   if (user.firm_role === 'admin') {
+    // Check firm_clients first
     const client = await db.prepare(
       'SELECT client_user_id FROM firm_clients WHERE firm_id = ? AND id = ? AND status = ?'
     ).bind(user.firm_id, activeClientId, 'active').first<{ client_user_id: string }>();
-    if (!client) return c.json({ error: 'Client not found' }, 403);
-    c.set('client_user_id', client.client_user_id);
+    if (client) {
+      c.set('client_user_id', client.client_user_id);
+    } else {
+      // Also check sub-accounts linked via parent_user_id (standalone clients)
+      const sub = await db.prepare(
+        'SELECT id FROM users WHERE parent_user_id = ? AND id = ? AND status = ?'
+      ).bind(user.id, activeClientId, 'active').first<{ id: string }>();
+      if (!sub) return c.json({ error: 'Client not found' }, 403);
+      c.set('client_user_id', sub.id);
+    }
   } else {
     const assignment = await db.prepare(
       `SELECT fc.client_user_id FROM firm_clients fc

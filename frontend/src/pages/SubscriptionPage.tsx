@@ -67,7 +67,7 @@ export default function SubscriptionPage() {
 
   const changePlan = useMutation({
     mutationFn: (plan_key: string) =>
-      api('/plans/subscription', { method: 'POST', body: JSON.stringify({ plan_key }) }),
+      api('/plans/subscription', { method: 'POST', body: { plan_key } }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['subscription'] });
       queryClient.invalidateQueries({ queryKey: ['subscription-usage'] });

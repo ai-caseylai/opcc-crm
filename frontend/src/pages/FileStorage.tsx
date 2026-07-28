@@ -552,7 +552,7 @@ export default function FileStorage() {
 
   const directionMut = useMutation({
     mutationFn: ({ id, direction }: { id: string; direction: string }) =>
-      api(`/file-storage/${id}/direction`, { method: 'PATCH', body: JSON.stringify({ direction }) }),
+      api(`/file-storage/${id}/direction`, { method: 'PATCH', body: { direction } }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['file-storage'] }),
   });
 

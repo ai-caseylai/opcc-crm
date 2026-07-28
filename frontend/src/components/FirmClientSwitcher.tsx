@@ -2,14 +2,12 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Building2, ChevronDown, Plus, Search } from 'lucide-react';
-import { useQueryClient } from '@tanstack/react-query';
 import { tr } from '../lib/i18nHelpers';
 
 export default function CompanySwitcher() {
   const { user, isFirmUser, firmClients, activeClient, switchClient } = useAuth();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
-  const queryClient = useQueryClient();
   const navigate = useNavigate();
 
   // Show for firm users and for accountant/supervisor roles
@@ -17,26 +15,34 @@ export default function CompanySwitcher() {
 
   if (!showCompanySelector) return null;
 
-  // For non-firm users, show their own company
-  const ownCompany = !isFirmUser && user?.company_name ? { id: user.id, display_name: user.company_name, company_name: user.company_name, email: user.email, user_name: user.name } : null;
-  const clients = isFirmUser ? (firmClients || []) : (ownCompany ? [ownCompany] : []);
+  // Include own company + sub-accounts for managers, firm clients for firm users
+  const isManager = ['admin', 'supervisor', 'accountant'].includes(user?.role || '');
+  const ownCompany = user?.company_name ? { id: user.id, display_name: user.company_name, company_name: user.company_name, email: user.email, user_name: user.name } : null;
+  const clients = isFirmUser ? (firmClients || []) : (isManager ? (firmClients || []) : (ownCompany ? [ownCompany] : []));
+  // Prepend own company for managers so they can always access their own data
+  const allClients = (isManager && ownCompany && !clients.some(c => c.id === ownCompany.id))
+    ? [ownCompany, ...clients] : clients;
   const filtered = search.trim()
-    ? clients.filter(c =>
+    ? allClients.filter(c =>
         (c.display_name || c.company_name || '').toLowerCase().includes(search.toLowerCase()) ||
         (c.email || '').toLowerCase().includes(search.toLowerCase()))
-    : clients;
+    : allClients;
 
-  const displayName = activeClient?.display_name || activeClient?.company_name || ownCompany?.company_name || tr('Select company', '選擇公司', '选择公司');
+  const displayName = activeClient?.display_name || activeClient?.company_name || ownCompany?.display_name || tr('Select company', '選擇公司', '选择公司');
 
   const handleSwitch = (client: { id: string } | null) => {
     setOpen(false);
     setSearch('');
-    if (client && isFirmUser) {
+    // Selecting own company = clear client (use own data, no X-Active-Client header)
+    if (client && client.id === user?.id) {
+      switchClient(null);
+    } else if (client && (isFirmUser || isManager)) {
       switchClient(client.id);
     } else {
       switchClient(null);
     }
-    queryClient.invalidateQueries();
+    // Reload to ensure clean slate for new client context
+    window.location.reload();
   };
 
   const canCreateClient = ['admin', 'supervisor', 'accountant'].includes(user?.role || '');
@@ -79,7 +85,7 @@ export default function CompanySwitcher() {
         <>
           <div className="fixed inset-0 z-40" onClick={() => { setOpen(false); setSearch(''); }} />
           <div className="absolute left-3 right-3 top-full mt-1 z-50 bg-card border rounded-lg shadow-lg max-h-96 overflow-hidden flex flex-col">
-            {isFirmUser && clients.length > 0 && (
+            {isFirmUser && allClients.length > 0 && (
               <div className="p-2 border-b">
                 <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-muted/50">
                   <Search className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />

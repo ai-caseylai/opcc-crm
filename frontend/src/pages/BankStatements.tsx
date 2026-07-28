@@ -101,7 +101,7 @@ export default function BankStatements() {
     mutationFn: ({ txId, invoiceId }: { txId: string; invoiceId: string }) =>
       api(`/bank-statements/transactions/${txId}/match`, {
         method: 'PATCH',
-        body: JSON.stringify({ invoice_id: invoiceId, action: 'confirm' }),
+        body: { invoice_id: invoiceId, action: 'confirm' },
       }),
     onSuccess: async (_data: any, variables: { txId: string; invoiceId: string }) => {
       queryClient.invalidateQueries({ queryKey: ['bank-statement', expandedId] });
@@ -117,7 +117,7 @@ export default function BankStatements() {
     mutationFn: (txId: string) =>
       api(`/bank-statements/transactions/${txId}/match`, {
         method: 'PATCH',
-        body: JSON.stringify({ action: 'unlink' }),
+        body: { action: 'unlink' },
       }),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['bank-statement', expandedId] }); },
   });

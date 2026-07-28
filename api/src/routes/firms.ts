@@ -7,10 +7,22 @@ import { authMiddleware } from '../middleware/auth';
 const firms = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 firms.use('*', authMiddleware);
 
-// GET /api/firms/my — current user's firm info + all accessible clients
+// GET /api/firms/my — current user's firm info + all accessible clients (or standalone sub-accounts)
 firms.get('/my', async (c) => {
   const user = c.get('user');
-  if (!user.firm_id) return c.json({ error: 'Not a firm member' }, 404);
+
+  // Standalone supervisor/accountant/admin — return sub-accounts linked via parent_user_id
+  if (!user.firm_id) {
+    if (['admin', 'supervisor', 'accountant'].includes(user.role)) {
+      const clients = await c.env.DB.prepare(
+        `SELECT id, id as client_user_id, company_name as display_name, status, company_name, name as user_name, email
+         FROM users WHERE parent_user_id = ? AND status = 'active'
+         ORDER BY created_at DESC`
+      ).bind(user.id).all();
+      return c.json({ firm: null, clients: clients.results, my_role: user.role });
+    }
+    return c.json({ error: 'Not a firm member' }, 404);
+  }
 
   const firm = await c.env.DB.prepare(
     'SELECT id, name, owner_user_id, created_at FROM firms WHERE id = ?'
@@ -19,11 +31,16 @@ firms.get('/my', async (c) => {
 
   let clients;
   if (user.firm_role === 'admin') {
+    // Firm clients + sub-accounts linked via parent_user_id
     clients = await c.env.DB.prepare(
       `SELECT fc.id, fc.client_user_id, fc.display_name, fc.status, u.company_name, u.name as user_name, u.email
        FROM firm_clients fc JOIN users u ON u.id = fc.client_user_id
-       WHERE fc.firm_id = ? ORDER BY fc.created_at DESC`
-    ).bind(user.firm_id).all();
+       WHERE fc.firm_id = ?
+       UNION ALL
+       SELECT u2.id, u2.id as client_user_id, u2.company_name as display_name, u2.status, u2.company_name, u2.name as user_name, u2.email
+       FROM users u2 WHERE u2.parent_user_id = ? AND u2.status = 'active'
+       ORDER BY display_name`
+    ).bind(user.firm_id, user.id).all();
   } else {
     clients = await c.env.DB.prepare(
       `SELECT fc.id, fc.client_user_id, fc.display_name, fc.status, u.company_name, u.name as user_name, u.email
@@ -42,13 +59,29 @@ firms.get('/my', async (c) => {
 // GET /api/firms/my-clients — list of accessible client IDs (lightweight)
 firms.get('/my-clients', async (c) => {
   const user = c.get('user');
-  if (!user.firm_id) return c.json({ data: [] });
+
+  // Standalone supervisor/accountant/admin — show sub-accounts linked via parent_user_id
+  if (!user.firm_id) {
+    if (['admin', 'supervisor', 'accountant'].includes(user.role)) {
+      const rows = await c.env.DB.prepare(
+        `SELECT id, id as client_user_id, company_name as display_name, status
+         FROM users WHERE parent_user_id = ? AND status = 'active'
+         ORDER BY created_at DESC`
+      ).bind(user.id).all();
+      return c.json({ data: rows.results });
+    }
+    return c.json({ data: [] });
+  }
 
   let rows;
   if (user.firm_role === 'admin') {
+    // Firm clients + sub-accounts linked via parent_user_id
     rows = await c.env.DB.prepare(
-      'SELECT id, client_user_id, display_name, status FROM firm_clients WHERE firm_id = ? AND status = ? ORDER BY created_at DESC'
-    ).bind(user.firm_id, 'active').all();
+      `SELECT id, client_user_id, display_name, status FROM firm_clients WHERE firm_id = ? AND status = ?
+       UNION ALL
+       SELECT id, id as client_user_id, company_name as display_name, status FROM users WHERE parent_user_id = ? AND status = ?
+       ORDER BY display_name`
+    ).bind(user.firm_id, 'active', user.id, 'active').all();
   } else {
     rows = await c.env.DB.prepare(
       `SELECT fc.id, fc.client_user_id, fc.display_name, fc.status
@@ -205,11 +238,12 @@ firms.get('/:id/clients', async (c) => {
   return c.json({ data: rows.results });
 });
 
-// POST /api/firms/my/clients — add client for current firm user
+// POST /api/firms/my/clients — add client for current firm user (or standalone supervisor/accountant)
 firms.post('/my/clients', async (c) => {
   const user = c.get('user');
-  if (!user.firm_id || user.firm_role !== 'admin') {
-    return c.json({ error: 'Access denied. Firm admin only.' }, 403);
+  const canManage = user.firm_role === 'admin' || ['admin', 'supervisor', 'accountant'].includes(user.role);
+  if (!canManage) {
+    return c.json({ error: 'Access denied. Requires admin, supervisor, or accountant role.' }, 403);
   }
   const body = await c.req.json();
   const { company_name, email, display_name, contact_name, initial_password, permission_tier, industry, fy_start, fy_end } = body as any;
@@ -220,26 +254,33 @@ firms.post('/my/clients', async (c) => {
   const passwordHash = await hash(pw, 10);
   const name = contact_name || company_name;
 
+  // Link to parent (firm admin or standalone supervisor)
+  const parentUserId = user.firm_id ? user.id : user.id;
+  const isFirmContext = !!user.firm_id;
+
   await c.env.DB.prepare(
-    `INSERT INTO users (id, email, password_hash, name, company_name, role, permission_tier)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
-  ).bind(clientUserId, email, passwordHash, name, company_name, 'supervisor', permission_tier || 'higher').run();
+    `INSERT INTO users (id, email, password_hash, name, company_name, role, permission_tier, parent_user_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(clientUserId, email, passwordHash, name, company_name, 'supervisor', permission_tier || 'higher', isFirmContext ? null : parentUserId).run();
 
   await c.env.DB.prepare(
     `INSERT INTO company_settings (user_id, name, legal_name, industry, fiscal_year_start, fiscal_year_end)
      VALUES (?, ?, ?, ?, ?, ?)`
   ).bind(clientUserId, company_name, company_name, industry || 'general', fy_start || null, fy_end || null).run();
 
-  const firmClientId = `fc-${uuidv4().slice(0, 8)}`;
-  await c.env.DB.prepare(
-    'INSERT INTO firm_clients (id, firm_id, client_user_id, display_name) VALUES (?, ?, ?, ?)'
-  ).bind(firmClientId, user.firm_id, clientUserId, display_name || null).run();
+  let firmClientId: string | null = null;
+  if (isFirmContext && user.firm_id) {
+    firmClientId = `fc-${uuidv4().slice(0, 8)}`;
+    await c.env.DB.prepare(
+      'INSERT INTO firm_clients (id, firm_id, client_user_id, display_name) VALUES (?, ?, ?, ?)'
+    ).bind(firmClientId, user.firm_id, clientUserId, display_name || company_name).run();
+  }
 
-  // Seed compliance + COA (same as /:id/clients)
+  // Seed compliance + COA
   await seedClientData(c, clientUserId, user.id);
 
   return c.json({
-    id: firmClientId, client_user_id: clientUserId, user_id: clientUserId,
+    id: firmClientId || clientUserId, client_user_id: clientUserId, user_id: clientUserId,
     company_name, email, password: pw, display_name: display_name || null,
   }, 201);
 });
@@ -247,7 +288,9 @@ firms.post('/my/clients', async (c) => {
 // POST /api/firms/:id/clients — add client (creates user + company_settings + firm_clients)
 firms.post('/:id/clients', async (c) => {
   const user = c.get('user');
-  if (!user.firm_id || user.firm_id !== c.req.param('id') || user.firm_role !== 'admin') {
+  const isFirmAdmin = user.firm_id && user.firm_id === c.req.param('id') && user.firm_role === 'admin';
+  const isSystemManager = ['admin', 'supervisor', 'accountant'].includes(user.role);
+  if (!isFirmAdmin && !isSystemManager) {
     return c.json({ error: 'Access denied' }, 403);
   }
   const body = await c.req.json();
@@ -283,24 +326,57 @@ firms.post('/:id/clients', async (c) => {
 });
 
 async function seedClientData(c: any, clientUserId: string, adminUserId: string) {
+  // Seed compliance templates — try batch, fall back to sequential
   const templates = await c.env.DB.prepare('SELECT id FROM compliance_templates WHERE is_required = 1').all();
-  for (const t of templates.results as any[]) {
-    await c.env.DB.prepare(
-      'INSERT OR IGNORE INTO member_compliance (id, user_id, template_id, status) VALUES (?, ?, ?, ?)'
-    ).bind(`mc-${uuidv4().slice(0, 8)}`, clientUserId, t.id, 'pending').run();
+  if (templates.results.length > 0) {
+    try {
+      const stmts = (templates.results as any[]).map((t: any) =>
+        c.env.DB.prepare(
+          'INSERT OR IGNORE INTO member_compliance (id, user_id, template_id, status) VALUES (?, ?, ?, ?)'
+        ).bind(`mc-${uuidv4().slice(0, 8)}`, clientUserId, t.id, 'pending')
+      );
+      if (typeof c.env.DB.batch === 'function') {
+        await c.env.DB.batch(stmts);
+      } else {
+        for (const s of stmts) await s.run();
+      }
+    } catch {
+      // Fall back to sequential if batch fails
+      for (const t of templates.results as any[]) {
+        await c.env.DB.prepare(
+          'INSERT OR IGNORE INTO member_compliance (id, user_id, template_id, status) VALUES (?, ?, ?, ?)'
+        ).bind(`mc-${uuidv4().slice(0, 8)}`, clientUserId, t.id, 'pending').run();
+      }
+    }
   }
+
+  // Seed COA accounts — try batch, fall back to sequential
   const canonicalAccounts = await c.env.DB.prepare(
     "SELECT account_code, account_name, account_type, parent_code, opening_balance FROM accounts WHERE user_id = 'u-hayson'"
   ).all();
-  const sourceAccounts = canonicalAccounts.results.length > 0 ? canonicalAccounts.results
+  const sourceAccounts: any[] = canonicalAccounts.results.length > 0 ? canonicalAccounts.results
     : (await c.env.DB.prepare(
       'SELECT account_code, account_name, account_type, parent_code, opening_balance FROM accounts WHERE user_id = ?'
     ).bind(adminUserId).all()).results;
+
   if (sourceAccounts.length > 0) {
-    for (const a of sourceAccounts as any[]) {
-      await c.env.DB.prepare(
+    const inserts = sourceAccounts.map((a: any) =>
+      c.env.DB.prepare(
         'INSERT OR IGNORE INTO accounts (id, user_id, account_code, account_name, account_type, parent_code, opening_balance) VALUES (?, ?, ?, ?, ?, ?, ?)'
-      ).bind(`acc-${uuidv4().slice(0, 8)}`, clientUserId, a.account_code, a.account_name, a.account_type, a.parent_code || null, a.opening_balance || 0).run();
+      ).bind(`acc-${uuidv4().slice(0, 8)}`, clientUserId, a.account_code, a.account_name, a.account_type, a.parent_code || null, a.opening_balance || 0)
+    );
+    try {
+      if (typeof c.env.DB.batch === 'function') {
+        const CHUNK = 100;
+        for (let i = 0; i < inserts.length; i += CHUNK) {
+          await c.env.DB.batch(inserts.slice(i, i + CHUNK));
+        }
+      } else {
+        for (const s of inserts) await s.run();
+      }
+    } catch {
+      // Fall back to sequential
+      for (const s of inserts) await s.run();
     }
   }
 }

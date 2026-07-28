@@ -54,7 +54,14 @@ import StubPage from './pages/StubPage';
 import ChartOfAccounts from './pages/ChartOfAccounts';
 import NewClient from './pages/NewClient';
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30_000, // 30s — prevent refetch cascade during navigation
+      retry: 1,
+    },
+  },
+});
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -159,7 +166,7 @@ function AppRoutes() {
       <Route path="/firm/manage" element={<ProtectedRoute><FirmManagement /></ProtectedRoute>} />
       {/* P1 Stub Pages */}
       <Route path="/new-client" element={<ProtectedRoute><NewClient /></ProtectedRoute>} />
-      <Route path="/file-upload" element={<ProtectedRoute><FileStorage /></ProtectedRoute>} />
+      <Route path="/file-upload" element={<ProtectedRoute><FileUpload /></ProtectedRoute>} />
       <Route path="/entries" element={<ProtectedRoute><Bookkeeping hideTabs initialTab="entries" /></ProtectedRoute>} />
       <Route path="/income-statement" element={<ProtectedRoute><Bookkeeping hideTabs initialTab="pl" /></ProtectedRoute>} />
       <Route path="/trial-balance" element={<ProtectedRoute><Bookkeeping hideTabs initialTab="trial" /></ProtectedRoute>} />

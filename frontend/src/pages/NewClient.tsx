@@ -2,11 +2,13 @@ import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { useNavigate, Link } from 'react-router-dom';
 import { api } from '../lib/api';
-import { UserPlus, ArrowLeft, Copy, Check, AlertCircle } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
+import { UserPlus, ArrowLeft, Copy, Check, AlertCircle, ExternalLink } from 'lucide-react';
 import { tr } from '../lib/i18nHelpers';
 
 export default function NewClient() {
   const nav = useNavigate();
+  const { switchClient, refreshClients } = useAuth();
   const [form, setForm] = useState({
     company_name: '',
     contact_email: '',
@@ -17,13 +19,13 @@ export default function NewClient() {
     fy_start: '2026-04-01',
     fy_end: '2027-03-31',
   });
-  const [result, setResult] = useState<{ user_id: string; email: string; password: string } | null>(null);
+  const [result, setResult] = useState<{ user_id: string; email: string; password: string; clientId: string } | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
 
   const createMut = useMutation({
     mutationFn: () => api('/firms/my/clients', {
       method: 'POST',
-      body: JSON.stringify({
+      body: {
         company_name: form.company_name,
         email: form.contact_email,
         contact_name: form.contact_name || undefined,
@@ -32,14 +34,16 @@ export default function NewClient() {
         industry: form.industry || undefined,
         fy_start: form.fy_start || undefined,
         fy_end: form.fy_end || undefined,
-      }),
+      },
     }) as Promise<{ user_id: string; client_user_id?: string; id: string; password?: string; success: boolean }>,
     onSuccess: (res: any) => {
       setResult({
         user_id: res.user_id || res.client_user_id,
         email: form.contact_email,
         password: res.password || form.initial_password,
+        clientId: res.id,
       });
+      refreshClients(); // Refresh dropdown immediately
     },
     onError: (err: any) => {
       alert(`Could not create client: ${err?.error || err?.message || 'unknown error'}`);
@@ -83,12 +87,17 @@ export default function NewClient() {
             <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
             <span>{tr('Store this password safely. Advise the client to change it after first login.', '請安全保存此密碼。建議客戶在首次登入後更改。', '请安全保存此密码。建议客户在首次登入后更改。')}</span>
           </div>
-          <div className="mt-4 flex gap-2">
+          <div className="mt-4 flex gap-2 flex-wrap">
+            <button onClick={() => { switchClient(result.clientId); nav('/'); }}
+              className="px-4 py-2 bg-primary text-primary-foreground rounded text-sm font-medium flex items-center gap-1">
+              <ExternalLink className="h-4 w-4" />
+              {tr('View Client Dashboard', '查看客戶儀表板', '查看客户仪表板')}
+            </button>
             <button onClick={() => { setResult(null); setForm({ company_name: '', contact_email: '', contact_name: '', initial_password: '', permission_tier: 'higher', industry: '', fy_start: '2026-04-01', fy_end: '2027-03-31' }); }}
               className="px-4 py-2 border rounded text-sm">
               {tr('Add another client', '新增其他客戶', '新增其他客户')}
             </button>
-            <button onClick={() => nav('/')} className="px-4 py-2 bg-primary text-primary-foreground rounded text-sm font-medium">
+            <button onClick={() => nav('/')} className="px-4 py-2 border rounded text-sm">
               {tr('Back to Dashboard', '返回儀表板', '返回仪表板')}
             </button>
           </div>

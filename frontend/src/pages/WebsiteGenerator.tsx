@@ -55,7 +55,7 @@ export default function WebsiteGenerator() {
   const genWebsite = useMutation({
     mutationFn: () => api('/company/website', {
       method: 'POST',
-      body: JSON.stringify({ customPrompt: promptText }),
+      body: { customPrompt: promptText },
       headers: { 'Content-Type': 'application/json' },
     }),
     onSuccess: (data: any) => {

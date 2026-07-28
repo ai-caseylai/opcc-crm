@@ -85,7 +85,7 @@ export default function Compliance() {
 
   const updateStatus = useMutation({
     mutationFn: ({ id, status }: { id: string; status: string }) =>
-      api(`/compliance/${id}`, { method: 'PUT', body: JSON.stringify({ status }) }),
+      api(`/compliance/${id}`, { method: 'PUT', body: { status } }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['compliance'] }),
   });
 
