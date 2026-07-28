@@ -158,3 +158,34 @@ npx wrangler secret put JWT_SECRET
 | Admin | `memonruhan731@gmail.com` / `Hamdan123` |
 | Supervisor (Demo) | `muhammadruhan.farhan25@nixorcollege.edu.pk` / `password` |
 | Joseph Lin (PnR) | `joseph.lin@pnr.hk` / `TCS9M6Q721!` |
+
+## Recent Changes (2026-07-28)
+
+### Card Statements Feature
+- New `card_statements` + `card_transactions` tables in D1
+- Full CRUD API at `/api/card-statements`
+- OCR detection: `cardScore` auto-detects credit card statements
+- DeepSeek AI parses card statements → draft with transactions
+- `CardStatements.tsx`: list page with ContinuityChain, PendingReviewBanner, Eye/Pencil/Trash icons
+- `CardStatementReview.tsx`: split-screen PDF review with editable transactions
+- Import via File Upload → `import-document` → redirect to review
+
+### Balance Check Audit
+- `balance_status` + `balance_check` columns on `bank_statements` & `card_statements`
+- Values: `ok` | `mismatch` | `corrected`
+- ⚠/✏ badges on statement cards in both Bank & Card pages
+- `is_edited` column on `bank_transactions` & `card_transactions`
+- ✏ indicator on edited transaction rows
+
+### Shared ContinuityChain Component
+- `frontend/src/components/ContinuityChain.tsx` — shared by Bank & Card pages
+- Groups by account/card number, color-coded gaps/overlaps/duplicates/balance mismatches
+- `staleTime: 0` — always fetches fresh from API
+- Drafts excluded from continuity queries
+
+### Bug Fixes
+- FileUpload: proper OCR pipeline (upload → import-document → navigate)
+- Double `JSON.stringify` fixed in 6 pages
+- File Storage upload zone removed (upload stays on File Upload page)
+- Standalone supervisor client creation & viewing
+- PendingReviewBanner: Shek's monochrome styling merged
