@@ -133,7 +133,8 @@ bank.get('/', async (c) => {
   const onlyDrafts = c.req.query('only_drafts') === '1';
   let q = `SELECT id, file_name, bank_name, account_number, branch, currency, account_type,
            statement_year, statement_month, period_start, period_end,
-           opening_balance, closing_balance, page_count, ocr_text, status, created_at
+           opening_balance, closing_balance, page_count, ocr_text, status,
+           balance_status, balance_check, created_at
            FROM bank_statements WHERE user_id = ? AND deleted_at IS NULL`;
   const p: any[] = [tenantId];
   if (onlyDrafts) {
@@ -319,7 +320,7 @@ bank.patch('/transactions/:id', async (c) => {
   if (sets.length === 0) return c.json({ error: 'No valid fields' }, 400);
 
   params.push(txId, tenantId);
-  await db.prepare(`UPDATE bank_transactions SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`)
+  await db.prepare(`UPDATE bank_transactions SET ${sets.join(', ')}, is_edited = 1 WHERE id = ? AND user_id = ?`)
     .bind(...params).run();
 
   await auditLog(db, user.id, 'update', 'bank_transaction', txId, body);
@@ -562,7 +563,8 @@ bank.get('/:id', async (c) => {
   const stmt = await c.env.DB.prepare(
     `SELECT id, file_name, bank_name, account_number, branch, currency, account_type,
      statement_year, statement_month, period_start, period_end,
-     opening_balance, closing_balance, page_count, ocr_text, status, created_at
+     opening_balance, closing_balance, page_count, ocr_text, status,
+     balance_status, balance_check, created_at
      FROM bank_statements WHERE id = ? AND user_id = ?`
   ).bind(c.req.param('id'), tenantId).first();
   if (!stmt) return c.json({ error: 'Not found' }, 404);
@@ -570,7 +572,7 @@ bank.get('/:id', async (c) => {
   const txs = await c.env.DB.prepare(
     `SELECT bt.id, bt.transaction_date, bt.description, bt.deposit_amount, bt.withdrawal_amount,
      bt.balance, bt.account_type, bt.account_code, bt.reference, bt.sort_order,
-     bt.invoice_id, bt.match_confidence, bt.match_status,
+     bt.invoice_id, bt.match_confidence, bt.match_status, bt.is_edited,
      i.invoice_number, i.total as invoice_total, i.status as invoice_status
      FROM bank_transactions bt
      LEFT JOIN invoices i ON bt.invoice_id = i.id

@@ -3,7 +3,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { tr } from '../lib/i18nHelpers';
-import { CreditCard, FileText, Download, Trash2, AlertTriangle, CheckCircle, ChevronDown, ChevronRight, Calendar, Building2 } from 'lucide-react';
+import { Eye, Trash2, AlertTriangle, CheckCircle, ChevronDown, ChevronRight, Pencil, FileText, CreditCard, Building2, Download } from 'lucide-react';
+import ContinuityChain from '../components/ContinuityChain';
 
 interface CardTransaction {
   id: string;
@@ -19,6 +20,7 @@ interface CardTransaction {
   sort_order: number;
   expense_account_code: string | null;
   match_status: string;
+  is_edited?: number;
 }
 
 interface CardStatement {
@@ -144,8 +146,8 @@ export default function CardStatements() {
         </div>
       )}
 
-      {/* Continuity chain summary */}
-      <ContinuityChain />
+      {/* Continuity chain */}
+      <ContinuityChain endpoint="/card-statements/continuity" queryKey="card-continuity" type="card" />
 
       {/* Statement list */}
       {statements.length === 0 ? (
@@ -183,22 +185,18 @@ export default function CardStatements() {
                     {s.status === 'draft' && (
                       <span className="text-xs text-amber-600 font-medium">Draft</span>
                     )}
-                    {s.balance_status === 'mismatch' && (
-                      <span className="text-xs text-red-600 font-medium flex items-center gap-1" title={s.balance_check ? (() => { try { const c = JSON.parse(s.balance_check); return `Expected: ${c.expected?.toLocaleString?.()}, Actual: ${c.actual?.toLocaleString?.()}, Diff: ${c.diff?.toLocaleString?.()}`; } catch { return ''; } })() : ''}>
-                        ⚠ Mismatch
-                      </span>
-                    )}
-                    {s.balance_status === 'corrected' && (
-                      <span className="text-xs text-blue-600 font-medium flex items-center gap-1" title={tr('AI data was corrected manually', 'AI 數據已被手動修正', 'AI 数据已被手动修正')}>
-                        ✏ Corrected
-                      </span>
-                    )}
                   </div>
                   <div className="flex gap-1" onClick={e => e.stopPropagation()}>
+                    {s.balance_status === 'mismatch' && (
+                      <span className="text-xs text-red-600 font-medium" title={s.balance_check ? (() => { try { const c = JSON.parse(s.balance_check); return `Expected: $${c.expected?.toLocaleString?.()}, Actual: $${c.actual?.toLocaleString?.()}`; } catch { return ''; } })() : ''}>⚠</span>
+                    )}
+                    {s.balance_status === 'corrected' && (
+                      <span className="text-xs text-blue-600 font-medium" title={tr('Manually corrected', '已手動修正', '已手动修正')}>✏</span>
+                    )}
                     {s.file_name && (
                       <a href={`/api/card-statements/${s.id}/file`} target="_blank" rel="noreferrer"
                         className="p-1.5 rounded hover:bg-muted text-muted-foreground" title={tr('View original', '查看原文件', '查看原文件')}>
-                        <FileText className="h-4 w-4" />
+                        <Eye className="h-4 w-4" />
                       </a>
                     )}
                     <button onClick={() => { if (confirm(tr('Delete this statement?', '刪除此月結單？', '删除此月结单？'))) deleteMut.mutate(s.id); }}
@@ -252,10 +250,10 @@ export default function CardStatements() {
                           </thead>
                           <tbody>
                             {txs.map((tx) => (
-                              <tr key={tx.id} className={`border-b border-muted/30 ${tx.match_status === 'categorized' ? 'bg-green-50 dark:bg-green-950/20' : ''}`}>
+                              <tr key={tx.id} className={`border-b border-muted/30 ${tx.match_status === 'categorized' ? 'bg-green-50 dark:bg-green-950/20' : ''} ${tx.is_edited ? 'bg-blue-50 dark:bg-blue-950/20' : ''}`}>
                                 <td className="py-1 pr-2 whitespace-nowrap">{tx.transaction_date}</td>
                                 <td className="py-1 pr-2 max-w-[200px] truncate">{tx.description}</td>
-                                <td className="py-1 pr-2 text-right font-mono">${fmt(tx.amount)}</td>
+                                <td className="py-1 pr-2 text-right font-mono relative">${fmt(tx.amount)}{tx.is_edited ? <span className="text-blue-500 ml-1" title={tr('Manually edited', '已手動修改', '已手动修改')}>✏</span> : ''}</td>
                                 <td className="py-1 pr-2">
                                   {tx.transaction_type && (
                                     <span className="px-1 py-0.5 rounded text-[10px] bg-muted">{tx.transaction_type}</span>
@@ -280,49 +278,6 @@ export default function CardStatements() {
               </div>
             );
           })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ContinuityChain() {
-  const { data } = useQuery({
-    queryKey: ['card-continuity'],
-    queryFn: () => api('/card-statements/continuity'),
-  });
-  const groups: any[] = (data as any)?.groups || [];
-  if (groups.length === 0) return null;
-
-  const hasIssues = groups.some((g: any) => g.status !== 'complete');
-
-  return (
-    <div className={`rounded-lg border p-3 mb-3 ${hasIssues ? 'border-red-300 bg-red-50 dark:bg-red-950/20' : 'border-green-300 bg-green-50 dark:bg-green-950/20'}`}>
-      <div className="flex items-center gap-2 text-sm font-medium">
-        {hasIssues ? <AlertTriangle className="h-4 w-4 text-red-500" /> : <CheckCircle className="h-4 w-4 text-green-500" />}
-        {tr('Card Continuity', '信用卡連續性', '信用卡连续性')}
-        {!hasIssues && <span className="text-xs text-green-700 ml-1">— {tr('All chains complete', '全部連續', '全部连续')}</span>}
-      </div>
-      <div className="flex flex-wrap gap-2 mt-2">
-        {groups.map((g: any) => (
-          <div key={g.card_number || g.card_issuer} className="flex items-center gap-1 text-xs">
-            <CreditCard className="h-3 w-3 text-muted-foreground" />
-            <span className="font-medium">{g.card_issuer} {g.card_network}</span>
-            <span className="text-muted-foreground">••••{g.card_number}</span>
-            <span className="text-muted-foreground">({g.statement_count})</span>
-            {g.chain?.map((link: any) => {
-              const issues: string[] = link.issues || [];
-              const icon = issues.includes('gap') ? '🔴' : issues.includes('balance_mismatch') ? '🟡'
-                : issues.includes('duplicate') ? '🟣' : issues.includes('overlap') || issues.includes('date_overlap') ? '🟠'
-                : issues.includes('matched') || issues.includes('first') ? '🟢' : '⚪';
-              return <span key={link.id} title={`${link.statement_year}-${String(link.statement_month).padStart(2,'0')}: ${issues.join(',')}`}>{icon}</span>;
-            })}
-          </div>
-        ))}
-      </div>
-      {hasIssues && (
-        <div className="flex flex-wrap gap-2 mt-2 text-[10px] text-muted-foreground">
-          <span>🟢 OK</span><span>🔴 Gap</span><span>🟡 Mismatch</span><span>🟠 Overlap</span><span>🟣 Duplicate</span>
         </div>
       )}
     </div>

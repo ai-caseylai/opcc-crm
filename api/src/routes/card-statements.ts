@@ -351,7 +351,7 @@ card.patch('/transactions/:id', async (c) => {
   if (sets.length === 0) return c.json({ error: 'No valid fields' }, 400);
   params.push(id, tenantId);
   await c.env.DB.prepare(
-    `UPDATE card_transactions SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`
+    `UPDATE card_transactions SET ${sets.join(', ')}, is_edited = 1 WHERE id = ? AND user_id = ?`
   ).bind(...params).run();
   return c.json({ success: true });
 });
@@ -444,7 +444,7 @@ card.get('/:id', async (c) => {
     `SELECT id, file_name, card_issuer, card_network, card_number_last4, cardholder_name, currency,
             statement_year, statement_month, period_start, period_end,
             credit_limit, opening_balance, closing_balance, minimum_payment, payment_due_date,
-            ocr_text, status, created_at
+            ocr_text, status, balance_status, balance_check, created_at
      FROM card_statements WHERE id = ? AND user_id = ? AND deleted_at IS NULL`
   ).bind(id, tenantId).first();
   if (!stmt) return c.json({ error: 'Not found' }, 404);
@@ -452,7 +452,7 @@ card.get('/:id', async (c) => {
   const tx = await c.env.DB.prepare(
     `SELECT id, transaction_date, posting_date, description, amount, transaction_type,
             foreign_currency, foreign_amount, category, reference, sort_order,
-            expense_account_code, match_status
+            expense_account_code, match_status, is_edited
      FROM card_transactions WHERE card_statement_id = ? AND deleted_at IS NULL ORDER BY sort_order`
   ).bind(id).all();
   return c.json({ ...stmt, transactions: tx.results });
