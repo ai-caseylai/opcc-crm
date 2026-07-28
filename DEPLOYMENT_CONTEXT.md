@@ -1,0 +1,160 @@
+# Deployment Context — TeCS (OPCC CRM)
+
+> Saved: 2026-07-27 | Updated: 2026-07-28
+
+## URLs — Testing vs Production
+
+### 🧪 Testing (our dev work)
+
+| Component | URL | Status |
+|-----------|-----|--------|
+| **Testing Frontend** | `https://opcc-crm-testing.pages.dev` | ✅ |
+| **Testing Preview** | `https://5b91e3b6.opcc-crm-testing.pages.dev` | ✅ Latest (2026-07-28) |
+| **API Worker** (shared) | `https://opcc-crm-api.ruhan-farhan.workers.dev` | ✅ v9a79d71 |
+
+> ⚠️ **Testing and Production share the same API Worker and D1 database.** Be careful with data changes.
+
+### 🚀 Production (client-facing — DO NOT TOUCH)
+
+| Component | URL |
+|-----------|-----|
+| **Custom Domain** | `https://sme.techforliving.net` |
+| **Pages Production** | `https://opcc-crm.pages.dev` |
+| **API Worker** | `https://opcc-crm-api.ruhan-farhan.workers.dev` |
+
+### How to Deploy
+
+```bash
+# ── Testing (safe, our workspace) ──
+
+# API Worker (shared with production — be careful):
+cd api && CLOUDFLARE_ACCOUNT_ID=8c00cc4647a9cf5d8deb5d6a354001e0 npx wrangler deploy
+
+# Frontend to Testing:
+cd frontend && npm run build
+CLOUDFLARE_ACCOUNT_ID=8c00cc4647a9cf5d8deb5d6a354001e0 npx wrangler pages deploy dist --project-name=opcc-crm-testing --branch=main --commit-dirty=true
+
+# ── Production (client-facing — only when approved) ──
+
+# Frontend to Production:
+cd frontend && npm run build
+CLOUDFLARE_ACCOUNT_ID=8c00cc4647a9cf5d8deb5d6a354001e0 npx wrangler pages deploy dist --project-name=opcc-crm --branch=production --commit-dirty=true
+```
+
+### Important: Production URL
+
+The production frontend URL is **NOT** `main.opcc-crm.pages.dev`. The correct URLs are:
+- **Production**: `https://opcc-crm.pages.dev`
+- **Custom Domain**: `https://sme.techforliving.net`
+- **Each deploy gets a unique preview URL**: `https://<random>.opcc-crm.pages.dev` (e.g. `de75dd51`)
+
+The `main.opcc-crm.pages.dev` is just a branch alias, not the canonical production URL.
+
+### Login
+Currently logged in as `samuelleewinghong@hotmail.com` (member of Ruhan's account `8c00cc46...`).
+
+### Two Cloudflare Pages Projects
+
+| Project | URL | Purpose |
+|---------|-----|---------|
+| **opcc-crm-testing** | `opcc-crm-testing.pages.dev` | 🧪 Dev/testing — deploy here daily |
+| **opcc-crm** | `opcc-crm.pages.dev` + `sme.techforliving.net` | 🚀 Production — deploy only when approved |
+
+Both share the same Cloudflare account (`8c00cc4647a9cf5d8deb5d6a354001e0`), API Worker, and D1 database.
+
+### Resolved
+- ✅ **Ammar confirmed** — `samuelleewinghong@hotmail.com` is a member of `8c00cc4647a9cf5d8deb5d6a354001e0`
+- ✅ Login works: `npx wrangler login` → `samuelleewinghong@hotmail.com`
+- ✅ Deploy works directly on Ammar's account
+
+---
+
+## Test Deployment (Historical — `tryprograming@gmail.com`)
+
+⚠️ **This was on a SEPARATE Cloudflare account** with its own D1 database. The `opcc-crm-8fy` Pages project no longer exists. The supervisor demo account (`muhammadruhan.farhan25@nixorcollege.edu.pk`) does NOT exist here — only the seed admin works. **Use the production URLs above, not this one.**
+
+| Resource | URL / Value |
+|----------|-------------|
+| Frontend (Pages) | `https://d4c912c5.opcc-crm-8fy.pages.dev` (⚠️ stale/project deleted) |
+| API (Worker) | `https://opcc-crm-api.tryprograming.workers.dev` |
+| D1 Database | `opcc-crm-db` (ID: `10b873cc-74a2-4c8c-8f80-d659e6728b3c`) |
+| R2 Bucket | `opcc-crm-files` |
+| Admin Login | `admin@example.com` / `Admin123!` |
+
+### Files Modified for This Deployment
+
+- `api/wrangler.toml` — Created from `.example` with new account IDs
+- `frontend/src/lib/api.ts` — Updated `WORKER_API_BASE` to new worker URL
+- `frontend/functions/api/[[path]].ts` — Updated proxy target
+- `frontend/public/_redirects` — Updated API worker URL
+
+### Schema Issues Fixed
+
+- `schema.sql` is the base; `user-roles-migration.sql` adds `status`, `must_change_password`, `parent_user_id`, `permission_tier` columns
+- `migrate-once.sql` and `migrate-compliance.sql` failed (duplicate columns — already in schema.sql)
+- `coa-hk.sql` failed (FK constraint — depends on seed data ordering)
+
+---
+
+## LLM Model Keys (from code analysis)
+
+| Key | Provider | Endpoint | Used For |
+|-----|----------|----------|----------|
+| `DEEPSEEK_API_KEY` | DeepSeek | `api.deepseek.com/chat/completions` | Chat, OCR parsing, invoice extraction |
+| `GLM_API_KEY` | Z.AI (GLM) | `api.z.ai/api/paas/v4/layout_parsing` | Document OCR (bank statements, PDFs) |
+| `QWEN_API_KEY` | Alibaba DashScope | `dashscope-intl.aliyuncs.com` | Optional LLM fallback |
+
+Keys are stored as **Cloudflare Worker Secrets** — cannot be read back via CLI. Must get values from Ammar/Ruhan.
+
+---
+
+## Deployment Commands Reference
+
+### API Worker
+```bash
+cd api
+npm install
+npx wrangler deploy
+```
+
+### Frontend (Pages)
+```bash
+cd frontend
+npm install
+npm run build
+npx wrangler pages deploy dist --project-name=opcc-crm --branch=production --commit-dirty=true
+```
+
+### D1 Database
+```bash
+cd api
+npx wrangler d1 execute opcc-crm-db --remote --file=src/db/schema.sql
+npx wrangler d1 execute opcc-crm-db --remote --file=user-roles-migration.sql
+npx wrangler d1 execute opcc-crm-db --remote --file=src/db/seed.sql
+```
+
+### Secrets
+```bash
+npx wrangler secret put DEEPSEEK_API_KEY
+npx wrangler secret put GLM_API_KEY
+npx wrangler secret put JWT_SECRET
+```
+
+---
+
+## Key URLs from Original Setup
+
+| Item | URL |
+|------|-----|
+| Production | `https://sme.techforliving.net` |
+| Old API Worker | `https://opcc-crm-api.ruhan-farhan.workers.dev` |
+| Old API Worker (alt) | `https://oppc-crm-api.ai-caseylai.workers.dev` |
+| Old Pages | `https://opcc-crm.pages.dev` |
+| GitHub Repo | `https://github.com/techconnsme/development_code` |
+| LLM Gateway | `https://llm.techforliving.net` |
+
+## Original Accounts (from Handover Guide)
+
+| Admin | `memonruhan731@gmail.com` / `Hamdan123` |
+| Supervisor (Demo) | `muhammadruhan.farhan25@nixorcollege.edu.pk` / `password` |
+| Joseph Lin (PnR) | `joseph.lin@pnr.hk` / `TCS9M6Q721!` |
