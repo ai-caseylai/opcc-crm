@@ -329,8 +329,9 @@ export default function FileStorage() {
           if (result?.ocr_failed) {
             toast.warning('Could not automatically read this invoice. You will be taken to the review page to enter details manually.');
           }
-          // Navigate to Invoice Review page — same flow as bank statements
           navigate(`/invoices/review/${result.invoice_id}`);
+        } else if (docType === 'card_statement' && result?.statement_id) {
+          navigate(`/card-statements/review/${result.statement_id}`);
         } else if (result?.error) {
           toast.error(`Could not auto-process: ${result.error}`);
         }
@@ -801,36 +802,6 @@ export default function FileStorage() {
       <div>
         <h2 className="text-2xl font-bold">{t('fileStorage.title')}</h2>
         <p className="text-muted-foreground mt-1">{t('fileStorage.desc')}</p>
-      </div>
-
-      {/* Upload area */}
-      <div onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}
-        className={`bg-card border-2 border-dashed rounded-xl p-8 transition-colors ${dragOver ? 'border-primary bg-primary/5' : 'border-border'}`}>
-        <div className="flex flex-col items-center gap-4">
-          <div className={`rounded-full p-4 transition-colors ${dragOver ? 'bg-primary/10' : 'bg-muted'}`}>
-            <Upload className={`h-8 w-8 ${dragOver ? 'text-primary' : 'text-muted-foreground'}`} />
-          </div>
-          <div className="text-center">
-            <p className="font-medium">{dragOver ? t('fileStorage.dropHere') : t('fileStorage.dragDrop')}</p>
-            <p className="text-sm text-muted-foreground mt-1">{t('fileStorage.orClick')}</p>
-          </div>
-          <label className="cursor-pointer bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:opacity-90">
-            {uploading ? 'Uploading...' : t('fileStorage.upload')}
-            <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.gif,.webp,.csv,.txt,.ppt,.pptx,.zip" onChange={handleFileInput} className="hidden" multiple />
-          </label>
-        </div>
-        <div className="flex flex-wrap items-center gap-3 mt-4 pt-4 border-t">
-          <div>
-            <label className="text-xs text-muted-foreground">{t('fileStorage.folder')}</label>
-            <input value={folder} onChange={e => setFolder(e.target.value)} placeholder={t('fileStorage.folderPlaceholder')}
-              className="px-3 py-2 border rounded-md bg-background text-sm w-52" />
-          </div>
-          <div className="flex-1 min-w-[200px]">
-            <label className="text-xs text-muted-foreground">{t('fileStorage.description')}</label>
-            <input value={description} onChange={e => setDescription(e.target.value)} placeholder={t('fileStorage.description')}
-              className="px-3 py-2 border rounded-md bg-background text-sm w-full" />
-          </div>
-        </div>
       </div>
 
       {/* Search */}

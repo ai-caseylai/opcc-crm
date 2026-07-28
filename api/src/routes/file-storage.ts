@@ -1782,6 +1782,158 @@ files.post('/:id/glm-ocr', async (c) => {
   }
 });
 
+// ── Card Statement import: OCR + DeepSeek AI parsing ──
+async function importCardStatementFromFile(
+  fileId: string, userId: string, db: D1Database, fileBucket: R2Bucket, ai: any, deepseekKey: string, glmApiKey?: string,
+): Promise<{ success: boolean; statement_id?: string; error?: string; transactions_count?: number; ocr_failed?: boolean; duplicate_info?: any }> {
+  const fileRow = await db.prepare(
+    'SELECT id, r2_key, filename, original_name, file_type, ocr_text, ocr_status FROM file_records WHERE id = ? AND user_id = ?'
+  ).bind(fileId, userId).first<{ id: string; r2_key: string; filename: string; original_name: string; file_type: string; ocr_text: string; ocr_status: string }>();
+  if (!fileRow) return { success: false, error: 'File not found' };
+
+  // Duplicate check
+  const existing = await db.prepare(
+    'SELECT id, card_issuer, period_start, period_end, file_name FROM card_statements WHERE user_id = ? AND r2_key = ? AND deleted_at IS NULL'
+  ).bind(userId, fileRow.r2_key).first<{ id: string; card_issuer: string | null; period_start: string | null; period_end: string | null; file_name: string | null }>();
+  if (existing) return {
+    success: false, error: 'Statement already imported', statement_id: existing.id,
+    duplicate_info: { type: 'card_statement', bank_name: existing.card_issuer, period: existing.period_start && existing.period_end ? `${existing.period_start} – ${existing.period_end}` : null, file_name: existing.file_name },
+  };
+
+  // Get OCR text
+  let ocrText = fileRow.ocr_text || '';
+  if ((!ocrText || ocrText.length < 20) && fileBucket && glmApiKey) {
+    try {
+      const obj = await fileBucket.get(fileRow.r2_key);
+      if (obj) {
+        const buffer = await obj.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        let binary = ''; for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        const base64 = btoa(binary);
+        const glmResp = await fetch('https://api.z.ai/api/paas/v4/layout_parsing', {
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${glmApiKey}` },
+          body: JSON.stringify({ model: 'glm-ocr', file: `data:${fileRow.file_type || 'application/pdf'};base64,${base64}` }),
+        });
+        if (glmResp.ok) {
+          const glmData = await glmResp.json() as any;
+          ocrText = typeof glmData === 'string' ? glmData : JSON.stringify(glmData);
+        }
+      }
+    } catch {}
+    if (ocrText) await db.prepare("UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ?").bind(ocrText, fileId).run();
+  }
+
+  if (!ocrText || ocrText.length < 10) {
+    const emptyId = `cs-${crypto.randomUUID().slice(0, 8)}`;
+    await db.prepare(
+      "INSERT INTO card_statements (id, user_id, file_name, file_type, r2_key, status) VALUES (?, ?, ?, ?, ?, 'draft')"
+    ).bind(emptyId, userId, fileRow.original_name || fileRow.filename, fileRow.file_type, fileRow.r2_key).run();
+    return { success: true, statement_id: emptyId, ocr_failed: true, error: 'Could not read this file automatically.' };
+  }
+
+  // Parse with DeepSeek AI
+  let parsed: any = null;
+  if (deepseekKey) {
+    try {
+      const parseResp = await fetch('https://api.deepseek.com/chat/completions', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${deepseekKey}` },
+        body: JSON.stringify({
+          model: 'deepseek-chat',
+          messages: [{ role: 'user', content: `Parse this credit card statement OCR text into structured JSON:
+
+{
+  "card_issuer": "HSBC / Standard Chartered / Hang Seng / Amex / etc",
+  "card_network": "Visa / MasterCard / Amex / UnionPay",
+  "card_number_last4": "last 4 digits if visible",
+  "cardholder_name": "name on card",
+  "currency": "HKD",
+  "statement_year": 2026,
+  "statement_month": 1,
+  "period_start": "YYYY-MM-DD",
+  "period_end": "YYYY-MM-DD",
+  "credit_limit": number or null,
+  "opening_balance": number or null,
+  "closing_balance": number or null,
+  "minimum_payment": number or null,
+  "payment_due_date": "YYYY-MM-DD or null",
+  "transactions": [
+    {
+      "transaction_date": "YYYY-MM-DD",
+      "posting_date": "YYYY-MM-DD or null",
+      "description": "merchant name / transaction description",
+      "amount": number (always positive),
+      "transaction_type": "purchase / payment / refund / fee / interest / cash_advance",
+      "foreign_currency": "USD etc or null",
+      "foreign_amount": number or null
+    }
+  ]
+}
+
+Rules:
+- Card statements list purchases, payments, refunds, fees. All amounts are positive numbers.
+- "payment" type = payment made to the card (reduces balance)
+- "purchase" type = charged to card
+- "refund" type = merchant refund credited to card
+- "fee" type = annual fee, late fee, overlimit fee, etc
+- "interest" type = finance charges, interest
+- "cash_advance" type = cash withdrawal from card
+- IMPORTANT: opening_balance is the balance carried forward from the previous statement. Look for "Previous Balance", "Balance B/F", "Opening Balance", "上月結欠", "上期結欠", "承前結欠" — this is the starting amount owed at the beginning of the period.
+- IMPORTANT: closing_balance is the NEW balance at the end of this statement (what you currently owe). Look for "Closing Balance", "New Balance", "Current Balance", "Statement Balance", "今期結欠", "總結欠", "本月結欠".
+- The OCR text may NOT explicitly label opening_balance — if only "Previous Balance" is shown, use that as opening_balance.
+- Transactions often list date, description/merchant, and amount
+- If no transaction detail, return empty transactions array
+- Return valid JSON only, no markdown
+
+OCR text:
+${ocrText.slice(0, 12000)}` }],
+          temperature: 0.1, max_tokens: 4000,
+        }),
+      });
+      if (parseResp.ok) {
+        const data = await parseResp.json() as any;
+        const content = data.choices?.[0]?.message?.content || '';
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+      }
+    } catch (e: any) { console.log('[CARD-PARSE] DeepSeek error:', e.message); }
+  }
+
+  // Create draft statement
+  const stmtId = `cs-${crypto.randomUUID().slice(0, 8)}`;
+  await db.prepare(
+    `INSERT INTO card_statements (id, user_id, file_name, file_type, r2_key, ocr_text,
+     card_issuer, card_network, card_number_last4, cardholder_name, currency,
+     statement_year, statement_month, period_start, period_end,
+     credit_limit, opening_balance, closing_balance, minimum_payment, payment_due_date, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')`
+  ).bind(stmtId, userId, fileRow.original_name || fileRow.filename, fileRow.file_type, fileRow.r2_key, ocrText,
+    parsed?.card_issuer || null, parsed?.card_network || null, parsed?.card_number_last4 || null,
+    parsed?.cardholder_name || null, parsed?.currency || 'HKD',
+    parsed?.statement_year || null, parsed?.statement_month || null,
+    parsed?.period_start || null, parsed?.period_end || null,
+    parsed?.credit_limit ?? null, parsed?.opening_balance ?? null, parsed?.closing_balance ?? null,
+    parsed?.minimum_payment ?? null, parsed?.payment_due_date || null).run();
+
+  // Insert transactions
+  let txCount = 0;
+  if (parsed?.transactions && Array.isArray(parsed.transactions)) {
+    for (let i = 0; i < parsed.transactions.length; i++) {
+      const tx = parsed.transactions[i];
+      await db.prepare(
+        `INSERT INTO card_transactions (id, card_statement_id, user_id, transaction_date, posting_date,
+         description, amount, transaction_type, foreign_currency, foreign_amount, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(`ct-${crypto.randomUUID().slice(0, 8)}`, stmtId, userId,
+        tx.transaction_date, tx.posting_date || null, tx.description || '',
+        tx.amount || 0, tx.transaction_type || null, tx.foreign_currency || null,
+        tx.foreign_amount || null, i).run();
+      txCount++;
+    }
+  }
+
+  return { success: true, statement_id: stmtId, transactions_count: txCount, parsed_via_ai: !!parsed };
+}
+
 // ── Smart document import: detect bank statement vs invoice, dispatch to right importer ──
 files.post('/:id/import-document', async (c) => {
   const user = c.get('user');
@@ -1937,6 +2089,9 @@ files.post('/:id/import-document', async (c) => {
   const lower = ocrText.toLowerCase();
   let bankScore = filenameBank;
   let invoiceScore = filenameInvoice;
+  let cardScore = 0;
+
+  // Bank statement signals
   if (/statement\s+of\s+account/i.test(ocrText)) bankScore += 3;
   if (/account\s+activities/i.test(ocrText)) bankScore += 3;
   if (/business\s+direct\s+statement/i.test(ocrText)) bankScore += 3;
@@ -1944,7 +2099,10 @@ files.post('/:id/import-document', async (c) => {
   if (/(deposit|withdrawal|debit|credit)/i.test(ocrText) && (lower.match(/balance/g) || []).length >= 2) bankScore += 2;
   if (/transaction\s+(details|date|history)/i.test(ocrText)) bankScore += 1;
   if (/(hsbc|standard\s+chartered|citibank|hang\s+seng|bank\s+of\s+china|dbs)/i.test(ocrText)) bankScore += 1;
+  // Penalize bank score for card-specific signals
+  if (/credit\s+card|信用卡|card\s+statement/i.test(ocrText)) { bankScore -= 2; cardScore += 4; }
 
+  // Invoice signals
   if (/\binvoice\b/i.test(ocrText)) invoiceScore += 2;
   if (/invoice\s*(no|number|#)/i.test(ocrText)) invoiceScore += 3;
   if (/bill\s*to/i.test(ocrText)) invoiceScore += 3;
@@ -1953,9 +2111,41 @@ files.post('/:id/import-document', async (c) => {
   if (/(subtotal|total\s*due|total\s*amount)/i.test(ocrText)) invoiceScore += 1;
   if (/(unit\s*price|qty|quantity)/i.test(ocrText)) invoiceScore += 1;
 
-  // Decide. Bank statements usually have many more transaction-like rows.
-  const type = bankScore > invoiceScore ? 'bank_statement' : 'invoice';
-  console.log(`[SMART-IMPORT] file=${fileId} bankScore=${bankScore} invoiceScore=${invoiceScore} → ${type}`);
+  // Card statement signals
+  if (/credit\s+card\s+statement|信用卡.*月結|信用卡.*月结|card\s+statement/i.test(ocrText)) cardScore += 5;
+  if (/(american\s+express|amex)/i.test(ocrText)) cardScore += 3;
+  if (/visa\s*(card|platinum|gold|signature|infinite)?/i.test(ocrText)) cardScore += 2;
+  if (/mastercard|master\s*card/i.test(ocrText)) cardScore += 2;
+  if (/unionpay|銀聯|银联/i.test(ocrText)) cardScore += 2;
+  if (/credit\s+limit/i.test(ocrText)) cardScore += 3;
+  if (/minimum\s+payment|payment\s+due\s+date/i.test(ocrText)) cardScore += 3;
+  if (/finance\s+charge|interest\s+charge|late\s+payment\s+fee/i.test(ocrText)) cardScore += 2;
+  if (/cash\s+advance/i.test(ocrText)) cardScore += 2;
+  if (/card\s+number|card\s+(no|#)|cardholder|card\s+holder/i.test(ocrText)) cardScore += 2;
+  if (/previous\s+balance|new\s+balance|outstanding\s+balance/i.test(ocrText)) { cardScore += 2; bankScore -= 1; }
+  if (/(purchase|payment.*received|refund|annual\s+fee)/i.test(ocrText) && /credit\s+card|信用卡|card/i.test(ocrText)) cardScore += 1;
+
+  // 3-way decision
+  let type: string;
+  if (cardScore > bankScore && cardScore > invoiceScore && cardScore >= 5) {
+    type = 'card_statement';
+  } else if (bankScore > invoiceScore) {
+    type = 'bank_statement';
+  } else {
+    type = 'invoice';
+  }
+  console.log(`[SMART-IMPORT] file=${fileId} bankScore=${bankScore} invoiceScore=${invoiceScore} cardScore=${cardScore} → ${type}`);
+
+  if (type === 'card_statement') {
+    const result = await importCardStatementFromFile(
+      fileId, tenantId, db, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY, c.env.GLM_API_KEY
+    );
+    if (!result.success) {
+      const status = result.error === 'File not found' ? 404 : result.error === 'Statement already imported' ? 409 : 422;
+      return c.json({ type, error: result.error, statement_id: result.statement_id, duplicate_info: result.duplicate_info, scores: { bankScore, invoiceScore, cardScore } }, status as any);
+    }
+    return c.json({ type, ...result, scores: { bankScore, invoiceScore, cardScore } }, 201);
+  }
 
   if (type === 'bank_statement') {
     const result = await importStatementFromFile(
@@ -1963,18 +2153,18 @@ files.post('/:id/import-document', async (c) => {
     );
     if (!result.success) {
       const status = result.error === 'File not found' ? 404 : result.error === 'Statement already imported' ? 409 : 422;
-      return c.json({ type, error: result.error, statement_id: result.statement_id, duplicate_info: result.duplicate_info, scores: { bankScore, invoiceScore } }, status as any);
+      return c.json({ type, error: result.error, statement_id: result.statement_id, duplicate_info: result.duplicate_info, scores: { bankScore, invoiceScore, cardScore } }, status as any);
     }
-    return c.json({ type, ...result, scores: { bankScore, invoiceScore } }, 201);
+    return c.json({ type, ...result, scores: { bankScore, invoiceScore, cardScore } }, 201);
   } else {
     const result = await importInvoiceFromFile(
       fileId, tenantId, db, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY, c.env.GLM_API_KEY
     );
     if (!result.success) {
       const status = result.error === 'File not found' ? 404 : result.error?.includes('already exists') || result.error?.includes('already been imported') ? 409 : 422;
-      return c.json({ type, error: result.error, invoice_id: result.invoice_id, duplicate_info: result.duplicate_info, scores: { bankScore, invoiceScore } }, status as any);
+      return c.json({ type, error: result.error, invoice_id: result.invoice_id, duplicate_info: result.duplicate_info, scores: { bankScore, invoiceScore, cardScore } }, status as any);
     }
-    return c.json({ type, ...result, scores: { bankScore, invoiceScore } }, 201);
+    return c.json({ type, ...result, scores: { bankScore, invoiceScore, cardScore } }, 201);
   }
 });
 

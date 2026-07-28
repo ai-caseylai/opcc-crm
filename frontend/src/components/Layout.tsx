@@ -16,11 +16,7 @@ import {
 // Subtitle translations map
 const subMap: Record<string, [string, string, string]> = {
   'By financial year':          ['By financial year',        '按會計年度',   '按会计年度'],
-  'By account & period':        ['By account & period',      '按帳戶及期間', '按帐户及期间'],
-  'By period':                  ['By period',                '按期',         '按期'],
-  'By year & supplier':         ['By year & supplier',       '按年及供應商', '按年及供应商'],
-  'By year & customer':         ['By year & customer',       '按年及客戶',   '按年及客户'],
-  'By year & employer':         ['By year & employer',       '按年及僱主',   '按年及雇主'],
+
   'Upload bank statements, invoices, receipts': ['Upload statements, invoices, receipts', '上傳月結單、發票、收據', '上传月结单、发票、收据'],
 };
 function subT(key: string | undefined): string {
@@ -34,21 +30,21 @@ const navGroups = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, to: '/' },
   { key: 'documents', label: 'Documents', icon: FolderOpen, expandable: true, alwaysOpen: true, children: [
     { key: 'fileUpload', label: 'File Upload', to: '/file-upload' },
-    { key: 'fileStorage', label: 'File Storage', to: '/file-storage', sub: 'By financial year' },
+    { key: 'fileStorage', label: 'File Storage', to: '/file-storage' },
   ]},
   { key: 'coa', label: 'Chart of Accounts (COA)', icon: List, to: '/coa' },
   { key: 'generalLedger', label: 'General Ledger', icon: BookOpen, to: '/general-ledger' },
   { key: 'bookkeeping', label: 'Bookkeeping', icon: Calculator, expandable: true, children: [
-    { key: 'bankStatements', label: 'Bank Statements', to: '/bank-statements', sub: 'By account & period' },
-    { key: 'cardStatements', label: 'Card Statements', to: '/card-statements', sub: 'By account & period' },
-    { key: 'invoices', label: 'Invoices', to: '/invoices', sub: 'By period' },
-    { key: 'receipts', label: 'Receipts', to: '/expense-receipts', sub: 'By period' },
-    { key: 'reconciliation', label: 'Bank Reconciliation', to: '/reconciliation', sub: 'By period' },
-    { key: 'ap', label: 'Accounts Payable (AP)', to: '/ap', sub: 'By year & supplier' },
-    { key: 'ar', label: 'Accounts Receivable (AR)', to: '/ar', sub: 'By year & customer' },
-    { key: 'payroll', label: 'Payroll', to: '/payroll', sub: 'By year & employer' },
-    { key: 'pettyCash', label: 'Petty Cash', to: '/petty-cash', sub: 'By period' },
-    { key: 'mpf', label: 'MPF', to: '/mpf', sub: 'By year & employer' },
+    { key: 'bankStatements', label: 'Bank Statements', to: '/bank-statements' },
+    { key: 'cardStatements', label: 'Card Statements', to: '/card-statements' },
+    { key: 'invoices', label: 'Invoices', to: '/invoices' },
+    { key: 'receipts', label: 'Receipts', to: '/expense-receipts' },
+    { key: 'reconciliation', label: 'Bank Reconciliation', to: '/reconciliation' },
+    { key: 'ap', label: 'Accounts Payable (AP)', to: '/ap' },
+    { key: 'ar', label: 'Accounts Receivable (AR)', to: '/ar' },
+    { key: 'payroll', label: 'Payroll', to: '/payroll' },
+    { key: 'pettyCash', label: 'Petty Cash', to: '/petty-cash' },
+    { key: 'mpf', label: 'MPF', to: '/mpf' },
   ]},
   { key: 'assets', label: 'Assets', icon: Building2, expandable: true, children: [
     { key: 'fixedAssets', label: 'Fixed Assets', to: '/fixed-assets' },
@@ -123,6 +119,7 @@ const NAV_FEATURE_MAP: Record<string, string> = {
   quotations: 'quotations',
   bookkeeping: 'bookkeeping',
   bankStatements: 'bankStatements',
+  cardStatements: 'cardStatements',
   expenseReceipts: 'expenseReceipts',
   calendar: 'calendar',
   messages: 'messages',
@@ -249,7 +246,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
       {/* Language toggle — hidden when collapsed */}
       {!collapsed && (
-        <div className="px-3 py-2 flex gap-1">
+        <div className="pl-3 pr-4 py-2 flex gap-1">
           {languages.map((l) => {
             const active = i18n.language === l.code;
             return (
@@ -268,7 +265,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       {!collapsed && <CompanySwitcher />}
 
       {/* Navigation */}
-      <nav className={`flex-1 space-y-0.5 overflow-y-auto ${collapsed ? 'p-0' : 'p-2'}`}>
+      <nav className={`flex-1 space-y-0.5 overflow-y-auto ${collapsed ? 'p-0' : 'px-2 py-2 pr-3'}`}>
         {(user?.role === 'admin' ? adminNavGroups : navGroups).map((group: any) => {
           // Feature gate check for simple nav items
           if (!group.expandable) {
@@ -308,7 +305,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                         if (featKey && features[featKey] === false) return null;
                         return (
                           <Link key={child.to} to={child.to} onClick={() => setSidebarOpen(false)}
-                            className={`relative flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
+                            className={`relative flex items-center gap-3 pl-3 pr-4 py-2 rounded-md text-sm transition-colors mr-1 ${
                               isActive ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-muted'
                             }`}>
                             <ChildIcon className="h-4 w-4 flex-shrink-0 text-muted-foreground/30" />
@@ -337,7 +334,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           return (
             <Link key={group.to || group.key} to={group.to || '/'} onClick={() => setSidebarOpen(false)}
               title={collapsed ? t(`nav.${group.key}`) as string : undefined}
-              className={`relative flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
+              className={`relative flex items-center gap-3 pl-3 pr-4 py-2 rounded-md text-sm transition-colors mr-1 ${
                 collapsed ? 'justify-center px-0 w-16 h-10' : ''
               } ${isActive ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-muted'}`}>
               <Icon className={`flex-shrink-0 ${collapsed ? 'h-5 w-5' : 'h-4 w-4'}`} />
@@ -368,7 +365,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               if (item.key === 'auditLog' && !['admin', 'supervisor', 'accountant'].includes(user?.role || '')) return null;
               return (
                 <Link key={item.to} to={item.to} onClick={() => setSidebarOpen(false)}
-                  className={`relative flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
+                  className={`relative flex items-center gap-3 pl-3 pr-4 py-2 rounded-md text-sm transition-colors mr-1 ${
                     isActive ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-muted'
                   }`}>
                   <Icon className="h-4 w-4 flex-shrink-0" />
@@ -440,7 +437,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       <div className="hidden lg:flex lg:h-screen">
 
         {/* LEFT: Sidebar */}
-        <aside className="bg-card border-r flex flex-col relative overflow-y-auto overflow-x-hidden shrink-0" style={{
+        <aside className="bg-card border-r flex flex-col relative overflow-y-auto shrink-0" style={{
           width: sidebarDesktopOpen ? 'min(20vw, 320px)' : '64px',
           minWidth: sidebarDesktopOpen ? '260px' : '64px',
           transition: 'width 300ms cubic-bezier(0.4, 0, 0.2, 1), min-width 300ms cubic-bezier(0.4, 0, 0.2, 1)',
@@ -482,6 +479,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-muted-foreground/40 group-hover:text-primary text-xs select-none">⇔</div>
             </div>
           )}
+          {/* Collapse toggle */}
+          <button
+            onClick={() => setChatDesktopOpen(!chatDesktopOpen)}
+            className="absolute -left-3 top-1/2 -translate-y-1/2 z-20 w-6 h-6 bg-card border rounded-full flex items-center justify-center hover:bg-muted shadow-sm cursor-pointer"
+            title={chatDesktopOpen ? '收合聊天' : '展開聊天'}>
+            {chatDesktopOpen
+              ? <ChevronRight className="h-3.5 w-3.5" />
+              : <ChevronLeft className="h-3.5 w-3.5" />}
+          </button>
           <div className="h-full" style={{ width: chatWidth }}>
             <Chatbot onClose={() => setChatDesktopOpen(false)} className="h-full" />
           </div>

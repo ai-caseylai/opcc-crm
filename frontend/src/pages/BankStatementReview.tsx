@@ -187,7 +187,7 @@ export default function BankStatementReview() {
   });
 
   const confirmMut = useMutation({
-    mutationFn: () => api(`/bank-statements/${id}/confirm`, { method: 'POST' }),
+    mutationFn: (body?: any) => api(`/bank-statements/${id}/confirm`, { method: 'POST', body }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
       queryClient.invalidateQueries({ queryKey: ['bank-statements-drafts'] });
@@ -413,7 +413,14 @@ export default function BankStatementReview() {
   const saveAndConfirm = async () => {
     if (headerHasChanges) await saveHeaderMut.mutateAsync(headerEdits);
     if (txDirtyCount > 0 || localRows.length > 0) await saveAllTxEdits();
-    confirmMut.mutate();
+    const status = totals.closingMismatch ? 'mismatch' : 'ok';
+    const check = totals.closingMismatch ? {
+      expected: totals.computedClosing,
+      actual: totals.declaredClosing,
+      diff: totals.declaredClosing - totals.computedClosing,
+      corrected_by_user: closingManuallyEdited,
+    } : null;
+    confirmMut.mutate({ balance_status: status, balance_check: check });
   };
 
   return (

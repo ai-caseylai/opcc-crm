@@ -52,6 +52,8 @@ import PricingPage from './pages/PricingPage';
 import SubscriptionPage from './pages/SubscriptionPage';
 import StubPage from './pages/StubPage';
 import ChartOfAccounts from './pages/ChartOfAccounts';
+import CardStatements from './pages/CardStatements';
+import CardStatementReview from './pages/CardStatementReview';
 import NewClient from './pages/NewClient';
 
 const queryClient = new QueryClient({
@@ -87,6 +89,7 @@ const FEATURE_ROUTES: Record<string, string> = {
   '/quotations': 'quotations',
   '/bookkeeping': 'bookkeeping',
   '/bank-statements': 'bankStatements',
+  '/card-statements': 'cardStatements',
   '/expense-receipts': 'expenseReceipts',
   '/calendar': 'calendar',
   '/messages': 'messages',
@@ -174,7 +177,8 @@ function AppRoutes() {
       <Route path="/gl-report" element={<ProtectedRoute><Bookkeeping hideTabs initialTab="ledger" /></ProtectedRoute>} />
       <Route path="/general-ledger" element={<ProtectedRoute><Bookkeeping hideTabs initialTab="ledger" /></ProtectedRoute>} />
       <Route path="/coa" element={<ProtectedRoute><ChartOfAccounts /></ProtectedRoute>} />
-      <Route path="/card-statements" element={<ProtectedRoute><StubPage title="Card Statements" zhHant="信用卡月結單" zhHans="信用卡月结单" /></ProtectedRoute>} />
+      <Route path="/card-statements" element={<ProtectedRoute><FeatureGuard><CardStatements /></FeatureGuard></ProtectedRoute>} />
+      <Route path="/card-statements/review/:id" element={<ProtectedRoute><FeatureGuard><CardStatementReview /></FeatureGuard></ProtectedRoute>} />
       <Route path="/ap" element={<ProtectedRoute><StubPage title="Accounts Payable (AP)" zhHant="應付賬款" zhHans="应付账款" /></ProtectedRoute>} />
       <Route path="/ar" element={<ProtectedRoute><StubPage title="Accounts Receivable (AR)" zhHant="應收賬款" zhHans="应收账款" /></ProtectedRoute>} />
       <Route path="/payroll" element={<ProtectedRoute><StubPage title="Payroll" zhHant="薪資" zhHans="薪资" /></ProtectedRoute>} />

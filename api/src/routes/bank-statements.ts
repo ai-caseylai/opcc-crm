@@ -157,9 +157,12 @@ bank.post('/:id/confirm', async (c) => {
   ).bind(id, tenantId).first<{ id: string; status: string }>();
   if (!existing) return c.json({ error: 'Not found' }, 404);
   if (existing.status !== 'draft') return c.json({ error: 'Already confirmed', status: existing.status }, 400);
+  const body = await c.req.json().catch(() => ({}));
+  const balanceStatus = body.balance_status || 'unchecked';
+  const balanceCheck = body.balance_check ? JSON.stringify(body.balance_check) : null;
   await c.env.DB.prepare(
-    "UPDATE bank_statements SET status = 'active', updated_at = datetime('now') WHERE id = ?"
-  ).bind(id).run();
+    "UPDATE bank_statements SET status = 'active', balance_status = ?, balance_check = ?, updated_at = datetime('now') WHERE id = ?"
+  ).bind(balanceStatus, balanceCheck, id).run();
   return c.json({ success: true, id, status: 'active' });
 });
 

@@ -1,0 +1,330 @@
+import { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
+import { api } from '../lib/api';
+import { tr } from '../lib/i18nHelpers';
+import { CreditCard, FileText, Download, Trash2, AlertTriangle, CheckCircle, ChevronDown, ChevronRight, Calendar, Building2 } from 'lucide-react';
+
+interface CardTransaction {
+  id: string;
+  transaction_date: string;
+  posting_date: string | null;
+  description: string;
+  amount: number;
+  transaction_type: string | null;
+  foreign_currency: string | null;
+  foreign_amount: number | null;
+  category: string | null;
+  reference: string | null;
+  sort_order: number;
+  expense_account_code: string | null;
+  match_status: string;
+}
+
+interface CardStatement {
+  id: string;
+  file_name: string | null;
+  card_issuer: string | null;
+  card_network: string | null;
+  card_number_last4: string | null;
+  cardholder_name: string | null;
+  currency: string;
+  statement_year: number | null;
+  statement_month: number | null;
+  period_start: string | null;
+  period_end: string | null;
+  credit_limit: number | null;
+  opening_balance: number | null;
+  closing_balance: number | null;
+  minimum_payment: number | null;
+  payment_due_date: string | null;
+  status: string;
+  balance_status?: string;
+  balance_check?: string;
+  created_at: string;
+  transactions?: CardTransaction[];
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function monthLabel(year: number | null, month: number | null): string {
+  if (!year || !month) return '—';
+  return `${MONTHS[month - 1]} ${year}`;
+}
+
+export default function CardStatements() {
+  const nav = useNavigate();
+  const queryClient = useQueryClient();
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+
+  const { data: stmtsResp, isLoading } = useQuery({
+    queryKey: ['card-statements'],
+    queryFn: () => api('/card-statements'),
+  });
+  const statements: CardStatement[] = stmtsResp?.data || [];
+
+  const { data: draftResp } = useQuery({
+    queryKey: ['card-statements-drafts'],
+    queryFn: () => api('/card-statements?only_drafts=1'),
+    refetchInterval: 5000,
+  });
+  const drafts: CardStatement[] = draftResp?.data || [];
+
+  const { data: stmtDetail } = useQuery({
+    queryKey: ['card-statement', expandedId],
+    queryFn: () => api(`/card-statements/${expandedId}`),
+    enabled: !!expandedId,
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => api(`/card-statements/${id}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['card-statements'] });
+      queryClient.invalidateQueries({ queryKey: ['card-statements-drafts'] });
+    },
+  });
+
+  const autoCatMut = useMutation({
+    mutationFn: (id: string) => api(`/card-statements/${id}/auto-categorize`, { method: 'POST' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['card-statement', expandedId] });
+      queryClient.invalidateQueries({ queryKey: ['card-statements'] });
+    },
+  });
+
+  const updateTxMut = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: any }) => api(`/card-statements/transactions/${id}`, { method: 'PATCH', body }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['card-statement', expandedId] }),
+  });
+
+  const years = new Set<number>();
+  statements.forEach(s => { if (s.statement_year) years.add(s.statement_year); });
+
+  const cardLabel = (s: CardStatement) => {
+    const parts = [s.card_issuer, s.card_network, s.card_number_last4 ? `••••${s.card_number_last4}` : null].filter(Boolean);
+    return parts.join(' ') || tr('Unknown Card', '未知信用卡', '未知信用卡');
+  };
+
+  const fmt = (v: number | null | undefined) => v != null ? v.toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—';
+
+  if (isLoading) return <div className="p-6 text-muted-foreground">{tr('Loading…', '載入中…', '载入中…')}</div>;
+
+  return (
+    <div className="p-6 max-w-5xl mx-auto space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <CreditCard className="h-6 w-6" /> {tr('Card Statements', '信用卡月結單', '信用卡月结单')}
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            {tr('Upload credit card statements, review transactions, categorize expenses.', '上傳信用卡月結單、檢視交易、分類支出。', '上传信用卡月结单、检视交易、分类支出。')}
+          </p>
+        </div>
+      </div>
+
+      {/* Drafts banner */}
+      {drafts.length > 0 && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950 p-4">
+          <div className="flex items-center gap-2 text-amber-800 dark:text-amber-200 font-medium mb-2">
+            <AlertTriangle className="h-4 w-4" />
+            {tr('Statements awaiting review', '月結單待審核', '月结单待审核')} ({drafts.length})
+          </div>
+          <div className="space-y-1">
+            {drafts.map((d) => (
+              <div key={d.id} className="flex items-center gap-2 text-sm">
+                <span className="text-amber-700 dark:text-amber-300">{cardLabel(d)} — {monthLabel(d.statement_year, d.statement_month)}</span>
+                <button onClick={() => nav(`/card-statements/review/${d.id}`)}
+                  className="text-primary hover:underline text-xs font-medium">
+                  {tr('Review →', '審核 →', '审核 →')}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Continuity chain summary */}
+      <ContinuityChain />
+
+      {/* Statement list */}
+      {statements.length === 0 ? (
+        <div className="text-center py-12 text-muted-foreground">
+          <CreditCard className="h-12 w-12 mx-auto mb-3 opacity-30" />
+          <p>{tr('No card statements yet.', '尚無信用卡月結單。', '尚无信用卡月结单。')}</p>
+          <p className="text-xs mt-1">{tr('Upload a credit card statement from File Upload.', '從文件上傳頁面上傳信用卡月結單。', '从文件上传页面上传信用卡月结单。')}</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {statements.map((s) => {
+            const isExpanded = expandedId === s.id;
+            const detail = isExpanded ? stmtDetail : null;
+            const txs: CardTransaction[] = detail?.transactions || [];
+
+            return (
+              <div key={s.id} className="rounded-lg border bg-card overflow-hidden">
+                <div
+                  className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-muted/50 transition-colors"
+                  onClick={() => setExpandedId(isExpanded ? null : s.id)}
+                >
+                  {isExpanded ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
+                  <CreditCard className="h-4 w-4 text-muted-foreground" />
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium truncate">{cardLabel(s)}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {monthLabel(s.statement_year, s.statement_month)}
+                      {s.period_start && ` · ${s.period_start} → ${s.period_end || '…'}`}
+                    </div>
+                  </div>
+                  <div className="text-right text-sm">
+                    {s.closing_balance != null && (
+                      <div className="font-mono font-medium">${fmt(s.closing_balance)}</div>
+                    )}
+                    {s.status === 'draft' && (
+                      <span className="text-xs text-amber-600 font-medium">Draft</span>
+                    )}
+                    {s.balance_status === 'mismatch' && (
+                      <span className="text-xs text-red-600 font-medium flex items-center gap-1" title={s.balance_check ? (() => { try { const c = JSON.parse(s.balance_check); return `Expected: ${c.expected?.toLocaleString?.()}, Actual: ${c.actual?.toLocaleString?.()}, Diff: ${c.diff?.toLocaleString?.()}`; } catch { return ''; } })() : ''}>
+                        ⚠ Mismatch
+                      </span>
+                    )}
+                    {s.balance_status === 'corrected' && (
+                      <span className="text-xs text-blue-600 font-medium flex items-center gap-1" title={tr('AI data was corrected manually', 'AI 數據已被手動修正', 'AI 数据已被手动修正')}>
+                        ✏ Corrected
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex gap-1" onClick={e => e.stopPropagation()}>
+                    {s.file_name && (
+                      <a href={`/api/card-statements/${s.id}/file`} target="_blank" rel="noreferrer"
+                        className="p-1.5 rounded hover:bg-muted text-muted-foreground" title={tr('View original', '查看原文件', '查看原文件')}>
+                        <FileText className="h-4 w-4" />
+                      </a>
+                    )}
+                    <button onClick={() => { if (confirm(tr('Delete this statement?', '刪除此月結單？', '删除此月结单？'))) deleteMut.mutate(s.id); }}
+                      className="p-1.5 rounded hover:bg-red-50 text-muted-foreground hover:text-red-500">
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Expanded transactions */}
+                {isExpanded && (
+                  <div className="border-t bg-muted/20 px-4 py-2">
+                    {/* Summary bar */}
+                    <div className="flex flex-wrap gap-4 text-xs text-muted-foreground mb-2">
+                      {s.cardholder_name && <span><Building2 className="h-3 w-3 inline mr-1" />{s.cardholder_name}</span>}
+                      {s.opening_balance != null && <span>Op: ${fmt(s.opening_balance)}</span>}
+                      {s.closing_balance != null && <span>Cl: ${fmt(s.closing_balance)}</span>}
+                      {s.credit_limit != null && <span>Limit: ${fmt(s.credit_limit)}</span>}
+                      {s.minimum_payment != null && <span>Min Pay: ${fmt(s.minimum_payment)}</span>}
+                      {s.payment_due_date && <span>Due: {s.payment_due_date}</span>}
+                      <a href={`/api/card-statements/${s.id}/export-csv`} className="text-primary hover:underline">
+                        <Download className="h-3 w-3 inline mr-0.5" />CSV
+                      </a>
+                      <button onClick={() => autoCatMut.mutate(s.id)}
+                        className="text-primary hover:underline">
+                        {tr('Auto-Categorize', '自動分類', '自动分类')}
+                      </button>
+                      {s.status === 'draft' && (
+                        <button onClick={() => nav(`/card-statements/review/${s.id}`)}
+                          className="text-amber-600 hover:underline font-medium">
+                          {tr('Review →', '審核 →', '审核 →')}
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Transactions table */}
+                    {txs.length === 0 ? (
+                      <p className="text-xs text-muted-foreground py-2">{tr('No transactions', '無交易記錄', '无交易记录')}</p>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="text-left text-muted-foreground border-b">
+                              <th className="py-1 pr-2">Date</th>
+                              <th className="py-1 pr-2">Description</th>
+                              <th className="py-1 pr-2 text-right">Amount</th>
+                              <th className="py-1 pr-2">Type</th>
+                              <th className="py-1 pr-2">Category</th>
+                              <th className="py-1 pr-2">Account</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {txs.map((tx) => (
+                              <tr key={tx.id} className={`border-b border-muted/30 ${tx.match_status === 'categorized' ? 'bg-green-50 dark:bg-green-950/20' : ''}`}>
+                                <td className="py-1 pr-2 whitespace-nowrap">{tx.transaction_date}</td>
+                                <td className="py-1 pr-2 max-w-[200px] truncate">{tx.description}</td>
+                                <td className="py-1 pr-2 text-right font-mono">${fmt(tx.amount)}</td>
+                                <td className="py-1 pr-2">
+                                  {tx.transaction_type && (
+                                    <span className="px-1 py-0.5 rounded text-[10px] bg-muted">{tx.transaction_type}</span>
+                                  )}
+                                </td>
+                                <td className="py-1 pr-2 text-muted-foreground">{tx.category || '—'}</td>
+                                <td className="py-1 pr-2">
+                                  {tx.expense_account_code ? (
+                                    <span className="text-green-700 dark:text-green-400 font-mono text-[10px]">{tx.expense_account_code}</span>
+                                  ) : (
+                                    <span className="text-muted-foreground/50">—</span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ContinuityChain() {
+  const { data } = useQuery({
+    queryKey: ['card-continuity'],
+    queryFn: () => api('/card-statements/continuity'),
+  });
+  const groups: any[] = (data as any)?.groups || [];
+  if (groups.length === 0) return null;
+
+  const hasIssues = groups.some((g: any) => g.status !== 'complete');
+
+  return (
+    <div className={`rounded-lg border p-3 mb-3 ${hasIssues ? 'border-red-300 bg-red-50 dark:bg-red-950/20' : 'border-green-300 bg-green-50 dark:bg-green-950/20'}`}>
+      <div className="flex items-center gap-2 text-sm font-medium">
+        {hasIssues ? <AlertTriangle className="h-4 w-4 text-red-500" /> : <CheckCircle className="h-4 w-4 text-green-500" />}
+        {tr('Card Continuity', '信用卡連續性', '信用卡连续性')}
+        {!hasIssues && <span className="text-xs text-green-700 ml-1">— {tr('All chains complete', '全部連續', '全部连续')}</span>}
+      </div>
+      <div className="flex flex-wrap gap-2 mt-2">
+        {groups.map((g: any) => (
+          <div key={g.card_number || g.card_issuer} className="flex items-center gap-1 text-xs">
+            <CreditCard className="h-3 w-3 text-muted-foreground" />
+            <span className="font-medium">{g.card_issuer} {g.card_network}</span>
+            <span className="text-muted-foreground">••••{g.card_number}</span>
+            <span className="text-muted-foreground">({g.statement_count})</span>
+            {g.chain?.map((link: any) => {
+              const issues: string[] = link.issues || [];
+              const icon = issues.includes('gap') ? '🔴' : issues.includes('balance_mismatch') ? '🟡'
+                : issues.includes('duplicate') ? '🟣' : issues.includes('overlap') || issues.includes('date_overlap') ? '🟠'
+                : issues.includes('matched') || issues.includes('first') ? '🟢' : '⚪';
+              return <span key={link.id} title={`${link.statement_year}-${String(link.statement_month).padStart(2,'0')}: ${issues.join(',')}`}>{icon}</span>;
+            })}
+          </div>
+        ))}
+      </div>
+      {hasIssues && (
+        <div className="flex flex-wrap gap-2 mt-2 text-[10px] text-muted-foreground">
+          <span>🟢 OK</span><span>🔴 Gap</span><span>🟡 Mismatch</span><span>🟠 Overlap</span><span>🟣 Duplicate</span>
+        </div>
+      )}
+    </div>
+  );
+}

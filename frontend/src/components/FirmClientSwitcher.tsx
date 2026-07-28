@@ -48,7 +48,7 @@ export default function CompanySwitcher() {
   const canCreateClient = ['admin', 'supervisor', 'accountant'].includes(user?.role || '');
 
   return (
-    <div className="relative px-3 mb-2">
+    <div className="relative pl-3 pr-4 mb-2">
       <div className="flex items-center gap-1">
         <div className="flex-1 relative">
           {open ? (
