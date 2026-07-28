@@ -1052,14 +1052,14 @@ function PendingReviewBanner() {
   });
   if (drafts.length === 0) return null;
   return (
-    <div className="rounded-lg border-2 border-yellow-400 bg-yellow-50 dark:bg-yellow-950 p-4 space-y-2">
+    <div className="rounded-lg border-2 border-black bg-gray-100 dark:bg-gray-800 p-4 space-y-2">
       <div className="flex items-start gap-3">
         <div className="text-2xl">⚠️</div>
         <div className="flex-1">
-          <h3 className="font-bold text-yellow-900 dark:text-yellow-100">
+          <h3 className="font-bold text-black dark:text-white">
             {drafts.length} statement{drafts.length === 1 ? '' : 's'} pending review
           </h3>
-          <p className="text-sm text-yellow-800 dark:text-yellow-200">
+          <p className="text-sm text-black dark:text-gray-300">
             The system extracted data from your uploaded file{drafts.length === 1 ? '' : 's'}.
             Please review and confirm before saving to the database.
           </p>
@@ -1069,7 +1069,7 @@ function PendingReviewBanner() {
         {drafts.map((d: any) => (
           <div
             key={d.id}
-            className="flex items-center justify-between rounded border border-yellow-300 bg-white dark:bg-yellow-900/40 px-3 py-2 hover:bg-yellow-100 dark:hover:bg-yellow-900/70 transition-colors"
+            className="flex items-center justify-between rounded border border-black bg-white dark:bg-gray-700 px-3 py-2 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
           >
             <a
               href={`/bank-statements/review/${d.id}`}
@@ -1082,7 +1082,7 @@ function PendingReviewBanner() {
             <div className="flex items-center gap-2">
               <a
                 href={`/bank-statements/review/${d.id}`}
-                className="text-sm text-yellow-900 dark:text-yellow-100 font-medium hover:underline"
+                className="text-sm text-black dark:text-white font-medium hover:underline"
               >
                 Review →
               </a>

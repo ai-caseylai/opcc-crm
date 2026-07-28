@@ -19,11 +19,11 @@ const TYPE_LABELS: Record<string, string> = {
 };
 
 const TYPE_COLORS: Record<string, string> = {
-  asset: 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
-  liability: 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300',
-  equity: 'bg-purple-50 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300',
-  revenue: 'bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-300',
-  expense: 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+  asset: 'bg-blue-50 text-black font-bold dark:bg-blue-900/30 dark:text-white',
+  liability: 'bg-red-50 text-black font-bold dark:bg-red-900/30 dark:text-white',
+  equity: 'bg-purple-50 text-black font-bold dark:bg-purple-900/30 dark:text-white',
+  revenue: 'bg-green-50 text-black font-bold dark:bg-green-900/30 dark:text-white',
+  expense: 'bg-amber-50 text-black font-bold dark:bg-amber-900/30 dark:text-white',
 };
 
 function getDepth(code: string): number {
