@@ -43,7 +43,7 @@ export default function TokenPopup() {
         setUsage(data);
         setDismissed(false); // show again if new data arrives
       }
-    }, 2000);
+    }, 500);
 
     return () => clearInterval(interval);
   }, []);

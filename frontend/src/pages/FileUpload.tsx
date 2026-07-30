@@ -106,12 +106,14 @@ export default function FileUpload() {
     const result = await importResp.json().catch(() => ({}));
     if (result?.ocr_text) console.log('[OCR-RAW-TEXT]', result.ocr_text);
     if (result?.deepseek_raw) console.log('[DEEPSEEK-OUTPUT]', JSON.parse(result.deepseek_raw));
-    // Accumulate DeepSeek token usage to sessionStorage (persists across page nav)
-    if (result?.usage?.total_tokens) {
+    // Accumulate token usage: DeepSeek + GLM, persisted to sessionStorage
+    if (result?.usage?.total_tokens || result?.glm_usage?.total_tokens) {
+      const dsTotal = result.usage?.total_tokens || 0;
+      const glmTotal = result.glm_usage?.total_tokens || 0;
       writeTokenUsage({
-        prompt: result.usage.prompt_tokens || 0,
-        completion: result.usage.completion_tokens || 0,
-        total: result.usage.total_tokens,
+        prompt: (result.usage?.prompt_tokens || 0) + (result.glm_usage?.prompt_tokens || 0),
+        completion: (result.usage?.completion_tokens || 0) + (result.glm_usage?.completion_tokens || 0),
+        total: dsTotal + glmTotal,
       });
     }
     setProcessingMsg(null);

@@ -88,6 +88,7 @@ async function importStatementFromFile(
         console.log('[OCR-DEBUG] GLM response status:', glmResp.status);
         if (glmResp.ok) {
           const glmData = await glmResp.json() as any;
+          glmUsage = glmData.usage || null;
           ocrText = typeof glmData === 'string' ? glmData : JSON.stringify(glmData);
           console.log('[OCR-DEBUG] GLM ocrText length:', ocrText.length, 'preview:', ocrText.slice(0, 200));
         } else {
@@ -126,6 +127,7 @@ async function importStatementFromFile(
   // Parse with DeepSeek AI
   let parsed: any = null;
   let usage: any = null;
+  let glmUsage: any = null;
   if (deepseekKey) {
     try {
       const parseResp = await fetch('https://api.deepseek.com/chat/completions', {
@@ -420,6 +422,7 @@ ${ocrText.slice(0, 8000)}` }],
     transactions_count: txCount,
     parsed_via_ai: !!parsed,
     usage,
+    glm_usage: glmUsage,
     deepseek_raw: deepseekRaw,
     is_duplicate: isDuplicate,
     duplicate_status: duplicateStatus,
@@ -457,6 +460,7 @@ async function importInvoiceFromFile(
           });
           if (glmResp.ok) {
             const glmData = await glmResp.json() as any;
+            glmUsage = glmData.usage || null;
             const candidate = typeof glmData === 'string' ? glmData : JSON.stringify(glmData);
             if (candidate && candidate.length > 20) ocrText = candidate;
           }
@@ -543,6 +547,7 @@ async function importInvoiceFromFile(
 
   let parsed: any = null;
   let usage: any = null;
+  let glmUsage: any = null;
   if (deepseekKey) {
     try {
       const promptForReceipt = `Parse this PAYMENT RECEIPT into structured JSON. Extract:
@@ -968,6 +973,7 @@ ${ocrText.slice(0, 8000)}`;
     needs_direction_review: needsDirectionReview,
     company_not_detected: companyNotDetected,
     usage,
+    glm_usage: glmUsage,
     deepseek_raw: deepseekRaw,
     is_duplicate: isDuplicate,
     duplicate_status: duplicateStatus,
@@ -1946,6 +1952,7 @@ async function importCardStatementFromFile(
         });
         if (glmResp.ok) {
           const glmData = await glmResp.json() as any;
+          glmUsage = glmData.usage || null;
           ocrText = typeof glmData === 'string' ? glmData : JSON.stringify(glmData);
         }
       }
@@ -1964,6 +1971,7 @@ async function importCardStatementFromFile(
   // Parse with DeepSeek AI
   let parsed: any = null;
   let usage: any = null;
+  let glmUsage: any = null;
   if (deepseekKey) {
     try {
       const parseResp = await fetch('https://api.deepseek.com/chat/completions', {
@@ -2063,7 +2071,7 @@ ${ocrText.slice(0, 12000)}` }],
     }
   }
 
-  return { success: true, statement_id: stmtId, transactions_count: txCount, parsed_via_ai: !!parsed, usage };
+  return { success: true, statement_id: stmtId, transactions_count: txCount, parsed_via_ai: !!parsed, usage, glm_usage: glmUsage };
 }
 
 // ── Smart document import: detect bank statement vs invoice, dispatch to right importer ──
