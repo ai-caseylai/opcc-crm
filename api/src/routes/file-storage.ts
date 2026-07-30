@@ -107,10 +107,10 @@ async function importStatementFromFile(
     const emptyId = `bs-${crypto.randomUUID().slice(0, 8)}`;
     const inferredBank = inferBankName(fileRow.original_name || fileRow.filename || '');
     await db.prepare(
-
-
-
-    ).bind(emptyId, userId, fileRow.original_name || fileRow.filename, fileRow.r2_key, inferredBank).run();
+      `INSERT INTO bank_statements (id, user_id, file_name, r2_key, bank_name, currency, status,
+       opening_balance, closing_balance, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'HKD', 'draft', 0, 0, datetime('now'), datetime('now'))`
+    ).bind(emptyId, userId, String(fileRow.original_name || fileRow.filename || 'statement.pdf'), String(fileRow.r2_key || ''), inferredBank || null).run();
     return {
       success: true,
       statement_id: emptyId,
@@ -185,15 +185,15 @@ ${ocrText.slice(0, 8000)}` }],
   const closingBal = parsed?.closing_balance ?? null;
 
   await db.prepare(
-    `INSERT INTO bank_statements (id, user_id, file_name, file_type, file_data, r2_key,
-     bank_name, account_number, branch, currency, account_type,
+    `INSERT INTO bank_statements (id, user_id, file_name, file_type, r2_key,
+     bank_name, account_number, currency,
      statement_year, statement_month, period_start, period_end,
-     opening_balance, closing_balance, page_count, ocr_text, status)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-  ).bind(stmtId, userId, fileRow.original_name || fileRow.filename, fileRow.file_type, '',
-    fileRow.r2_key, bankName, accountNumber, null, currency, null,
-    stmtYear, stmtMonth, periodStart, periodEnd,
-    openingBal, closingBal, null, ocrText, 'draft'
+     opening_balance, closing_balance, ocr_text, status)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+  ).bind(stmtId, userId, String(fileRow.original_name || fileRow.filename || 'statement.pdf'), String(fileRow.file_type || 'application/pdf'),
+    String(fileRow.r2_key || ''), String(bankName || ''), String(accountNumber || ''), String(currency || 'HKD'),
+    stmtYear || null, stmtMonth || null, periodStart || null, periodEnd || null,
+    typeof openingBal === 'number' ? openingBal : null, typeof closingBal === 'number' ? closingBal : null, String(ocrText || ''), 'draft'
   ).run();
 
   let txCount = 0;
@@ -203,10 +203,10 @@ ${ocrText.slice(0, 8000)}` }],
     const txId = `bt-${uuidv4().slice(0, 8)}`;
     await db.prepare(
       `INSERT INTO bank_transactions (id, bank_statement_id, user_id, transaction_date, description,
-       deposit_amount, withdrawal_amount, balance, account_type, sort_order)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`
-    ).bind(txId, stmtId, userId, tx.transaction_date, tx.description || '',
-      tx.deposit_amount || 0, tx.withdrawal_amount || 0, tx.balance ?? null, tx.account_type || null, txCount
+       deposit_amount, withdrawal_amount, balance, sort_order)
+       VALUES (?,?,?,?,?,?,?,?,?)`
+    ).bind(txId, stmtId, userId, String(tx.transaction_date || ''), String(tx.description || ''),
+      Number(tx.deposit_amount || 0), Number(tx.withdrawal_amount || 0), typeof tx.balance === 'number' ? tx.balance : null, txCount
     ).run();
     txCount++;
   }

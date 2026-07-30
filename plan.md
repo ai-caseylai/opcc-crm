@@ -61,6 +61,6 @@
 ---
 
 ## Pending
-- [ ] Fix D1 bind bug in `importStatementFromFile` (bank statement import)
-- [ ] Receipt UI rewrite (ExpenseReceipts.tsx with tabs, create form, view modal)
+- [x] Fix D1 bind bug in `importStatementFromFile` — INSERT SQL was accidentally deleted from empty draft fallback
+- [x] Receipt UI rewrite — tabs (All/Linked/Unlinked), create form, view modal, review flags, link status column
 - [ ] Company-owned Cloudflare account migration (see memory: tecs-deployment-state)
