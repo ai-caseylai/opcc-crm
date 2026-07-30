@@ -109,6 +109,10 @@ export default function BankStatementReview() {
   const [closingManuallyEdited, setClosingManuallyEdited] = useState(false);
   // Rows added manually via "Add Row" (used when OCR failed to read the file).
   const [localRows, setLocalRows] = useState<Transaction[]>([]);
+  // Guard against double-submission — true for the ENTIRE save-and-confirm pipeline
+  const [isSaving, setIsSaving] = useState(false);
+  // Reset saving state when navigating to a different review (React Router reuses component)
+  useEffect(() => { setIsSaving(false); }, [id]);
 
   // PDF blob URL (loaded with auth)
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
@@ -214,10 +218,11 @@ export default function BankStatementReview() {
       queryClient.invalidateQueries({ queryKey: ['bank-statements-drafts'] });
       queryClient.invalidateQueries({ queryKey: ['bank-continuity'] });
       toast.success(tr('Saved to database! This statement is now confirmed.', '已儲存至數據庫！此月結單已確認。', '已储存至数据库！此月结单已确认。'));
-      setTimeout(() => { if (!goNextInQueue()) navigate('/bank-statements'); }, 600);
+      setTimeout(() => { if (!goNextInQueue()) navigate('/bank-statements'); }, 0);
     },
     onError: (err: any) => {
       toast.error(`Failed to save: ${err?.message || err?.error || 'Unknown error'}`);
+      setIsSaving(false);
     },
   });
 
@@ -227,7 +232,7 @@ export default function BankStatementReview() {
       queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
       queryClient.invalidateQueries({ queryKey: ['bank-statements-drafts'] });
       queryClient.invalidateQueries({ queryKey: ['bank-continuity'] });
-      if (!goNextInQueue()) navigate('/bank-statements');
+      setTimeout(() => { if (!goNextInQueue()) navigate('/bank-statements'); }, 0);
     },
   });
 
@@ -434,8 +439,16 @@ export default function BankStatementReview() {
   };
 
   const saveAndConfirm = async () => {
-    if (headerHasChanges) await saveHeaderMut.mutateAsync(headerEdits);
-    if (txDirtyCount > 0 || localRows.length > 0) await saveAllTxEdits();
+    if (isSaving || confirmMut.isPending) return;
+    setIsSaving(true);
+    try {
+      if (headerHasChanges) await saveHeaderMut.mutateAsync(headerEdits);
+      if (txDirtyCount > 0 || localRows.length > 0) await saveAllTxEdits();
+    } catch (e: any) {
+      toast.error(`Failed to save edits: ${e?.message || e?.error || 'Unknown error'}`);
+      setIsSaving(false);
+      return;
+    }
     const status = totals.closingMismatch ? 'mismatch' : 'ok';
     const check = totals.closingMismatch ? {
       expected: totals.computedClosing,
@@ -801,11 +814,11 @@ export default function BankStatementReview() {
               </button>
               <button
                 onClick={saveAndConfirm}
-                disabled={confirmMut.isPending || saveHeaderMut.isPending || createTxMut.isPending || transactions.length === 0}
+                disabled={isSaving || confirmMut.isPending || saveHeaderMut.isPending || createTxMut.isPending || transactions.length === 0}
                 className="px-6 py-2 bg-green-600 text-white rounded font-bold hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 title={transactions.length === 0 ? (tr('Add at least one transaction before saving', '儲存前請先新增至少一筆交易', '储存前請先新增至少一笔交易')) : ''}
               >
-                {confirmMut.isPending
+                {isSaving || confirmMut.isPending
                   ? (tr('Saving…', '儲存中…', '储存中…'))
                   : (tr('✅ Save to Database', '✅ 儲存至數據庫', '✅ 储存至数据库'))}
               </button>

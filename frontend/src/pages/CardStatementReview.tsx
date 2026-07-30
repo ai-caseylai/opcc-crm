@@ -35,6 +35,8 @@ export default function CardStatementReview() {
   const [deletedTxIds, setDeletedTxIds] = useState<Set<string>>(new Set());
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // Reset saving state when navigating to a different review (React Router reuses component)
+  useEffect(() => { setSaving(false); }, [id]);
 
   const { data: stmt, isLoading } = useQuery({
     queryKey: ['card-statement', id],
@@ -77,8 +79,8 @@ export default function CardStatementReview() {
     return null;
   }
 
-  const confirmMut = useMutation({ mutationFn: (body?: any) => api(`/card-statements/${id}/confirm`, { method: 'POST', body }), onSuccess: () => { if (!goNextInQueue()) nav('/card-statements'); } });
-  const discardMut = useMutation({ mutationFn: () => api(`/card-statements/${id}`, { method: 'DELETE' }), onSuccess: () => { if (!goNextInQueue()) nav('/card-statements'); } });
+  const confirmMut = useMutation({ mutationFn: (body?: any) => api(`/card-statements/${id}/confirm`, { method: 'POST', body }), onSuccess: () => { setTimeout(() => { if (!goNextInQueue()) nav('/card-statements'); }, 0); } });
+  const discardMut = useMutation({ mutationFn: () => api(`/card-statements/${id}`, { method: 'DELETE' }), onSuccess: () => { setTimeout(() => { if (!goNextInQueue()) nav('/card-statements'); }, 0); } });
 
   if (isLoading || !stmt) return <div className="p-6 text-muted-foreground">Loading…</div>;
 
@@ -118,7 +120,7 @@ export default function CardStatementReview() {
       });
     } catch (e: any) {
       alert(e.message);
-      setSaving(false);
+      setSaving(false); // only re-enable button on error — success navigates away
     }
   };
 

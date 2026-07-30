@@ -57,6 +57,12 @@ export default function InvoiceReview() {
   const [form, setForm] = useState<any>(null);
   const [items, setItems] = useState<any[]>([]);
   const [saved, setSaved] = useState(false);
+  // Reset ALL local state when navigating to a different review (React Router reuses component)
+  useEffect(() => {
+    setSaved(false);
+    setForm(null);
+    setItems([]);
+  }, [id]);
 
   // ── Load invoice data ──
   const { data: invoiceData, isLoading } = useQuery({
@@ -152,9 +158,7 @@ export default function InvoiceReview() {
       queryClient.invalidateQueries({ queryKey: ['invoices'] });
       queryClient.invalidateQueries({ queryKey: ['invoices-receipts'] });
       setSaved(true);
-      setTimeout(() => {
-        if (!goNextInQueue()) navigate(isReceipt ? '/expense-receipts' : '/invoices');
-      }, 800);
+      setTimeout(() => { if (!goNextInQueue()) navigate(isReceipt ? '/expense-receipts' : '/invoices'); }, 0);
     },
     onError: (err: any) => toast.info(`Save failed: ${err?.message || 'Unknown error'}`),
   });
@@ -164,7 +168,7 @@ export default function InvoiceReview() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['invoices'] });
       queryClient.invalidateQueries({ queryKey: ['file-storage'] });
-      if (!goNextInQueue()) navigate('/file-storage');
+      setTimeout(() => { if (!goNextInQueue()) navigate('/file-storage'); }, 0);
     },
     onError: (err: any) => toast.info(`Discard failed: ${err?.message || 'Unknown error'}`),
   });
@@ -197,6 +201,7 @@ export default function InvoiceReview() {
   function handleSave() {
     if (!form) return;
     if (items.length === 0) { toast.info('Please add at least one line item before saving.'); return; }
+    if (saved || confirmMut.isPending) return; // guard against double-clicks
     confirmMut.mutate({ ...form, items, tax_rate: form.tax_rate || 0, discount_amount: form.discount_amount || 0 });
   }
 
