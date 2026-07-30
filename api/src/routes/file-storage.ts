@@ -125,6 +125,7 @@ async function importStatementFromFile(
 
   // Parse with DeepSeek AI
   let parsed: any = null;
+  let usage: any = null;
   if (deepseekKey) {
     try {
       const parseResp = await fetch('https://api.deepseek.com/chat/completions', {
@@ -166,10 +167,13 @@ ${ocrText.slice(0, 8000)}` }],
       });
       const parseData = await parseResp.json() as any;
       const raw = parseData.choices?.[0]?.message?.content || '';
+      usage = parseData.usage || null;
+      console.log('[DEEPSEEK-RAW-BANK]', raw.slice(0, 2000));
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
       if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
     } catch {}
   }
+  const deepseekRaw = parsed ? JSON.stringify(parsed).slice(0, 3000) : null;
 
   const stmtId = `bs-${uuidv4().slice(0, 8)}`;
   // Bank name: prefer AI parse, else infer from OCR text + filename (Lily #1, #9)
@@ -187,6 +191,22 @@ ${ocrText.slice(0, 8000)}` }],
   const periodEnd = parsed?.period_end || null;
   const openingBal = parsed?.opening_balance ?? null;
   const closingBal = parsed?.closing_balance ?? null;
+
+  // Period+account duplicate check: same bank + account + month = same statement
+  // (catches different scanners producing different files of the same document)
+  if (!isDuplicate && bankName && accountNumber && stmtYear && stmtMonth) {
+    const periodDup = await db.prepare(
+      `SELECT id FROM bank_statements
+       WHERE user_id = ? AND bank_name = ? AND account_number = ?
+       AND statement_year = ? AND statement_month = ? AND id != ?
+       AND deleted_at IS NULL LIMIT 1`
+    ).bind(userId, bankName, accountNumber, stmtYear, stmtMonth, 'none').first<{ id: string }>();
+    if (periodDup) {
+      isDuplicate = true;
+      duplicateStatus = 'active';
+      if (!duplicateExistingId) duplicateExistingId = periodDup.id;
+    }
+  }
 
   await db.prepare(
     `INSERT INTO bank_statements (id, user_id, file_name, file_type, r2_key,
@@ -399,6 +419,8 @@ ${ocrText.slice(0, 8000)}` }],
     statement_id: stmtId,
     transactions_count: txCount,
     parsed_via_ai: !!parsed,
+    usage,
+    deepseek_raw: deepseekRaw,
     is_duplicate: isDuplicate,
     duplicate_status: duplicateStatus,
     duplicate_existing_id: duplicateExistingId,
@@ -520,6 +542,7 @@ async function importInvoiceFromFile(
   const regexParties = !isReceipt ? regexExtractInvoiceParties(ocrText) : { letterheadVendor: null, billToCustomer: null };
 
   let parsed: any = null;
+  let usage: any = null;
   if (deepseekKey) {
     try {
       const promptForReceipt = `Parse this PAYMENT RECEIPT into structured JSON. Extract:
@@ -575,10 +598,13 @@ ${ocrText.slice(0, 8000)}`;
       });
       const data = await resp.json() as any;
       const raw = data.choices?.[0]?.message?.content || '';
+      usage = data.usage || null;
+      console.log('[DEEPSEEK-RAW-INVOICE]', raw.slice(0, 2000));
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
       if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
     } catch {}
   }
+  const deepseekRaw = parsed ? JSON.stringify(parsed).slice(0, 3000) : null;
 
   // ── Post-AI correction: if AI swapped vendor/customer, fix using regex extraction ──
   if (!isReceipt && parsed && regexParties.letterheadVendor) {
@@ -941,6 +967,8 @@ ${ocrText.slice(0, 8000)}`;
     receipt_number: receiptNum,
     needs_direction_review: needsDirectionReview,
     company_not_detected: companyNotDetected,
+    usage,
+    deepseek_raw: deepseekRaw,
     is_duplicate: isDuplicate,
     duplicate_status: duplicateStatus,
     duplicate_existing_id: duplicateExistingId,
@@ -1935,6 +1963,7 @@ async function importCardStatementFromFile(
 
   // Parse with DeepSeek AI
   let parsed: any = null;
+  let usage: any = null;
   if (deepseekKey) {
     try {
       const parseResp = await fetch('https://api.deepseek.com/chat/completions', {
@@ -1994,6 +2023,7 @@ ${ocrText.slice(0, 12000)}` }],
       if (parseResp.ok) {
         const data = await parseResp.json() as any;
         const content = data.choices?.[0]?.message?.content || '';
+        usage = data.usage || null;
         const jsonMatch = content.match(/\{[\s\S]*\}/);
         if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
       }
@@ -2033,7 +2063,7 @@ ${ocrText.slice(0, 12000)}` }],
     }
   }
 
-  return { success: true, statement_id: stmtId, transactions_count: txCount, parsed_via_ai: !!parsed };
+  return { success: true, statement_id: stmtId, transactions_count: txCount, parsed_via_ai: !!parsed, usage };
 }
 
 // ── Smart document import: detect bank statement vs invoice, dispatch to right importer ──
@@ -2259,6 +2289,8 @@ files.post('/:id/import-document', async (c) => {
       const status = result.error === 'File not found' ? 404 : result.error === 'Statement already imported' ? 409 : 422;
       return c.json({ type, error: result.error, statement_id: result.statement_id, duplicate_info: result.duplicate_info, scores: { bankScore, invoiceScore, cardScore } }, status as any);
     }
+    result.is_duplicate = result.is_duplicate || hashDuplicate;
+    if (hashDuplicate && !result.duplicate_status) result.duplicate_status = 'active';
     return c.json({ type, ...result, scores: { bankScore, invoiceScore, cardScore }, ocr_text: ocrText }, 201);
   }
 
@@ -2270,6 +2302,8 @@ files.post('/:id/import-document', async (c) => {
       const status = result.error === 'File not found' ? 404 : result.error === 'Statement already imported' ? 409 : 422;
       return c.json({ type, error: result.error, statement_id: result.statement_id, duplicate_info: result.duplicate_info, scores: { bankScore, invoiceScore, cardScore } }, status as any);
     }
+    result.is_duplicate = result.is_duplicate || hashDuplicate;
+    if (hashDuplicate && !result.duplicate_status) result.duplicate_status = 'active';
     return c.json({ type, ...result, scores: { bankScore, invoiceScore, cardScore }, ocr_text: ocrText }, 201);
   } else {
     const result = await importInvoiceFromFile(
@@ -2279,6 +2313,8 @@ files.post('/:id/import-document', async (c) => {
       const status = result.error === 'File not found' ? 404 : result.error?.includes('already exists') || result.error?.includes('already been imported') ? 409 : 422;
       return c.json({ type, error: result.error, invoice_id: result.invoice_id, duplicate_info: result.duplicate_info, scores: { bankScore, invoiceScore, cardScore } }, status as any);
     }
+    result.is_duplicate = result.is_duplicate || hashDuplicate;
+    if (hashDuplicate && !result.duplicate_status) result.duplicate_status = 'active';
     return c.json({ type, ...result, scores: { bankScore, invoiceScore, cardScore }, ocr_text: ocrText }, 201);
   }
 });

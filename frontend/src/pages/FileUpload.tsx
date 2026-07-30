@@ -27,6 +27,8 @@ export default function FileUpload() {
   const [uploading, setUploading] = useState(false);
   const [processingMsg, setProcessingMsg] = useState<string | null>(null);
   const batchRef = useRef({ total: 0, done: 0, bank: 0, invoice: 0, card: 0 });
+  const [batchProgress, setBatchProgress] = useState({ done: 0, total: 0, currentFile: '' });
+  const totalTokensRef = useRef(0);
 
   function pushToQueue(docType: string, reviewId: string, filename: string, flags: string) {
     const stored = sessionStorage.getItem('reviewQueue');
@@ -39,6 +41,8 @@ export default function FileUpload() {
     if (docType === 'bank_statement') batchRef.current.bank++;
     else if (docType === 'invoice') batchRef.current.invoice++;
     else if (docType === 'card_statement') batchRef.current.card++;
+    // Sync to React state so progress bar re-renders
+    setBatchProgress({ done: batchRef.current.done, total: batchRef.current.total, currentFile: filename });
   }
 
   const handleDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); setDragOver(true); }, []);
@@ -53,7 +57,7 @@ export default function FileUpload() {
   }, []);
 
   // Upload one file: base64 → upload → import-document (OCR + type detection) → navigate
-  const uploadFile = async (file: File, skipNavigation = false): Promise<string> => {
+  const uploadFile = async (file: File, skipNavigation = false, fileIndex = 0, totalFiles = 0): Promise<string> => {
     const token = localStorage.getItem('token');
     const activeClient = localStorage.getItem('activeClient');
     const headers: Record<string, string> = {
@@ -90,13 +94,21 @@ export default function FileUpload() {
     if (!fileId) throw new Error('Upload succeeded but no file ID');
 
     // Step 2: Run OCR + document type detection
-    setProcessingMsg(tr('Running OCR and AI analysis… (20-40 sec)', 'OCR 及 AI 分析中… (20-40秒)', 'OCR 及 AI 分析中… (20-40秒)'));
+    const batchLabel = totalFiles > 1
+      ? tr(`Processing file ${fileIndex} of ${totalFiles}…`, `正在處理第 ${fileIndex}/${totalFiles} 個文件…`, `正在处理第 ${fileIndex}/${totalFiles} 个文件…`)
+      : tr('Running OCR and AI analysis… (20-40 sec)', 'OCR 及 AI 分析中… (20-40秒)', 'OCR 及 AI 分析中… (20-40秒)');
+    setProcessingMsg(batchLabel);
     const importResp = await fetch(
       `${WORKER_API_BASE}/file-storage/${fileId}/import-document`,
       { method: 'POST', headers }
     );
     const result = await importResp.json().catch(() => ({}));
     if (result?.ocr_text) console.log('[OCR-RAW-TEXT]', result.ocr_text);
+    if (result?.deepseek_raw) console.log('[DEEPSEEK-OUTPUT]', JSON.parse(result.deepseek_raw));
+    // Accumulate DeepSeek token usage
+    if (result?.usage?.total_tokens) {
+      totalTokensRef.current += result.usage.total_tokens;
+    }
     setProcessingMsg(null);
 
     // Duplicate handling
@@ -144,24 +156,32 @@ export default function FileUpload() {
 
     if (isBatch) {
       batchRef.current = { total: files.length, done: 0, bank: 0, invoice: 0, card: 0 };
+      setBatchProgress({ done: 0, total: files.length, currentFile: '' });
+      totalTokensRef.current = 0;
       sessionStorage.removeItem('reviewQueue');
       sessionStorage.removeItem('reviewQueueTotal');
     }
 
     let ok = 0;
+    let idx = 0;
     for (const file of files) {
+      idx++;
       try {
-        await uploadFile(file, isBatch);
+        setBatchProgress(prev => ({ ...prev, currentFile: file.name }));
+        await uploadFile(file, isBatch, idx, files.length);
         ok++;
       } catch (e: any) {
         toast.error(`${file.name}: ${e.message}`);
-        if (isBatch) batchRef.current.done++;
+        if (isBatch) { batchRef.current.done++; setBatchProgress(prev => ({ ...prev, done: batchRef.current.done })); }
       }
     }
 
     setUploading(false);
     setFiles([]);
     setDescription('');
+
+    const totalTokens = totalTokensRef.current;
+    const tokenLabel = totalTokens > 0 ? ` · Tokens: ~${totalTokens.toLocaleString()}` : '';
 
     if (isBatch && ok > 0) {
       const stored = sessionStorage.getItem('reviewQueue');
@@ -170,7 +190,7 @@ export default function FileUpload() {
       if (batchRef.current.bank > 0) parts.push(`${batchRef.current.bank} bank`);
       if (batchRef.current.card > 0) parts.push(`${batchRef.current.card} card`);
       if (batchRef.current.invoice > 0) parts.push(`${batchRef.current.invoice} invoice`);
-      toast.info(`Batch complete: ${parts.join(', ')} (${queue.length} queued). Save each to advance to the next.`);
+      toast.info(`Batch complete: ${parts.join(', ')} (${queue.length} queued)${tokenLabel}. Save each to advance to the next.`);
 
       if (queue.length > 0) {
         const first = queue[0];
@@ -246,12 +266,31 @@ export default function FileUpload() {
       </div>
 
       {processingMsg && (
-        <div className="bg-primary/10 border border-primary/30 rounded-lg p-4 flex items-center gap-3">
-          <Loader2 className="h-5 w-5 animate-spin text-primary" />
-          <div>
-            <p className="text-sm font-medium">{processingMsg}</p>
-            <p className="text-xs text-muted-foreground">{tr('DeepSeek AI is extracting transactions…', 'DeepSeek AI 正在提取交易記錄…', 'DeepSeek AI 正在提取交易记录…')}</p>
+        <div className="bg-primary/10 border border-primary/30 rounded-lg p-4 space-y-3">
+          <div className="flex items-center gap-3">
+            <Loader2 className="h-5 w-5 animate-spin text-primary shrink-0" />
+            <div className="min-w-0">
+              <p className="text-sm font-medium">{processingMsg}</p>
+              {batchProgress.total > 1 && batchProgress.currentFile && (
+                <p className="text-xs text-muted-foreground truncate">{batchProgress.currentFile}</p>
+              )}
+              <p className="text-xs text-muted-foreground">{tr('DeepSeek AI is extracting transactions…', 'DeepSeek AI 正在提取交易記錄…', 'DeepSeek AI 正在提取交易记录…')}</p>
+            </div>
           </div>
+          {batchProgress.total > 1 && (
+            <div className="space-y-1">
+              <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
+                <div
+                  className="bg-primary h-2 rounded-full transition-all duration-500"
+                  style={{ width: `${batchProgress.total > 0 ? (batchProgress.done / batchProgress.total) * 100 : 0}%` }}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground text-right">
+                {batchProgress.done} / {batchProgress.total}
+                {totalTokensRef.current > 0 && ` · Tokens: ~${totalTokensRef.current.toLocaleString()}`}
+              </p>
+            </div>
+          )}
         </div>
       )}
     </div>
