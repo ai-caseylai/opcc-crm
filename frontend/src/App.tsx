@@ -14,6 +14,8 @@ import Suppliers from './pages/Suppliers';
 import Products from './pages/Products';
 import Invoices from './pages/Invoices';
 import InvoiceReview from './pages/InvoiceReview';
+import AP from './pages/AP';
+import AR from './pages/AR';
 import Quotations from './pages/Quotations';
 import PurchaseOrders from './pages/PurchaseOrders';
 import ServiceOrders from './pages/ServiceOrders';
@@ -179,8 +181,8 @@ function AppRoutes() {
       <Route path="/coa" element={<ProtectedRoute><ChartOfAccounts /></ProtectedRoute>} />
       <Route path="/card-statements" element={<ProtectedRoute><FeatureGuard><CardStatements /></FeatureGuard></ProtectedRoute>} />
       <Route path="/card-statements/review/:id" element={<ProtectedRoute><FeatureGuard><CardStatementReview /></FeatureGuard></ProtectedRoute>} />
-      <Route path="/ap" element={<ProtectedRoute><StubPage title="Accounts Payable (AP)" zhHant="應付賬款" zhHans="应付账款" /></ProtectedRoute>} />
-      <Route path="/ar" element={<ProtectedRoute><StubPage title="Accounts Receivable (AR)" zhHant="應收賬款" zhHans="应收账款" /></ProtectedRoute>} />
+      <Route path="/ap" element={<ProtectedRoute><AP /></ProtectedRoute>} />
+      <Route path="/ar" element={<ProtectedRoute><AR /></ProtectedRoute>} />
       <Route path="/payroll" element={<ProtectedRoute><StubPage title="Payroll" zhHant="薪資" zhHans="薪资" /></ProtectedRoute>} />
       <Route path="/petty-cash" element={<ProtectedRoute><StubPage title="Petty Cash" zhHant="零用金" zhHans="零用金" /></ProtectedRoute>} />
       <Route path="/mpf" element={<ProtectedRoute><StubPage title="MPF" zhHant="強積金" zhHans="强积金" /></ProtectedRoute>} />

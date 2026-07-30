@@ -489,7 +489,7 @@ export default function BankStatementReview() {
         </div>
 
         {/* Right: Extracted data */}
-        <div className="space-y-4 overflow-y-auto pb-24" style={{ maxHeight: '85vh' }}>
+        <div className="space-y-4 overflow-y-auto" style={{ maxHeight: '85vh' }}>
           {/* Header info */}
           <div className="rounded-lg border bg-card p-4">
             <h3 className="font-bold text-sm mb-3">{tr('📋 Extracted Statement Details', '📋 提取的月結單資料', '📋 提取的月结单资料')}</h3>
@@ -750,8 +750,8 @@ export default function BankStatementReview() {
         </div>
       </div>
 
-      {/* Footer actions — sticky bar; pb-24 on the scroll container above prevents it hiding content */}
-      <div className="rounded-lg border-2 border-primary bg-primary/5 p-4 sticky bottom-0 z-30 shadow-lg mt-2">
+      {/* Footer actions — in normal document flow at the bottom of the page */}
+      <div className="rounded-lg border-2 border-primary bg-primary/5 p-4 mt-2">
         {isDraft ? (
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div>
