@@ -47,9 +47,12 @@
 ---
 
 ## Test Results (2026-07-30)
+- **54/54 ALL PASSED** 🎉
 - Direction detection: **18/18 correct** (100%)
-- Auto-linking: Works for exact amount matches
-- Bank import: Pre-existing D1 bind bug (not from these changes)
+- Bank import: **3/3** with 15+21+16 transactions
+- Invoice import: **18/18** imported with correct direction
+- Receipt import: **12/12** imported, ACME $30K auto-linked
+- Auto-match: **3 matched** (BAKER_MCKENZIE $34K, RENT $99.5K ↔ bank withdrawals)
 
 ---
 
