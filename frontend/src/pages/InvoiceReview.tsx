@@ -37,6 +37,7 @@ export default function InvoiceReview() {
   const needsDirectionReview = searchParams.get('review_direction') === '1';
   const companyNotDetected = searchParams.get('company_not_detected') === '1';
   const isDuplicate = searchParams.get('is_duplicate') === '1';
+  const autoLinkedId = searchParams.get('auto_linked') || '';
   const suggestedDirection = searchParams.get('direction') || '';
 
   // PDF state
@@ -298,6 +299,31 @@ export default function InvoiceReview() {
                   'A duplicate was detected. The invoice number has been adjusted to avoid conflicts. Please verify it is correct.',
                   '檢測到重複。發票號碼已調整以避免衝突。請確認是否正確。',
                   '检测到重复。发票号码已调整以避免冲突。请确认是否正确。'
+                )}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Auto-linked banner (receipt matched to invoice) ── */}
+      {autoLinkedId && (
+        <div className="mx-4 mt-2 p-3 rounded-lg border-2 border-green-300 bg-green-50 dark:bg-green-950/30 flex items-center justify-between flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">🔗</span>
+            <div>
+              <p className="text-sm font-semibold text-green-800 dark:text-green-200">
+                {tr(
+                  'This receipt has been automatically linked to an invoice.',
+                  '此收據已自動連結到一張發票。',
+                  '此收据已自动连结到一张发票。'
+                )}
+              </p>
+              <p className="text-xs text-green-600 dark:text-green-400 mt-0.5">
+                {tr(
+                  'The matching AR invoice has been marked as paid.',
+                  '相符的 AR 發票已標記為已收款。',
+                  '相符的 AR 发票已标记为已收款。'
                 )}
               </p>
             </div>

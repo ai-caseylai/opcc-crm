@@ -193,13 +193,19 @@ export default function Invoices() {
                     <span className="inline-flex items-center gap-1.5">
                       {inv.invoice_number}
                       {inv.needs_review?.includes('direction') && (
-                        <AlertTriangle className="h-3.5 w-3.5 text-amber-500" title={tr('AI OCR unclear on direction', 'AI OCR 方向不明', 'AI OCR 方向不明')} />
+                        <span title={tr('AI OCR could not determine if this is AR (you issued) or AP (you received). Please review.', 'AI OCR 無法判斷此為 AR（你開出）或 AP（你接收）。請審核。', 'AI OCR 无法判断此为 AR（你开出）或 AP（你接收）。请审核。')}>
+                          <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+                        </span>
                       )}
                       {inv.needs_review?.includes('company_not_detected') && (
-                        <Info className="h-3.5 w-3.5 text-blue-500" title={tr('Company not detected in invoice', '發票中未檢測到公司', '发票中未检测到公司')} />
+                        <span title={tr('Your company name was not detected in this invoice. It may be between two third parties.', '未在此發票中檢測到你公司名稱。可能涉及兩個第三方。', '未在此发票中检测到你公司名称。可能涉及两个第三方。')}>
+                          <Info className="h-3.5 w-3.5 text-blue-500" />
+                        </span>
                       )}
                       {inv.needs_review?.includes('duplicate') && (
-                        <Copy className="h-3.5 w-3.5 text-orange-500" title={tr('Duplicate invoice number', '重複發票號碼', '重复发票号码')} />
+                        <span title={tr('An invoice with this number already existed. The number was adjusted to avoid conflict.', '此發票號碼已存在。號碼已調整以避免衝突。', '此发票号码已存在。号码已调整以避免冲突。')}>
+                          <Copy className="h-3.5 w-3.5 text-orange-500" />
+                        </span>
                       )}
                     </span>
                   </td>
@@ -217,14 +223,20 @@ export default function Invoices() {
                   <td className="p-3 text-right hidden lg:table-cell">{inv.currency} {inv.total?.toLocaleString()}</td>
                   <td className="p-3 hidden lg:table-cell">{inv.issue_date}</td>
                   <td className="p-3 text-right">
-                    <button onClick={() => setViewId(inv.id)} className="p-1 hover:bg-muted rounded mr-1" title="查看 View"><Eye className="h-4 w-4" /></button>
-                    <button onClick={() => navigate(`/invoices/review/${inv.id}`)} className="p-1 hover:bg-muted rounded mr-1" title="編輯 Edit"><Pencil className="h-4 w-4" /></button>
-                    <button onClick={() => downloadInvoicePDF(inv.id, inv.invoice_number)} className="p-1 hover:bg-muted rounded mr-1" title="下載 PDF"><Download className="h-4 w-4" /></button>
+                    <button onClick={() => setViewId(inv.id)} className="p-1 hover:bg-muted rounded mr-1" title={tr('View', '查看', '查看')}><Eye className="h-4 w-4" /></button>
+                    <button onClick={() => navigate(`/invoices/review/${inv.id}`)} className="p-1 hover:bg-muted rounded mr-1" title={tr('Edit', '編輯', '编辑')}><Pencil className="h-4 w-4" /></button>
+                    <button onClick={() => downloadInvoicePDF(inv.id, inv.invoice_number)} className="p-1 hover:bg-muted rounded mr-1" title={tr('Download PDF', '下載 PDF', '下载 PDF')}><Download className="h-4 w-4" /></button>
                     {inv.status === 'draft' && (
-                      <button onClick={() => updateStatus.mutate({ id: inv.id, status: 'sent' })} className="text-xs text-blue-600 hover:underline mr-2">{tr('Send (AR)', '發送（應收）', '发送（应收）')}</button>
+                      <button onClick={() => updateStatus.mutate({ id: inv.id, status: 'sent' })} className={`text-xs hover:underline mr-2 ${inv.direction === 'incoming' ? 'text-orange-600' : 'text-blue-600'}`}>
+                        {inv.direction === 'incoming'
+                          ? tr('Send (AP)', '發送（應付）', '发送（应付）')
+                          : tr('Send (AR)', '發送（應收）', '发送（应收）')}
+                      </button>
                     )}
                     {inv.status === 'sent' && (
-                      <button onClick={() => updateStatus.mutate({ id: inv.id, status: 'paid' })} className="text-xs text-green-600 hover:underline mr-2">已收</button>
+                      <button onClick={() => updateStatus.mutate({ id: inv.id, status: 'paid' })} className="text-xs text-green-600 hover:underline mr-2">
+                        {inv.direction === 'incoming' ? tr('Paid', '已付', '已付') : tr('Paid', '已收', '已收')}
+                      </button>
                     )}
                     <button onClick={() => { if (confirm(tr('Delete this item?', '確定刪除?', '确定删除?'))) deleteMut.mutate(inv.id); }} className="p-1 hover:bg-muted rounded text-destructive"><Trash2 className="h-4 w-4" /></button>
                   </td>

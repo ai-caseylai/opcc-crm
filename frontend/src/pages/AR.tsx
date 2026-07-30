@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api, WORKER_API_BASE } from '../lib/api';
-import { Plus, Search, Eye, Trash2, Download, Pencil, AlertTriangle, Info, Copy } from 'lucide-react';
+import { Plus, Search, Eye, Trash2, Download, Pencil, AlertTriangle, Info, Copy, Receipt } from 'lucide-react';
 import { tr } from '../lib/i18nHelpers';
 
 // Authenticated PDF download: fetches with Bearer token, opens as blob URL
@@ -165,9 +165,26 @@ export default function AR() {
                   <td className="p-3 font-medium">
                     <span className="inline-flex items-center gap-1.5">
                       {inv.invoice_number}
-                      {inv.needs_review?.includes('direction') && <AlertTriangle className="h-3.5 w-3.5 text-amber-500" title="AI OCR unclear on direction" />}
-                      {inv.needs_review?.includes('company_not_detected') && <Info className="h-3.5 w-3.5 text-blue-500" title="Company not detected in invoice" />}
-                      {inv.needs_review?.includes('duplicate') && <Copy className="h-3.5 w-3.5 text-orange-500" title="Duplicate invoice number" />}
+                      {inv.needs_review?.includes('direction') && (
+                        <span title={tr('AI OCR could not determine if this is AR (you issued) or AP (you received). Please review.', 'AI OCR 無法判斷此為 AR（你開出）或 AP（你接收）。請審核。', 'AI OCR 无法判断此为 AR（你开出）或 AP（你接收）。请审核。')}>
+                          <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+                        </span>
+                      )}
+                      {inv.needs_review?.includes('company_not_detected') && (
+                        <span title={tr('Your company name was not detected in this invoice. It may be between two third parties.', '未在此發票中檢測到你公司名稱。可能涉及兩個第三方。', '未在此发票中检测到你公司名称。可能涉及两个第三方。')}>
+                          <Info className="h-3.5 w-3.5 text-blue-500" />
+                        </span>
+                      )}
+                      {inv.needs_review?.includes('duplicate') && (
+                        <span title={tr('An invoice with this number already existed. The number was adjusted to avoid conflict.', '此發票號碼已存在。號碼已調整以避免衝突。', '此发票号码已存在。号码已调整以避免冲突。')}>
+                          <Copy className="h-3.5 w-3.5 text-orange-500" />
+                        </span>
+                      )}
+                      {inv.status === 'sent' && !inv.linked_invoice_id && (
+                        <span title={tr('Awaiting receipt — no payment receipt linked yet', '等待收款收據 — 尚未連結付款收據', '等待收款收据 — 尚未连结付款收据')}>
+                          <Receipt className="h-3.5 w-3.5 text-red-500" />
+                        </span>
+                      )}
                     </span>
                   </td>
                   <td className="p-3 hidden md:table-cell">{inv.customer_name || '-'}</td>
@@ -180,9 +197,9 @@ export default function AR() {
                   <td className="p-3 text-right hidden lg:table-cell">{inv.currency} {inv.total?.toLocaleString()}</td>
                   <td className="p-3 hidden lg:table-cell">{inv.issue_date}</td>
                   <td className="p-3 text-right">
-                    <button onClick={() => setViewId(inv.id)} className="p-1 hover:bg-muted rounded mr-1" title="查看 View"><Eye className="h-4 w-4" /></button>
-                    <button onClick={() => navigate(`/invoices/review/${inv.id}`)} className="p-1 hover:bg-muted rounded mr-1" title="編輯 Edit"><Pencil className="h-4 w-4" /></button>
-                    <button onClick={() => downloadInvoicePDF(inv.id, inv.invoice_number)} className="p-1 hover:bg-muted rounded mr-1" title="下載 PDF"><Download className="h-4 w-4" /></button>
+                    <button onClick={() => setViewId(inv.id)} className="p-1 hover:bg-muted rounded mr-1" title={tr('View', '查看', '查看')}><Eye className="h-4 w-4" /></button>
+                    <button onClick={() => navigate(`/invoices/review/${inv.id}`)} className="p-1 hover:bg-muted rounded mr-1" title={tr('Edit', '編輯', '编辑')}><Pencil className="h-4 w-4" /></button>
+                    <button onClick={() => downloadInvoicePDF(inv.id, inv.invoice_number)} className="p-1 hover:bg-muted rounded mr-1" title={tr('Download PDF', '下載 PDF', '下载 PDF')}><Download className="h-4 w-4" /></button>
                     {inv.status === 'draft' && (
                       <button onClick={() => updateStatus.mutate({ id: inv.id, status: 'sent' })} className="text-xs text-blue-600 hover:underline mr-2">{tr('Send (AR)', '發送（應收）', '发送（应收）')}</button>
                     )}

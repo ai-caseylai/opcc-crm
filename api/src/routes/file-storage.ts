@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { Bindings, Variables } from '../types';
 import { authMiddleware, requireHigherTier } from '../middleware/auth';
 import { wsBroadcast } from './ws';
+import { generateReceiptNumber, detectOwnNumber } from '../lib/numbering';
 import { processBankStatement, extractCompanyInfo, extractBankInfo } from '../lib/bank-ocr';
 
 // Audit logging helper
@@ -804,12 +805,35 @@ ${ocrText.slice(0, 8000)}`;
   const subtotal = items.reduce((s: number, it: any) => s + it.amount, 0);
   const total = parsed?.total || subtotal;
 
-  // For receipts: use receipt_number column; invoice_number gets a REC- prefix so it never
-  // collides with real invoice numbers and the two can be told apart by receipt_number IS NOT NULL
+  // Smart number detection: check if OCR-extracted number matches client's pattern
+  const patterns = await db.prepare(
+    'SELECT invoice_number_pattern, receipt_number_pattern FROM company_settings WHERE user_id = ?'
+  ).bind(userId).first<{ invoice_number_pattern: string | null; receipt_number_pattern: string | null }>();
+
+  // For receipts: use receipt_number column as the display number
   const receiptNum = isReceipt ? (parsed?.receipt_number || parsed?.invoice_number || null) : null;
-  let invNumber = isReceipt
-    ? `REC-${Date.now().toString(36).toUpperCase()}`
-    : (parsed?.invoice_number || `INV-${Date.now().toString(36).toUpperCase()}`);
+  let counterpartyRef: string | null = null;
+
+  let invNumber: string;
+  if (isReceipt) {
+    const ocrNum = parsed?.receipt_number || parsed?.invoice_number || null;
+    const detected = detectOwnNumber(ocrNum, patterns?.invoice_number_pattern, patterns?.receipt_number_pattern);
+    if (detected.isOurs) {
+      invNumber = `REC-${Date.now().toString(36).toUpperCase()}`;
+    } else {
+      invNumber = await generateReceiptNumber(db, userId);
+      if (ocrNum && !detected.isOurs) counterpartyRef = ocrNum;
+    }
+  } else {
+    const ocrNum = parsed?.invoice_number || null;
+    const detected = detectOwnNumber(ocrNum, patterns?.invoice_number_pattern, patterns?.receipt_number_pattern);
+    if (detected.isOurs) {
+      invNumber = ocrNum!;
+    } else {
+      invNumber = `INV-${Date.now().toString(36).toUpperCase()}`;
+      if (ocrNum && !detected.isOurs) counterpartyRef = ocrNum;
+    }
+  }
 
   const issueDate = parsed?.issue_date || new Date().toISOString().split('T')[0];
   const dueDate = isReceipt ? issueDate : (parsed?.due_date || new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0]);
@@ -862,14 +886,37 @@ ${ocrText.slice(0, 8000)}`;
   const invId = `i-${uuidv4().slice(0, 8)}`;
   // Save as 'pending_review' — the user must confirm/edit on the Invoice Review page.
   await db.prepare(
-    `INSERT INTO invoices (id, user_id, invoice_number, customer_id, supplier_id, status, issue_date, due_date, subtotal, total, currency, notes, file_id, vendor_name, receipt_number, direction, needs_review)
-     VALUES (?, ?, ?, ?, ?, 'pending_review', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(invId, userId, invNumber, customerId, supplierId || null, issueDate, dueDate, subtotal, total, parsed?.currency || 'HKD', parsed?.notes || null, fileId, customerName || null, receiptNum, direction, needsReview).run();
+    `INSERT INTO invoices (id, user_id, invoice_number, customer_id, supplier_id, status, issue_date, due_date, subtotal, total, currency, notes, file_id, vendor_name, receipt_number, direction, needs_review, counterparty_ref)
+     VALUES (?, ?, ?, ?, ?, 'pending_review', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(invId, userId, invNumber, customerId, supplierId || null, issueDate, dueDate, subtotal, total, parsed?.currency || 'HKD', parsed?.notes || null, fileId, customerName || null, receiptNum, direction, needsReview, counterpartyRef).run();
+
+  // Auto-link: if this is a receipt, try to find a matching invoice by amount
+  // Receipt = proof of payment. Links to AR (customer paid us) or AP (we paid supplier)
+  let linkedInvoiceId: string | null = null;
+  if (isReceipt && total > 0) {
+    const match = await db.prepare(
+      `SELECT id, invoice_number, total, direction FROM invoices
+       WHERE user_id = ? AND status IN ('sent', 'draft', 'pending_review')
+       AND ABS(total - ?) < 0.02 AND linked_invoice_id IS NULL AND receipt_number IS NULL
+       ORDER BY ABS(total - ?) LIMIT 1`
+    ).bind(userId, total, total).first<{ id: string; invoice_number: string; total: number; direction: string }>();
+    if (match) {
+      linkedInvoiceId = match.id;
+      await db.prepare("UPDATE invoices SET status = 'paid', linked_invoice_id = ? WHERE id = ?")
+        .bind(invId, match.id).run();
+    }
+  }
 
   for (const item of items) {
     await db.prepare(
       'INSERT INTO invoice_items (id, invoice_id, description, quantity, unit_price, amount, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)'
     ).bind(`ii-${uuidv4().slice(0, 8)}`, invId, item.description, item.quantity, item.unit_price, item.amount, item.sort_order).run();
+  }
+
+  // Set the reverse link on the receipt
+  if (linkedInvoiceId) {
+    await db.prepare('UPDATE invoices SET linked_invoice_id = ? WHERE id = ?')
+      .bind(linkedInvoiceId, invId).run();
   }
 
   // Keep the file in the classified folder (Invoices or Receipts) — no per-partner subfolders
@@ -891,6 +938,7 @@ ${ocrText.slice(0, 8000)}`;
     needs_direction_review: needsDirectionReview,
     company_not_detected: companyNotDetected,
     is_duplicate: isDuplicate,
+    auto_linked_invoice_id: linkedInvoiceId,
     direction,
     parsed: {
       invoice_number: invNumber,
@@ -1604,17 +1652,17 @@ files.post('/:id/import-invoice', async (c) => {
   return c.json(result, 201);
 });
 
-// ── Auto-match invoice files with bank transactions ──
+// ── Auto-match invoices + receipts with bank transactions ──
 files.post('/auto-match-invoices', async (c) => {
   const user = c.get('user');
   const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
 
-  // Get unmatched invoice files with amounts
-  const invoiceFiles = await db.prepare(
+  // Get unmatched invoice + receipt files with amounts
+  const docFiles = await db.prepare(
     `SELECT id, filename, original_name, ocr_text, direction, amount, category
      FROM file_records
-     WHERE user_id = ? AND category = 'invoice' AND payment_status = 'unmatched' AND amount IS NOT NULL AND amount > 0`
+     WHERE user_id = ? AND category IN ('invoice', 'receipt') AND payment_status = 'unmatched' AND amount IS NOT NULL AND amount > 0`
   ).bind(tenantId).all();
 
   // Get unmatched bank transactions
@@ -1629,23 +1677,40 @@ files.post('/auto-match-invoices', async (c) => {
   ).bind(tenantId).all();
 
   const matched: any[] = [];
+  const usedTxIds = new Set<string>();
 
-  for (const file of invoiceFiles.results as any[]) {
-    const isOutgoing = file.direction === 'outgoing' || !file.direction;
-    const candidates = isOutgoing ? deposits.results : withdrawals.results;
-    const amountKey = isOutgoing ? 'deposit_amount' : 'withdrawal_amount';
-    const newStatus = isOutgoing ? 'received' : 'paid';
+  for (const file of docFiles.results as any[]) {
+    // Receipts always match deposits (money in)
+    const isReceiptDoc = file.category === 'receipt';
+    const isOutgoing = !isReceiptDoc && (file.direction === 'outgoing' || !file.direction);
+    const candidates = (isReceiptDoc || isOutgoing) ? deposits.results : withdrawals.results;
+    const amountKey = (isReceiptDoc || isOutgoing) ? 'deposit_amount' : 'withdrawal_amount';
+    const newStatus = (isReceiptDoc || isOutgoing) ? 'received' : 'paid';
 
     for (const tx of candidates as any[]) {
+      if (usedTxIds.has(tx.id)) continue;
       if (Math.abs(file.amount - tx[amountKey]) < 0.01) {
+        usedTxIds.add(tx.id);
         await db.prepare(
           `UPDATE file_records SET payment_status = ? WHERE id = ?`
         ).bind(newStatus, file.id).run();
 
+        // Also update linked invoice's file_record status for receipt-invoice pairs
+        if (isReceiptDoc) {
+          const linked = await db.prepare(
+            'SELECT file_id FROM invoices WHERE id = (SELECT linked_invoice_id FROM invoices WHERE file_id = ?)'
+          ).bind(file.id).first<{ file_id: string | null }>();
+          if (linked?.file_id) {
+            await db.prepare("UPDATE file_records SET payment_status = 'received' WHERE id = ?")
+              .bind(linked.file_id).run();
+          }
+        }
+
         matched.push({
           file_id: file.id,
           filename: file.original_name || file.filename,
-          direction: isOutgoing ? 'outgoing' : 'incoming',
+          doc_type: isReceiptDoc ? 'receipt' : 'invoice',
+          direction: isReceiptDoc ? 'incoming' : (isOutgoing ? 'outgoing' : 'incoming'),
           amount: file.amount,
           transaction_id: tx.id,
           transaction_date: tx.transaction_date,
@@ -1656,7 +1721,7 @@ files.post('/auto-match-invoices', async (c) => {
     }
   }
 
-  return c.json({ matched, unmatched: (invoiceFiles.results as any[]).length - matched.length });
+  return c.json({ matched, total_docs: (docFiles.results as any[]).length });
 });
 
 // ── Update file direction manually ──

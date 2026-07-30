@@ -5,48 +5,10 @@ import { v4 as uuidv4 } from 'uuid';
 import { Bindings, Variables } from '../types';
 import { authMiddleware } from '../middleware/auth';
 import { ensureProducts } from '../lib/auto-product';
+import { generateInvoiceNumber, generateReceiptNumber } from '../lib/numbering';
 
 const invoices = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 invoices.use('*', authMiddleware);
-
-async function generateInvoiceNumber(db: D1Database, userId: string): Promise<string> {
-  const row = await db.prepare(
-    'SELECT invoice_number_pattern FROM company_settings WHERE user_id = ?'
-  ).bind(userId).first<{ invoice_number_pattern: string }>();
-
-  const pattern = row?.invoice_number_pattern || 'INV{YY}{MM}-{NNN}';
-  const now = new Date();
-  const YYYY = now.getFullYear().toString();
-  const YY = YYYY.slice(-2);
-  const MM = (now.getMonth() + 1).toString().padStart(2, '0');
-  const DD = now.getDate().toString().padStart(2, '0');
-
-  // Expand date tokens to get prefix before counter
-  let prefix = pattern
-    .replace('{YYYY}', YYYY)
-    .replace('{YY}', YY)
-    .replace('{MM}', MM)
-    .replace('{DD}', DD);
-
-  // Extract counter length from {N+} placeholder
-  const counterMatch = pattern.match(/\{(N+)\}/);
-  const counterLen = counterMatch ? counterMatch[1].length : 4;
-  prefix = prefix.replace(/\{N+\}/, '');
-
-  // Find highest existing number with this prefix
-  const result = await db.prepare(
-    'SELECT invoice_number FROM invoices WHERE user_id = ? AND invoice_number LIKE ? ORDER BY invoice_number DESC LIMIT 1'
-  ).bind(userId, `${prefix}%`).first<{ invoice_number: string }>();
-
-  let counter = 1;
-  if (result) {
-    const numPart = result.invoice_number.substring(prefix.length);
-    const num = parseInt(numPart, 10);
-    if (!isNaN(num)) counter = num + 1;
-  }
-
-  return prefix + counter.toString().padStart(counterLen, '0');
-}
 
 invoices.get('/', async (c) => {
   const user = c.get('user');
