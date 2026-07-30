@@ -6,6 +6,16 @@ import { api, WORKER_API_BASE } from '../lib/api';
 import { Trash2, RotateCcw, AlertTriangle, FileText, Landmark } from 'lucide-react';
 import { tr } from '../lib/i18nHelpers';
 
+function reviewPageFlags(result: any): string {
+  const params = new URLSearchParams();
+  if (result?.needs_direction_review) params.set('review_direction', '1');
+  if (result?.company_not_detected) params.set('company_not_detected', '1');
+  if (result?.is_duplicate) params.set('is_duplicate', '1');
+  if (result?.direction) params.set('direction', result.direction);
+  const qs = params.toString();
+  return qs ? `?${qs}` : '';
+}
+
 interface RecycleData {
   bank_statements: any[];
   files: any[];
@@ -73,7 +83,7 @@ export default function RecycleBin() {
           );
           const result: any = await resp.json();
           if (result?.invoice_id) {
-            navigate(`/invoices/review/${result.invoice_id}`);
+            navigate(`/invoices/review/${result.invoice_id}${reviewPageFlags(result)}`);
           } else if (result?.statement_id) {
             navigate(`/bank-statements/review/${result.statement_id}`);
           } else {

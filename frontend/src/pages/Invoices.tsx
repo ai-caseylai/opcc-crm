@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api, WORKER_API_BASE } from '../lib/api';
-import { Plus, Search, FileText, Eye, Trash2, Download, Pencil } from 'lucide-react';
+import { Plus, Search, FileText, Eye, Trash2, Download, Pencil, AlertTriangle, Info, Copy } from 'lucide-react';
 import { tr } from '../lib/i18nHelpers';
 
 // Authenticated PDF download: fetches with Bearer token, opens as blob URL
@@ -106,11 +106,7 @@ export default function Invoices() {
 
   const allInvoices = data?.data || [];
   const invoices = directionFilter === 'all' ? allInvoices
-    : allInvoices.filter((inv: any) =>
-        directionFilter === 'incoming'
-          ? (inv.direction === 'incoming' || inv.direction === 'expense')
-          : (inv.direction === 'outgoing' || inv.direction === 'income')
-      );
+    : allInvoices.filter((inv: any) => inv.direction === directionFilter);
   const statusLabel = (s: string) => {
     const labels: Record<string, string> = { draft: tr('Draft', '草稿', '草稿'), sent: tr('Sent', '應收', '应收'), paid: tr('Paid', '已收', '已收'), overdue: tr('Overdue', '逾期未收', '逾期未收'), cancelled: tr('Cancelled', '已取消', '已取消') };
     return labels[s] || s;
@@ -152,11 +148,7 @@ export default function Invoices() {
             {t.label}
             {t.key !== 'all' && (
               <span className="ml-1.5 text-xs text-muted-foreground">
-                ({allInvoices.filter((inv: any) =>
-                  t.key === 'incoming'
-                    ? (inv.direction === 'incoming' || inv.direction === 'expense')
-                    : (inv.direction === 'outgoing' || inv.direction === 'income')
-                ).length})
+                ({allInvoices.filter((inv: any) => inv.direction === t.key).length})
               </span>
             )}
           </button>
@@ -197,15 +189,28 @@ export default function Invoices() {
             <tbody>
               {invoices.map((inv: any) => (
                 <tr key={inv.id} className="border-b hover:bg-muted/30">
-                  <td className="p-3 font-medium">{inv.invoice_number}</td>
-                  <td className="p-3 hidden md:table-cell">{inv.direction === 'incoming' ? (inv.vendor_name || inv.customer_name || '-') : (inv.customer_name || '-')}</td>
+                  <td className="p-3 font-medium">
+                    <span className="inline-flex items-center gap-1.5">
+                      {inv.invoice_number}
+                      {inv.needs_review?.includes('direction') && (
+                        <AlertTriangle className="h-3.5 w-3.5 text-amber-500" title={tr('AI OCR unclear on direction', 'AI OCR 方向不明', 'AI OCR 方向不明')} />
+                      )}
+                      {inv.needs_review?.includes('company_not_detected') && (
+                        <Info className="h-3.5 w-3.5 text-blue-500" title={tr('Company not detected in invoice', '發票中未檢測到公司', '发票中未检测到公司')} />
+                      )}
+                      {inv.needs_review?.includes('duplicate') && (
+                        <Copy className="h-3.5 w-3.5 text-orange-500" title={tr('Duplicate invoice number', '重複發票號碼', '重复发票号码')} />
+                      )}
+                    </span>
+                  </td>
+                  <td className="p-3 hidden md:table-cell">{inv.direction === 'incoming' ? (inv.vendor_name || inv.supplier_name || inv.customer_name || '-') : (inv.customer_name || '-')}</td>
                   <td className="p-3">
                     <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
-                      inv.direction === 'incoming' || inv.direction === 'expense'
+                      inv.direction === 'incoming'
                         ? 'bg-orange-100 text-orange-700'
                         : 'bg-blue-100 text-blue-700'
                     }`}>
-                      {(inv.direction === 'incoming' || inv.direction === 'expense') ? (tr('AP', '應付', '應付')) : (tr('AR', '應收', '應收'))}
+                      {inv.direction === 'incoming' ? (tr('AP', '應付', '應付')) : (tr('AR', '應收', '應收'))}
                     </span>
                   </td>
                   <td className="p-3"><span className={statusBadge(inv.status)}>{statusLabel(inv.status)}</span></td>
@@ -374,7 +379,7 @@ export default function Invoices() {
                 <button onClick={() => setViewId(null)} className="text-muted-foreground">✕</button>
               </div>
               <div className="grid grid-cols-2 gap-3 text-sm">
-                <div><span className="text-muted-foreground">{invoiceDetail.direction === 'incoming' ? '供應商:' : '客戶:'}</span> {invoiceDetail.direction === 'incoming' ? (invoiceDetail.vendor_name || invoiceDetail.customer_name) : invoiceDetail.customer_name}</div>
+                <div><span className="text-muted-foreground">{invoiceDetail.direction === 'incoming' ? '供應商:' : '客戶:'}</span> {invoiceDetail.direction === 'incoming' ? (invoiceDetail.vendor_name || invoiceDetail.supplier_name || invoiceDetail.customer_name) : invoiceDetail.customer_name}</div>
                 <div><span className="text-muted-foreground">{tr('Status', '狀態', '状态')}:</span> <span className={statusBadge(invoiceDetail.status)}>{statusLabel(invoiceDetail.status)}</span></div>
                 <div><span className="text-muted-foreground">{tr('Date', '日期', '日期')}:</span> {invoiceDetail.issue_date}</div>
                 <div><span className="text-muted-foreground">{tr('Due', '到期', '到期')}:</span> {invoiceDetail.due_date}</div>
@@ -419,7 +424,7 @@ export default function Invoices() {
                 <div className="grid grid-cols-2 gap-4 text-xs">
                   <div>
                     <div className="text-gray-500 uppercase tracking-wide mb-1">Bill To</div>
-                    <div className="font-semibold">{invoiceDetail.direction === 'incoming' ? (invoiceDetail.vendor_name || invoiceDetail.customer_name) : invoiceDetail.customer_name}</div>
+                    <div className="font-semibold">{invoiceDetail.direction === 'incoming' ? (invoiceDetail.vendor_name || invoiceDetail.supplier_name || invoiceDetail.customer_name) : invoiceDetail.customer_name}</div>
                     {invoiceDetail.customer_address && <div className="text-gray-500">{invoiceDetail.customer_address}</div>}
                     {invoiceDetail.customer_email && <div className="text-gray-500">{invoiceDetail.customer_email}</div>}
                   </div>

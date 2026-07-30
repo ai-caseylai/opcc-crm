@@ -101,13 +101,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .then(data => {
         const clients = data.data || [];
         setFirmClients(clients);
-        // If activeClient is stale (no longer in list), clear it
+        // Restore activeClient from localStorage, but use fresh data from API
         const saved = localStorage.getItem('activeClient');
         if (saved) {
           try {
             const parsed = JSON.parse(saved);
-            if (clients.some((c: ClientInfo) => c.id === parsed.id)) {
-              setActiveClient(parsed);
+            const fresh = clients.find((c: ClientInfo) => c.id === parsed.id);
+            if (fresh) {
+              localStorage.setItem('activeClient', JSON.stringify(fresh));
+              setActiveClient(fresh);
             } else {
               localStorage.removeItem('activeClient');
               setActiveClient(null);

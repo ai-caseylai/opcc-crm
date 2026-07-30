@@ -438,11 +438,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
         {/* LEFT: Sidebar */}
         <aside className="bg-card border-r flex flex-col relative overflow-y-auto shrink-0" style={{
-          width: sidebarDesktopOpen ? 'min(20vw, 320px)' : '64px',
-          minWidth: sidebarDesktopOpen ? '260px' : '64px',
+          width: sidebarDesktopOpen ? 'min(22vw, 340px)' : '64px',
+          minWidth: sidebarDesktopOpen ? '280px' : '64px',
           transition: 'width 300ms cubic-bezier(0.4, 0, 0.2, 1), min-width 300ms cubic-bezier(0.4, 0, 0.2, 1)',
         }}>
-          <div style={{ width: sidebarDesktopOpen ? 'min(20vw, 320px)' : '64px', minWidth: sidebarDesktopOpen ? '260px' : '64px' }}>
+          <div style={{ width: sidebarDesktopOpen ? 'min(22vw, 340px)' : '64px', minWidth: sidebarDesktopOpen ? '280px' : '64px' }}>
             {renderSidebarContent(sidebarCollapsed)}
           </div>
           {/* Collapse toggle */}

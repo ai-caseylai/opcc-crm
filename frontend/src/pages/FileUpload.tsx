@@ -6,6 +6,16 @@ import { useToast } from '../components/Toast';
 import { Upload, FileText, Image, File, Loader2 } from 'lucide-react';
 import { tr } from '../lib/i18nHelpers';
 
+function reviewPageFlags(result: any): string {
+  const params = new URLSearchParams();
+  if (result?.needs_direction_review) params.set('review_direction', '1');
+  if (result?.company_not_detected) params.set('company_not_detected', '1');
+  if (result?.is_duplicate) params.set('is_duplicate', '1');
+  if (result?.direction) params.set('direction', result.direction);
+  const qs = params.toString();
+  return qs ? `?${qs}` : '';
+}
+
 export default function FileUpload() {
   const nav = useNavigate();
   const toast = useToast();
@@ -100,7 +110,7 @@ export default function FileUpload() {
       if (result?.ocr_failed) toast.warning(tr('Could not auto-read. Please enter details manually.', '無法自動讀取。請手動輸入。', '无法自动读取。请手动输入。'));
       nav(`/bank-statements/review/${result.statement_id}`);
     } else if (docType === 'invoice' && result?.invoice_id) {
-      nav(`/invoices/review/${result.invoice_id}`);
+      nav(`/invoices/review/${result.invoice_id}${reviewPageFlags(result)}`);
     } else if (result?.error) {
       toast.error(tr('Processing error:', '處理錯誤：', '处理错误：') + ' ' + result.error);
     }

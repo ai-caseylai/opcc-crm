@@ -479,6 +479,38 @@ async function importInvoiceFromFile(
   const originalName = (fileRow.original_name || fileRow.filename || '').toLowerCase();
   const isReceipt = /receipt/i.test(originalName) || /RECEIPT\s*#|we have received|payment received|hereby confirmed/i.test(ocrText);
 
+  // ── Regex pre-extraction (runs before AI, used to validate/correct AI output) ──
+  function regexExtractInvoiceParties(text: string): { letterheadVendor: string | null; billToCustomer: string | null } {
+    // Extract the letterhead: first company-like name at the top, often followed by INVOICE or an address
+    // Pattern: "COMPANY NAME LIMITED INVOICE" or "COMPANY NAME\nCity, Country\nINVOICE"
+    const letterheadMatch = text.match(
+      /^[#\s]*(?:##\s*Page\s*\d+\s*)?([A-Z][A-Z\s&.'-]{4,60}(?:LIMITED|LTD|INC|CORP|CORPORATION|COMPANY|GMBH|LLC|LLP|CO\.?|HOLDINGS|GROUP))\b/mi
+    );
+    const letterheadVendor = letterheadMatch ? letterheadMatch[1].trim() : null;
+
+    // Extract the Bill To / Customer name — handle compact OCR where fields run together
+    // e.g. "BILL TOXENUS TECHNOLOGY LIMITEDUnit 1201" → captures "XENUS TECHNOLOGY LIMITED"
+    // Stop at lowercase-after-uppercase transition, digit, or common address words
+    const billToMatch = text.match(
+      /(?:BILL\s*TO|Bill\s*To:|Customer:|Attn:|To:)\s*\n?\s*([A-Z][A-Z\s&.'-]{4,60}(?:LIMITED|LTD|INC|CORP|CORPORATION|COMPANY|GMBH|LLC|LLP|CO\.?|HOLDINGS|GROUP)?)/mi
+    );
+    let billToCustomer: string | null = null;
+    if (billToMatch) {
+      let raw = billToMatch[1].trim();
+      // Clean up: truncate at first lowercase-after-uppercase boundary (compact OCR artifact)
+      // e.g. "XENUS TECHNOLOGY LIMITEDUnit" → "XENUS TECHNOLOGY LIMITED"
+      const cleanup = raw.match(/^([A-Z][A-Z\s&.'-]{3,60}(?:LIMITED|LTD|INC|CORP|CORPORATION|COMPANY|GMBH|LLC|LLP|CO\.?|HOLDINGS|GROUP)?)/i);
+      if (cleanup) raw = cleanup[1].trim();
+      // Remove trailing artifacts like "Unit", "Tel", "Fax", "Email", etc.
+      raw = raw.replace(/\s*(?:Unit|Tel|Fax|Email|Phone|Attn|Date|Issue|Due|Currency|Invoice|Total)\s*.*$/i, '').trim();
+      if (raw.length > 2) billToCustomer = raw;
+    }
+
+    return { letterheadVendor, billToCustomer };
+  }
+
+  const regexParties = !isReceipt ? regexExtractInvoiceParties(ocrText) : { letterheadVendor: null, billToCustomer: null };
+
   let parsed: any = null;
   if (deepseekKey) {
     try {
@@ -498,11 +530,20 @@ Return ONLY valid JSON, no explanation. Use null for missing values.
 OCR TEXT:
 ${ocrText.slice(0, 8000)}`;
 
-      const promptForInvoice = `Parse this invoice OCR text into structured JSON. Extract:
-- invoice_number: the invoice number/ID
-- vendor_name: the company that ISSUED this invoice (the seller). Look for their company name near their address, email, website, or phone number at the top. If the text starts with "Customer:" as the first line, that is NOT the vendor — keep looking for the issuer's details elsewhere (address, email domain, signature name like "Casey Lai" from muselabs-eng.com = Muse Labs). If you cannot determine the vendor, return null.
-- customer_name: the company being BILLED. This is ALWAYS in a field explicitly labelled "Customer:", "Bill To:", "Attn:", or "To:". Example: "Customer: Proficiency and Reliance Company Limited" → customer_name = "Proficiency and Reliance Company Limited".
+      // Build hints from regex pre-extraction to guide the AI
+      const regexHints = !isReceipt && (regexParties.letterheadVendor || regexParties.billToCustomer)
+        ? `HINTS (use these to guide your extraction):
+  - The issuer (vendor) at the top of the document appears to be: ${regexParties.letterheadVendor || 'NOT FOUND'}
+  - The party being billed (customer) appears to be: ${regexParties.billToCustomer || 'NOT FOUND'}
+  - IMPORTANT: vendor_name MUST be the issuer (top of document), customer_name MUST be the billed party (after Bill To:/Customer:).
+`
+        : '';
+
+      const promptForInvoice = `${regexHints}Parse this invoice OCR text into structured JSON. Extract:
+- vendor_name: the company that ISSUED this invoice. This is the company at the VERY TOP of the document — look for the name immediately followed by "INVOICE", "TAX INVOICE", or an address (city, country). If the HINTS section above found a letterhead vendor, use that value.
+- customer_name: the company being BILLED. This appears after a label like "Bill To:", "Customer:", "Attn:", or "To:". If the HINTS section above found a billed party, use that value.
 - customer_email: optional customer email
+- invoice_number: the invoice number/ID
 - issue_date: YYYY-MM-DD
 - due_date: YYYY-MM-DD if visible
 - currency: default "HKD"
@@ -531,6 +572,32 @@ ${ocrText.slice(0, 8000)}`;
     } catch {}
   }
 
+  // ── Post-AI correction: if AI swapped vendor/customer, fix using regex extraction ──
+  if (!isReceipt && parsed && regexParties.letterheadVendor) {
+    const norm = (s: string | null | undefined) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const aiVendorNorm = norm(parsed.vendor_name);
+    const regexLetterheadNorm = norm(regexParties.letterheadVendor);
+    const regexCustomerNorm = norm(regexParties.billToCustomer);
+
+    // If AI vendor matches regex Bill To (not the letterhead), the AI got it backwards
+    if (regexCustomerNorm && aiVendorNorm === regexCustomerNorm && aiVendorNorm !== regexLetterheadNorm) {
+      // Swap: the letterhead is the real vendor, the Bill To is the real customer
+      parsed = {
+        ...parsed,
+        vendor_name: regexParties.letterheadVendor,
+        customer_name: parsed.vendor_name, // the AI's "vendor" was actually the customer
+      };
+    }
+    // If AI returned no vendor_name but regex found the letterhead
+    if (!parsed.vendor_name && regexParties.letterheadVendor) {
+      parsed.vendor_name = regexParties.letterheadVendor;
+    }
+    // If AI returned no customer_name but regex found the Bill To
+    if (!parsed.customer_name && regexParties.billToCustomer) {
+      parsed.customer_name = regexParties.billToCustomer;
+    }
+  }
+
   // For receipts: the "customer" is the payer (the company that made the payment)
   // For invoices: figure out which extracted name is actually the counterparty —
   // the letterhead "vendor_name" and the "Customer:"/"Bill To:" customer_name can each
@@ -545,30 +612,41 @@ ${ocrText.slice(0, 8000)}`;
 
   let counterpartyName: string | null = null;
   let isIncoming = false;
+  let needsDirectionReview = false; // AI can't confidently determine direction
+  let companyNotDetected = false;   // User's company not found in vendor or customer names
 
   if (!isReceipt) {
     const ownCompany = await db.prepare('SELECT name FROM company_settings WHERE user_id = ?').bind(userId).first<{ name: string | null }>();
     const ownNorm = normalizeCompanyName(ownCompany?.name);
     const vendorNorm = normalizeCompanyName(parsed?.vendor_name);
     const customerNorm = normalizeCompanyName(parsed?.customer_name);
+    const hasVendor = !!(parsed?.vendor_name && parsed.vendor_name.trim().length > 2);
+    const hasCustomer = !!(parsed?.customer_name && parsed.customer_name.trim().length > 2);
+    const ownKnown = !!(ownNorm && ownNorm.length > 3);
 
-    if (ownNorm && ownNorm.length > 3 && customerNorm && (customerNorm.includes(ownNorm) || ownNorm.includes(customerNorm))) {
-      // The "Customer:" field on this invoice is US — so this is a bill FROM a supplier TO us.
+    if (ownKnown && customerNorm && (customerNorm.includes(ownNorm) || ownNorm.includes(customerNorm))) {
+      // ✅ The "Bill To:" / "Customer:" field on this invoice is US — supplier billed us.
       isIncoming = true;
       counterpartyName = parsed?.vendor_name || null;
-    } else if (ownNorm && ownNorm.length > 3 && vendorNorm && (vendorNorm.includes(ownNorm) || ownNorm.includes(vendorNorm))) {
-      // The letterhead is US — so this is an invoice WE issued to a customer.
+    } else if (ownKnown && vendorNorm && (vendorNorm.includes(ownNorm) || ownNorm.includes(vendorNorm))) {
+      // ✅ The letterhead is US — we issued this invoice to a customer.
       isIncoming = false;
       counterpartyName = parsed?.customer_name || null;
+    } else if (hasVendor && hasCustomer && ownKnown) {
+      // ⚠️ Both vendor and customer are valid third parties, neither matches our company.
+      // Default: assume this is an invoice we RECEIVED from a supplier (incoming/AP).
+      // Flag for user confirmation on the review page.
+      isIncoming = true;
+      counterpartyName = parsed?.vendor_name || null;
+      needsDirectionReview = true;
+      companyNotDetected = true;
     } else {
-      // Company settings not set or no match — use payment section as signal:
-      // If the OCR contains a bank account/payment section with vendor_name in A/C Name field
-      // → vendor_name is the payee (us) → outgoing invoice we issued.
-      // If customer_name appears in A/C Name → incoming (supplier billing us).
+      // Company settings not set, only one party extracted, or OCR incomplete.
+      // Fall back to heuristics — but also flag for review since we're uncertain.
+      needsDirectionReview = true;
       const ocrUpper = ocrText.toUpperCase();
       const acNameMatch = ocrUpper.match(/A\/C\s*NAME\s*[:：]?\s*([A-Z\s&']+?)(?:\n|$)/);
       const acName = normalizeCompanyName(acNameMatch?.[1] || '');
-      // Extract email domain for vendor detection
       const emailMatch = ocrText.match(/([a-zA-Z0-9._%+-]+@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,}))/);
       const emailDomain = normalizeCompanyName(emailMatch?.[2]?.split('.')[0] || '');
       const vendorNormShort = normalizeCompanyName(parsed?.vendor_name?.split(' ').slice(0, 2).join(' ') || '');
@@ -578,39 +656,31 @@ ${ocrText.slice(0, 8000)}`;
         const customerNormFull = normalizeCompanyName(parsed?.customer_name || '');
 
         if (customerNormFull.length > 3 && acName.includes(customerNormFull)) {
-          // A/C Name matches customer → customer is the payee → incoming (supplier billed us)
-          // e.g. acName=PROFICIENCY → customer=PNR → PNR is payee → outgoing (we are the payee)
-          // Wait: if A/C Name = customer, that means CUSTOMER receives payment = WE receive payment = OUTGOING
           isIncoming = false;
           counterpartyName = parsed?.customer_name || null;
         } else if (vendorNormFull.length > 3 && acName.includes(vendorNormFull)) {
-          // A/C Name matches vendor → vendor receives payment → vendor is third party → INCOMING
           isIncoming = true;
           counterpartyName = parsed?.vendor_name || null;
         } else if (customerNormFull.length > 3 && ownNorm && ownNorm.length > 3 && customerNormFull.includes(ownNorm.slice(0, 6))) {
-          // Customer matches our company (partial) → we are the customer → incoming
           isIncoming = true;
           counterpartyName = acName ? acName : (parsed?.vendor_name || null);
         } else {
-          // A/C Name doesn't match either side clearly
-          // If vendor_name is null (image logo), the A/C Name IS the vendor
-          // A/C Name != customer → A/C Name must be a third party → incoming
           if (!vendorNormFull && acName && customerNormFull.length > 3 && !acName.includes(customerNormFull)) {
             isIncoming = true;
-            // Use A/C Name as the vendor/supplier name since it's the payee
             const rawAcName = ocrText.toUpperCase().match(/A\/C\s*NAME\s*[:：]?\s*([A-Z\s&']+?)(?:\n|$)/)?.[1]?.trim() || null;
             counterpartyName = rawAcName ? rawAcName.split('\n')[0].trim() : null;
           } else {
-            isIncoming = false;
+            // Last resort: if we have a vendor name but no customer, default to incoming (bill from supplier)
+            isIncoming = hasVendor;
             counterpartyName = parsed?.customer_name || parsed?.vendor_name || null;
           }
         }
       } else if (emailDomain && emailDomain.length > 3 && vendorNormShort && (emailDomain.includes(vendorNormShort.slice(0, 5)) || vendorNormShort.includes(emailDomain.slice(0, 5)))) {
-        // Email domain matches vendor name → vendor is a real third-party company → incoming
         isIncoming = true;
         counterpartyName = parsed?.vendor_name || null;
       } else {
-        isIncoming = false;
+        // No signals at all — default to incoming (assume supplier bill received)
+        isIncoming = true;
         counterpartyName = parsed?.customer_name || parsed?.vendor_name || null;
       }
     }
@@ -655,7 +725,7 @@ ${ocrText.slice(0, 8000)}`;
     }
     // For incoming invoices, we (PNR) are the customer being billed.
     // Find or create a self-customer record representing our own company.
-    const ownCompanyName = (await db.prepare('SELECT name FROM company_settings WHERE user_id = ?').bind(userId).first<{ name: string | null }>())?.name || 'My Company';
+    const ownCompanyName = (await db.prepare('SELECT name FROM company_settings WHERE user_id = ?').bind(userId).first<{ name: string | null }>())?.name || 'My Company (please set your company name in Settings)';
     const selfCust = await db.prepare('SELECT id FROM customers WHERE user_id = ? AND name = ?').bind(userId, ownCompanyName).first<{ id: string }>();
     if (selfCust) {
       customerId = selfCust.id;
@@ -737,7 +807,7 @@ ${ocrText.slice(0, 8000)}`;
   // For receipts: use receipt_number column; invoice_number gets a REC- prefix so it never
   // collides with real invoice numbers and the two can be told apart by receipt_number IS NOT NULL
   const receiptNum = isReceipt ? (parsed?.receipt_number || parsed?.invoice_number || null) : null;
-  const invNumber = isReceipt
+  let invNumber = isReceipt
     ? `REC-${Date.now().toString(36).toUpperCase()}`
     : (parsed?.invoice_number || `INV-${Date.now().toString(36).toUpperCase()}`);
 
@@ -747,30 +817,24 @@ ${ocrText.slice(0, 8000)}`;
   // fileRow.direction is set by classifyFile which can't know company context
   const direction = isReceipt ? 'incoming' : (isIncoming ? 'incoming' : 'outgoing');
 
-  // Duplicate check for invoices: same invoice_number already exists
+  // Duplicate check: if same invoice/receipt number exists, append suffix instead of blocking
+  let isDuplicate = false;
   if (!isReceipt) {
     const existing = await db.prepare(
-      'SELECT id, invoice_number, customer_id FROM invoices WHERE user_id = ? AND invoice_number = ?'
-    ).bind(userId, invNumber).first<{ id: string; invoice_number: string }>();
-    if (existing) return {
-      success: false,
-      error: `Invoice ${invNumber} already exists`,
-      invoice_id: existing.id,
-      duplicate_info: { type: 'invoice', number: invNumber, vendor: customerName },
-    };
+      'SELECT id, invoice_number FROM invoices WHERE user_id = ? AND invoice_number = ?'
+    ).bind(userId, invNumber).first<{ id: string }>();
+    if (existing) isDuplicate = true;
   }
-
-  // Duplicate check for receipts: same receipt_number already exists
   if (isReceipt && receiptNum) {
     const existing = await db.prepare(
-      'SELECT id, receipt_number, vendor_name FROM invoices WHERE user_id = ? AND receipt_number = ?'
-    ).bind(userId, receiptNum).first<{ id: string; receipt_number: string; vendor_name: string | null }>();
-    if (existing) return {
-      success: false,
-      error: `Receipt ${receiptNum} already exists`,
-      invoice_id: existing.id,
-      duplicate_info: { type: 'receipt', number: receiptNum, vendor: existing.vendor_name || customerName },
-    };
+      'SELECT id FROM invoices WHERE user_id = ? AND receipt_number = ?'
+    ).bind(userId, receiptNum).first<{ id: string }>();
+    if (existing) isDuplicate = true;
+  }
+  if (isDuplicate) {
+    invNumber = isReceipt
+      ? `REC-${Date.now().toString(36).toUpperCase()}`
+      : `${invNumber}-${Date.now().toString(36).slice(-3).toUpperCase()}`;
   }
 
   // Also check by file_id — catches exact same file uploaded twice
@@ -788,12 +852,19 @@ ${ocrText.slice(0, 8000)}`;
     },
   };
 
+  // Build review flags for persistent display in the Invoices list
+  const reviewFlags: string[] = [];
+  if (needsDirectionReview) reviewFlags.push('direction');
+  if (companyNotDetected) reviewFlags.push('company_not_detected');
+  if (isDuplicate) reviewFlags.push('duplicate');
+  const needsReview = reviewFlags.join(',');
+
   const invId = `i-${uuidv4().slice(0, 8)}`;
   // Save as 'pending_review' — the user must confirm/edit on the Invoice Review page.
   await db.prepare(
-    `INSERT INTO invoices (id, user_id, invoice_number, customer_id, supplier_id, status, issue_date, due_date, subtotal, total, currency, notes, file_id, vendor_name, receipt_number, direction)
-     VALUES (?, ?, ?, ?, ?, 'pending_review', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(invId, userId, invNumber, customerId, supplierId || null, issueDate, dueDate, subtotal, total, parsed?.currency || 'HKD', parsed?.notes || null, fileId, customerName || null, receiptNum, direction).run();
+    `INSERT INTO invoices (id, user_id, invoice_number, customer_id, supplier_id, status, issue_date, due_date, subtotal, total, currency, notes, file_id, vendor_name, receipt_number, direction, needs_review)
+     VALUES (?, ?, ?, ?, ?, 'pending_review', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(invId, userId, invNumber, customerId, supplierId || null, issueDate, dueDate, subtotal, total, parsed?.currency || 'HKD', parsed?.notes || null, fileId, customerName || null, receiptNum, direction, needsReview).run();
 
   for (const item of items) {
     await db.prepare(
@@ -801,40 +872,30 @@ ${ocrText.slice(0, 8000)}`;
     ).bind(`ii-${uuidv4().slice(0, 8)}`, invId, item.description, item.quantity, item.unit_price, item.amount, item.sort_order).run();
   }
 
-  // Derive a clean partner folder name from the resolved counterparty (supplier for incoming
-  // bills, customer for outgoing invoices) — NOT the raw parsed.customer_name, which can be
-  // our own company name when this is an incoming supplier bill.
-  const rawPartner = (customerName || '').toString();
-  let partnerFolder = rawPartner
-    .replace(/\b(limited|ltd|inc|incorporated|llc|llp|co\.?|company|corp|corporation|gmbh|holdings|group|services|hk|hong\s*kong)\b/gi, '')
-    .replace(/[(),.&]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  // Title case
-  partnerFolder = partnerFolder
-    .split(' ')
-    .filter(Boolean)
-    .slice(0, 4)
-    .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-    .join(' ');
-  if (!partnerFolder || partnerFolder.length < 2) partnerFolder = 'Invoices';
+  // Keep the file in the classified folder (Invoices or Receipts) — no per-partner subfolders
+  const folder = isReceipt ? 'Receipts' : 'Invoices';
 
   // Update file record
   await db.prepare(
-    "UPDATE file_records SET category = 'invoice', direction = ?, payment_status = 'unmatched', amount = ?, folder = ?, updated_at = datetime('now') WHERE id = ?"
-  ).bind(direction, total, partnerFolder, fileId).run();
+    "UPDATE file_records SET category = ?, direction = ?, payment_status = 'unmatched', amount = ?, folder = ?, updated_at = datetime('now') WHERE id = ?"
+  ).bind(isReceipt ? 'receipt' : 'invoice', direction, total, folder, fileId).run();
 
   // Return parsed data so the review page can pre-populate without another round-trip
   return {
     success: true,
     invoice_id: invId,
     items_count: items.length,
-    partner_folder: partnerFolder,
+    folder,
     is_receipt: isReceipt,
     receipt_number: receiptNum,
+    needs_direction_review: needsDirectionReview,
+    company_not_detected: companyNotDetected,
+    is_duplicate: isDuplicate,
+    direction,
     parsed: {
       invoice_number: invNumber,
       customer_name: customerName,
+      vendor_name: parsed?.vendor_name || null,
       issue_date: issueDate,
       due_date: dueDate,
       currency: parsed?.currency || 'HKD',
@@ -873,32 +934,12 @@ function classifyFile(filename: string, fileType: string, ocrText?: string): { f
   const type = fileType.toLowerCase();
 
   // Bank statements
-  if (/hsbc|bank|statement|月結單|月结单|bank\s*statement|eStatement/i.test(name)) {
+  if (/hsbc|bank\s*statement|月結單|月结单|eStatement|statement\s*date|statement\s*period/i.test(name) && !/card|credit/i.test(name)) {
     return { folder: 'Bank Statements', category: 'bank_statement' };
   }
-  // Business Registration
-  if (/br[^a-z]|business\s*reg|商業登記|商业登记|biz\s*reg/i.test(name)) {
-    return { folder: 'Business Registration', category: 'br' };
-  }
-  // Certificate of Incorporation
-  if (/ci[^a-z]|incorporation|公司註冊|公司注册|inc\s*cert/i.test(name)) {
-    return { folder: 'Company Incorporation', category: 'ci' };
-  }
-  // Employee Insurance
-  if (/ei[^a-z]|insurance|勞工保險|劳工保险|employee\s*insurance|ec\s*insurance/i.test(name)) {
-    return { folder: 'Insurance', category: 'ei' };
-  }
-  // Employment Contract
-  if (/employment|雇傭|雇佣|僱傭|staff\s*contract|labour\s*contract|labor\s*contract/i.test(name)) {
-    return { folder: 'Employment Contracts', category: 'ec' };
-  }
-  // Telecom Contract
-  if (/telecom|電信|电信|broadband|寬頻|宽频|mobile\s*plan|上網|上网/i.test(name)) {
-    return { folder: 'Telecom Contracts', category: 'tc' };
-  }
-  // Rental Lease
-  if (/rental|lease|tenancy|租約|租约|租單|租单|tenancy\s*agreement|lease\s*agreement/i.test(name)) {
-    return { folder: 'Rental Leases', category: 'rl' };
+  // Card statements
+  if (/card\s*statement|credit\s*card|信用卡|card\s*stmt|amex|mastercard|visa\s*statement/i.test(name)) {
+    return { folder: 'Card Statements', category: 'card_statement' };
   }
   // Invoices — direction is determined later by company_settings comparison, not here
   if (/invoice|發票|发票|inv[_-]?\d/i.test(name)) {
@@ -908,24 +949,9 @@ function classifyFile(filename: string, fileType: string, ocrText?: string): { f
   if (/receipt|收據|收据/i.test(name)) {
     return { folder: 'Receipts', category: 'receipt' };
   }
-  // Contracts
-  if (/contract|agreement|合約|合同|合约/i.test(name)) {
-    return { folder: 'Contracts', category: 'contract' };
-  }
-  // PDFs
-  if (type.includes('pdf')) {
-    return { folder: 'Documents', category: 'document' };
-  }
-  // Images
-  if (type.includes('image')) {
-    return { folder: 'Images', category: 'image' };
-  }
-  // Spreadsheets
-  if (type.includes('sheet') || type.includes('excel') || type.includes('xls') || name.endsWith('.csv')) {
-    return { folder: 'Spreadsheets', category: 'spreadsheet' };
-  }
 
-  return { folder: 'General', category: 'general' };
+  // Everything else
+  return { folder: 'Others', category: 'general' };
 }
 
 // Run GLM-OCR for PDFs and images

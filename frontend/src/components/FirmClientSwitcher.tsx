@@ -65,7 +65,7 @@ export default function CompanySwitcher() {
             <button onClick={() => { setOpen(true); setSearch(''); }}
               className="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm border bg-background hover:bg-muted transition-colors text-left">
               <Building2 className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
-              <span className="flex-1 truncate text-xs">
+              <span className="flex-1 text-xs whitespace-normal break-words leading-tight">
                 {displayName}
               </span>
             </button>
@@ -107,8 +107,8 @@ export default function CompanySwitcher() {
                   className={`w-full text-left px-3 py-2 text-sm hover:bg-muted transition-colors ${
                     activeClient?.id === client.id ? 'bg-primary/10 font-medium text-primary' : ''
                   }`}>
-                  <div className="truncate">{client.display_name || client.company_name || client.user_name}</div>
-                  {client.email && <div className="text-[10px] text-muted-foreground truncate">{client.email}</div>}
+                  <div className="whitespace-normal break-words leading-tight">{client.display_name || client.company_name || client.user_name}</div>
+                  {client.email && <div className="text-[10px] text-muted-foreground whitespace-normal break-words leading-tight">{client.email}</div>}
                 </button>
               ))}
               {search && filtered.length === 0 && (

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api, WORKER_API_BASE } from '../lib/api';
-import { Plus, Search, Eye, Trash2, Download, Pencil } from 'lucide-react';
+import { Plus, Search, Eye, Trash2, Download, Pencil, AlertTriangle, Info, Copy } from 'lucide-react';
 import { tr } from '../lib/i18nHelpers';
 
 // Authenticated PDF download: fetches with Bearer token, opens as blob URL
@@ -46,7 +46,7 @@ export default function AR() {
 
   const { data, isLoading } = useQuery({
     queryKey: ['invoices-ar', search, status, page],
-    queryFn: () => api(`/invoices?q=${search}&status=${status}&page=${page}&limit=20&doc_type=invoice`),
+    queryFn: () => api(`/invoices?q=${search}&status=${status}&page=${page}&limit=20&doc_type=invoice&direction=outgoing`),
   });
 
   const { data: customers } = useQuery({
@@ -104,11 +104,7 @@ export default function AR() {
     createMut.mutate({ ...form, direction: 'outgoing' });
   }
 
-  const allInvoices = data?.data || [];
-  // Filter to only AR (outgoing/income)
-  const invoices = allInvoices.filter((inv: any) =>
-    inv.direction === 'outgoing' || inv.direction === 'income'
-  );
+  const invoices = data?.data || [];
 
   const statusLabel = (s: string) => {
     const labels: Record<string, string> = { draft: tr('Draft', '草稿', '草稿'), sent: tr('Sent', '應收', '应收'), paid: tr('Paid', '已收', '已收'), overdue: tr('Overdue', '逾期未收', '逾期未收'), cancelled: tr('Cancelled', '已取消', '已取消') };
@@ -166,7 +162,14 @@ export default function AR() {
             <tbody>
               {invoices.map((inv: any) => (
                 <tr key={inv.id} className="border-b hover:bg-muted/30">
-                  <td className="p-3 font-medium">{inv.invoice_number}</td>
+                  <td className="p-3 font-medium">
+                    <span className="inline-flex items-center gap-1.5">
+                      {inv.invoice_number}
+                      {inv.needs_review?.includes('direction') && <AlertTriangle className="h-3.5 w-3.5 text-amber-500" title="AI OCR unclear on direction" />}
+                      {inv.needs_review?.includes('company_not_detected') && <Info className="h-3.5 w-3.5 text-blue-500" title="Company not detected in invoice" />}
+                      {inv.needs_review?.includes('duplicate') && <Copy className="h-3.5 w-3.5 text-orange-500" title="Duplicate invoice number" />}
+                    </span>
+                  </td>
                   <td className="p-3 hidden md:table-cell">{inv.customer_name || '-'}</td>
                   <td className="p-3">
                     <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-blue-100 text-blue-700">

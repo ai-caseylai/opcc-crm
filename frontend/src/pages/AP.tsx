@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api, WORKER_API_BASE } from '../lib/api';
-import { Plus, Search, Eye, Trash2, Download, Pencil } from 'lucide-react';
+import { Plus, Search, Eye, Trash2, Download, Pencil, AlertTriangle, Info, Copy } from 'lucide-react';
 import { tr } from '../lib/i18nHelpers';
 
 // Authenticated PDF download: fetches with Bearer token, opens as blob URL
@@ -46,7 +46,7 @@ export default function AP() {
 
   const { data, isLoading } = useQuery({
     queryKey: ['invoices-ap', search, status, page],
-    queryFn: () => api(`/invoices?q=${search}&status=${status}&page=${page}&limit=20&doc_type=invoice`),
+    queryFn: () => api(`/invoices?q=${search}&status=${status}&page=${page}&limit=20&doc_type=invoice&direction=incoming`),
   });
 
   const { data: suppliers } = useQuery({
@@ -104,11 +104,7 @@ export default function AP() {
     createMut.mutate({ ...form, direction: 'incoming' });
   }
 
-  const allInvoices = data?.data || [];
-  // Filter to only AP (incoming/expense)
-  const invoices = allInvoices.filter((inv: any) =>
-    inv.direction === 'incoming' || inv.direction === 'expense'
-  );
+  const invoices = data?.data || [];
 
   const statusLabel = (s: string) => {
     const labels: Record<string, string> = { draft: tr('Draft', '草稿', '草稿'), sent: tr('Sent', '應付', '应付'), paid: tr('Paid', '已付', '已付'), overdue: tr('Overdue', '逾期未付', '逾期未付'), cancelled: tr('Cancelled', '已取消', '已取消') };
@@ -166,8 +162,15 @@ export default function AP() {
             <tbody>
               {invoices.map((inv: any) => (
                 <tr key={inv.id} className="border-b hover:bg-muted/30">
-                  <td className="p-3 font-medium">{inv.invoice_number}</td>
-                  <td className="p-3 hidden md:table-cell">{inv.vendor_name || inv.customer_name || '-'}</td>
+                  <td className="p-3 font-medium">
+                    <span className="inline-flex items-center gap-1.5">
+                      {inv.invoice_number}
+                      {inv.needs_review?.includes('direction') && <AlertTriangle className="h-3.5 w-3.5 text-amber-500" title="AI OCR unclear on direction" />}
+                      {inv.needs_review?.includes('company_not_detected') && <Info className="h-3.5 w-3.5 text-blue-500" title="Company not detected in invoice" />}
+                      {inv.needs_review?.includes('duplicate') && <Copy className="h-3.5 w-3.5 text-orange-500" title="Duplicate invoice number" />}
+                    </span>
+                  </td>
+                  <td className="p-3 hidden md:table-cell">{inv.vendor_name || inv.supplier_name || inv.customer_name || '-'}</td>
                   <td className="p-3">
                     <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-orange-100 text-orange-700">
                       {tr('AP', '應付', '应付')}
@@ -339,7 +342,7 @@ export default function AP() {
                 <button onClick={() => setViewId(null)} className="text-muted-foreground">✕</button>
               </div>
               <div className="grid grid-cols-2 gap-3 text-sm">
-                <div><span className="text-muted-foreground">{tr('Supplier', '供應商', '供应商')}:</span> {invoiceDetail.vendor_name || invoiceDetail.customer_name}</div>
+                <div><span className="text-muted-foreground">{tr('Supplier', '供應商', '供应商')}:</span> {invoiceDetail.vendor_name || invoiceDetail.supplier_name || invoiceDetail.customer_name}</div>
                 <div><span className="text-muted-foreground">{tr('Status', '狀態', '状态')}:</span> <span className={statusBadge(invoiceDetail.status)}>{statusLabel(invoiceDetail.status)}</span></div>
                 <div><span className="text-muted-foreground">{tr('Date', '日期', '日期')}:</span> {invoiceDetail.issue_date}</div>
                 <div><span className="text-muted-foreground">{tr('Due', '到期', '到期')}:</span> {invoiceDetail.due_date}</div>
@@ -382,7 +385,7 @@ export default function AP() {
                 <div className="grid grid-cols-2 gap-4 text-xs">
                   <div>
                     <div className="text-gray-500 uppercase tracking-wide mb-1">Bill From</div>
-                    <div className="font-semibold">{invoiceDetail.vendor_name || invoiceDetail.customer_name}</div>
+                    <div className="font-semibold">{invoiceDetail.vendor_name || invoiceDetail.supplier_name || invoiceDetail.customer_name}</div>
                     {invoiceDetail.customer_address && <div className="text-gray-500">{invoiceDetail.customer_address}</div>}
                     {invoiceDetail.customer_email && <div className="text-gray-500">{invoiceDetail.customer_email}</div>}
                   </div>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api, WORKER_API_BASE } from '../lib/api';
@@ -29,7 +29,15 @@ export default function InvoiceReview() {
   const toast = useToast();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
+
+  // Check for flags from import-invoice
+  const searchParams = new URLSearchParams(location.search);
+  const needsDirectionReview = searchParams.get('review_direction') === '1';
+  const companyNotDetected = searchParams.get('company_not_detected') === '1';
+  const isDuplicate = searchParams.get('is_duplicate') === '1';
+  const suggestedDirection = searchParams.get('direction') || '';
 
   // PDF state
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
@@ -56,6 +64,7 @@ export default function InvoiceReview() {
       vendor_name: invoiceData.vendor_name || '',
       customer_id: invoiceData.customer_id || '',
       supplier_id: invoiceData.supplier_id || '',
+      direction: invoiceData.direction || 'outgoing',
       issue_date: invoiceData.issue_date || '',
       due_date: invoiceData.due_date || '',
       currency: invoiceData.currency || 'HKD',
@@ -162,7 +171,8 @@ export default function InvoiceReview() {
 
   // Detect if this is a receipt (has receipt_number set, or invoice_number starts with REC-)
   const isReceipt = !!(invoiceData?.receipt_number || invoiceData?.invoice_number?.startsWith('REC-'));
-  const isIncomingInvoice = !isReceipt && invoiceData?.direction === 'incoming';
+  // Use form.direction so user can toggle; fall back to invoiceData.direction
+  const isIncomingInvoice = !isReceipt && (form?.direction || invoiceData?.direction) === 'incoming';
 
   // For incoming invoices, also fetch suppliers for the link dropdown
   // NOTE: This hook MUST be before any conditional return (React Rules of Hooks)
@@ -219,6 +229,81 @@ export default function InvoiceReview() {
           </div>
         </div>
       </div>
+
+      {/* ── Direction review banner ── */}
+      {needsDirectionReview && !isReceipt && (
+        <div className="mx-4 mt-2 p-3 rounded-lg border-2 border-amber-300 bg-amber-50 dark:bg-amber-950/30 flex items-center justify-between flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">⚠️</span>
+            <div>
+              <p className="text-sm font-semibold text-amber-800 dark:text-amber-200">
+                {tr(
+                  'AI OCR could not determine if this invoice was issued by you or received from a supplier.',
+                  'AI OCR 無法確定此發票是由你公司開出還是從供應商接收。',
+                  'AI OCR 无法确定此发票是由你公司开出还是从供应商接收。'
+                )}
+              </p>
+              <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
+                {tr(
+                  'Please confirm the direction below. Default: AP (received from supplier).',
+                  '請在下方確認類型。預設：AP 應付（從供應商接收）。',
+                  '请在下方确认类型。预设：AP 应付（从供应商接收）。'
+                )}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Company not detected banner ── */}
+      {companyNotDetected && !isReceipt && (
+        <div className="mx-4 mt-2 p-3 rounded-lg border-2 border-blue-300 bg-blue-50 dark:bg-blue-950/30 flex items-center justify-between flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">ℹ️</span>
+            <div>
+              <p className="text-sm font-semibold text-blue-800 dark:text-blue-200">
+                {tr(
+                  'AI OCR did not detect your company name in this invoice.',
+                  'AI OCR 在此發票中未檢測到你公司名稱。',
+                  'AI OCR 在此发票中未检测到你公司名称。'
+                )}
+              </p>
+              <p className="text-xs text-blue-600 dark:text-blue-400 mt-0.5">
+                {tr(
+                  'This invoice appears to be between two third parties. Please verify who sent and received it before saving.',
+                  '此發票似乎涉及兩個第三方。請在儲存前確認發送方和接收方。',
+                  '此发票似乎涉及两个第三方。请在储存前确认发送方和接收方。'
+                )}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Duplicate banner ── */}
+      {isDuplicate && (
+        <div className="mx-4 mt-2 p-3 rounded-lg border-2 border-orange-300 bg-orange-50 dark:bg-orange-950/30 flex items-center justify-between flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">🔁</span>
+            <div>
+              <p className="text-sm font-semibold text-orange-800 dark:text-orange-200">
+                {tr(
+                  'An invoice with this number already exists.',
+                  '此發票號碼已存在。',
+                  '此发票号码已存在。'
+                )}
+              </p>
+              <p className="text-xs text-orange-600 dark:text-orange-400 mt-0.5">
+                {tr(
+                  'A duplicate was detected. The invoice number has been adjusted to avoid conflicts. Please verify it is correct.',
+                  '檢測到重複。發票號碼已調整以避免衝突。請確認是否正確。',
+                  '检测到重复。发票号码已调整以避免冲突。请确认是否正确。'
+                )}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Split pane ── */}
       <div className="flex flex-1 min-h-0 gap-0">
@@ -302,6 +387,35 @@ export default function InvoiceReview() {
                     className="w-full px-2 py-1.5 border rounded text-sm bg-background" />
                 </div>
               </div>
+              {!isReceipt && (
+                <div className="pt-1">
+                  <label className="text-xs text-muted-foreground block mb-1">{tr('Direction', 'Direction 類型', 'Direction 类型')}</label>
+                  <div className="flex gap-1 bg-muted/50 rounded-lg p-1 w-fit">
+                    <button
+                      type="button"
+                      onClick={() => setForm({ ...form, direction: 'outgoing' })}
+                      className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
+                        (form?.direction || invoiceData?.direction) === 'outgoing'
+                          ? 'bg-blue-100 text-blue-700 shadow-sm'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      {tr('AR — We issued', 'AR 應收 — We issued', 'AR 应收 — We issued')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setForm({ ...form, direction: 'incoming' })}
+                      className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
+                        (form?.direction || invoiceData?.direction) === 'incoming'
+                          ? 'bg-orange-100 text-orange-700 shadow-sm'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      {tr('AP — Billed us', 'AP 應付 — Billed us', 'AP 应付 — Billed us')}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* ── Customer / Vendor ── */}

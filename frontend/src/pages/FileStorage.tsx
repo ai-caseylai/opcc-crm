@@ -9,6 +9,17 @@ import SupervisorPasswordModal from '../components/SupervisorPasswordModal';
 import { useAuth } from '../contexts/AuthContext';
 import { tr } from '../lib/i18nHelpers';
 
+// Build query string for review page flags from API response
+function reviewPageFlags(result: any): string {
+  const params = new URLSearchParams();
+  if (result?.needs_direction_review) params.set('review_direction', '1');
+  if (result?.company_not_detected) params.set('company_not_detected', '1');
+  if (result?.is_duplicate) params.set('is_duplicate', '1');
+  if (result?.direction) params.set('direction', result.direction);
+  const qs = params.toString();
+  return qs ? `?${qs}` : '';
+}
+
 function formatSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -23,17 +34,9 @@ function fileIcon(type: string) {
 }
 
 function autoFolder(filename: string, fileType: string): string {
-  const ext = filename.split('.').pop()?.toLowerCase() || '';
-  const t = (fileType || '').toLowerCase();
-  if (t.includes('pdf') || ext === 'pdf') return 'Documents/PDF';
-  if (t.includes('word') || ext === 'doc' || ext === 'docx') return 'Documents/Word';
-  if (t.includes('sheet') || t.includes('excel') || ext === 'xls' || ext === 'xlsx') return 'Spreadsheets';
-  if (t.includes('csv') || ext === 'csv') return 'Spreadsheets/CSV';
-  if (t.includes('image') || ext === 'png' || ext === 'jpg' || ext === 'jpeg' || ext === 'gif' || ext === 'webp') return 'Images';
-  if (ext === 'zip' || ext === 'rar' || ext === '7z') return 'Archives';
-  if (ext === 'txt') return 'Documents/Text';
-  if (ext === 'ppt' || ext === 'pptx') return 'Documents/Slides';
-  return 'Other';
+  // Backend classifyFile handles specific types (Bank Statements, Card Statements, Invoices, Receipts).
+  // Frontend fallback: everything else goes to Others.
+  return 'Others';
 }
 
 async function downloadFile(id: string, filename: string) {
@@ -329,7 +332,7 @@ export default function FileStorage() {
           if (result?.ocr_failed) {
             toast.warning('Could not automatically read this invoice. You will be taken to the review page to enter details manually.');
           }
-          navigate(`/invoices/review/${result.invoice_id}`);
+          navigate(`/invoices/review/${result.invoice_id}${reviewPageFlags(result)}`);
         } else if (docType === 'card_statement' && result?.statement_id) {
           navigate(`/card-statements/review/${result.statement_id}`);
         } else if (result?.error) {
@@ -575,7 +578,7 @@ export default function FileStorage() {
         // Just close — user decided not to re-upload
         return;
       } else if (invoiceId) {
-        navigate(`/invoices/review/${invoiceId}`);
+        navigate(`/invoices/review/${invoiceId}${reviewPageFlags(result)}`);
       }
       return;
     }
@@ -608,7 +611,7 @@ export default function FileStorage() {
       if (result?.statement_id) {
         navigate(`/bank-statements/review/${result.statement_id}`);
       } else if (result?.invoice_id) {
-        navigate(`/invoices/review/${result.invoice_id}`);
+        navigate(`/invoices/review/${result.invoice_id}${reviewPageFlags(result)}`);
       } else {
         toast.error(`Re-import failed: ${result?.error || 'Unknown error'}`);
       }
@@ -651,7 +654,7 @@ export default function FileStorage() {
         if (result?.ocr_failed) {
           toast.warning('Could not automatically read this invoice. You will be taken to the review page to enter details manually.');
         }
-        navigate(`/invoices/review/${result.invoice_id}`);
+        navigate(`/invoices/review/${result.invoice_id}${reviewPageFlags(result)}`);
       } else if (result?.error) {
         toast.error(`Processing failed: ${result.error}`);
       }
