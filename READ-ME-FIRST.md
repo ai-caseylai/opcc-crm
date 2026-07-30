@@ -3,11 +3,22 @@
 Full opcc-crm project with all changes applied:
 - Bank statement OCR + review-before-save flow
 - Invoice upload + auto-detection (smart routing)
-- Partner-folder auto-organization for invoices
+- Receipt OCR + invoice-receipt auto-linking
+- File Storage reorganized into 5 folders
 - Reconciliation page (match transactions ↔ invoices)
 - Multi-tenant firm mode with client switcher
 - AI chat recursion bug fix
 - Firm-mode PDF viewer fix
+- Direction standardization (AR/AP) with review flags
+- Batch upload with sequential review queue
+
+## Live URLs
+
+| Service | URL |
+|---------|-----|
+| **Frontend** | `https://e75644da.opcc-crm-testing.pages.dev` |
+| **API** | `https://opcc-crm-api.ruhan-farhan.workers.dev` |
+| **GitHub** | `https://github.com/techconnsme/development_code.git` |
 
 ## NOT included (intentionally)
 
