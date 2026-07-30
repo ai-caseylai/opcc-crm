@@ -19,3 +19,8 @@ DEPLOYMENT_CONTEXT.md
 TeCS_DEVELOPMENT_ROADMAP.md
 demo-redesign.html
 fix-admin-password.sql
+
+# Test artifacts
+test-results/
+test-samples-generated/
+*.tsbuildinfo
