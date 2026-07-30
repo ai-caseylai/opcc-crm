@@ -2,68 +2,71 @@
 
 > Updated 2026-07-30
 
----
+## Completed
 
-## Completed Features
-
-### Direction Standardization
-- [x] Standardize `direction` to `incoming`/`outgoing` across DB, API, frontend
-- [x] DB migration: 1 `income` row → `outgoing`, `file_records` NULLs fixed
-- [x] Server-side filtering: `?direction=incoming|outgoing`
-- [x] Direction toggle on Invoice Review page
-- [x] AI OCR improvements: regex pre-extraction, improved prompt, post-AI correction
+### Direction & OCR
+- Direction standardization (incoming/outgoing) — DB migration, API, frontend
+- Server-side direction filtering (`?direction=incoming|outgoing`)
+- AI OCR: regex pre-extraction for vendor/customer, improved prompt, post-AI correction
+- Direction toggle on invoice review page
 
 ### Review Flags
-- [x] `needs_review` column on invoices (direction, company_not_detected, duplicate)
-- [x] Flag icons in Invoices, AP, AR list views with tooltips
-- [x] Review page banners: direction unclear, company not detected, duplicate, auto-linked
-- [x] Flags passed through all navigation paths (FileStorage, FileUpload, RecycleBin)
+- `needs_review` column: direction, company_not_detected, duplicate
+- Icons in Invoices/AP/AR/Receipts list views with tooltips
+- Banners on review page: direction unclear, company not detected, duplicate (active/deleted), auto-linked
+- Flags passed through all navigation paths
 
 ### Receipts & Linking
-- [x] Flexible numbering: `generateReceiptNumber()`, `detectOwnNumber()`, `counterparty_ref`
-- [x] Shared lib: `api/src/lib/numbering.ts`
-- [x] `receipt_number_pattern` and `counterparty_ref` columns
-- [x] Receipt-to-invoice auto-linking by amount (bidirectional AR+AP)
-- [x] Missing-receipt flag on AR list (sent invoices without linked receipt)
+- Flexible numbering: generateReceiptNumber, detectOwnNumber, counterparty_ref
+- Shared lib: `api/src/lib/numbering.ts`
+- Receipt-to-invoice auto-linking by amount (bidirectional AR+AP)
+- Missing-receipt flag on AR list
+- Receipt UI: tabs (All/Linked/Unlinked), create/view modals, link column
 
 ### Bank Matching
-- [x] Auto-match extended to receipts (category IN invoice,receipt)
-- [x] Dedup for linked invoice-receipt pairs
-- [x] `doc_type` field in match response
+- Auto-match extended to receipts + invoices
+- Dedup for linked pairs
+- Journal dedup guard on confirm (journal_skipped flag)
 
 ### File Storage
-- [x] Reorganized into 5 folders: Bank Statements, Card Statements, Invoices, Receipts, Others
-- [x] No more per-partner subfolders
-- [x] Card statement auto-detection added
-- [x] Invoice delete also removes linked file_record
+- 5 folders: Bank Statements, Card Statements, Invoices, Receipts, Others
+- Invoice delete cascades to file_record
+- Card statement auto-detection
+
+### Batch Upload
+- FileUpload.tsx: skipNavigation + pushToQueue with sessionStorage queue
+- FileStorage.tsx: onFileStorage guard prevents redirect when user navigated away
+- Review pages: goNextInQueue() advances to next queued item on save/discard
+
+### Duplicate Handling
+- Never blocks — always creates pending_review and shows preview
+- Duplicate status: active vs deleted (soft-deleted)
+- Review page banner explains the distinction
+- Content hash check as soft flag, not hard block
+
+### Soft-Delete Audit
+- 60+ queries fixed across bank-statements.ts, card-statements.ts, file-storage.ts, bookkeeping.ts
+- `deleted_at IS NULL` filter on all read queries for soft-deletable tables
 
 ### UI/UX
-- [x] Sidebar: wider (280-340px), company name wraps
-- [x] Company dropdown: fresh API data (not stale localStorage)
-- [x] Demo Company 1 → "Proficiency and Reliance Company Limited" (DB fix)
-- [x] i18n: Send AR/AP direction-aware, button tooltips use tr()
-- [x] Review banner text mentions "AI OCR"
+- Sidebar: wider, company name wraps, fresh API data
+- Demo Company 1 → "Proficiency and Reliance Company Limited"
+- i18n: Send AR/AP direction-aware, button tooltips
+- Bank statement confirm: idempotent (no "Already confirmed" error on double-click)
+
+### DB Migrations
+- receipt_number_pattern, counterparty_ref, linked_invoice_id, needs_review, content_hash
+
+### Test Results
+- **54/54 ALL PASSED**
+- Direction: 18/18, Banks: 3/3, Invoices: 18/18, Receipts: 12/12, Links: 1, Matches: 3
 
 ---
 
-## Test Results (2026-07-30)
-- **54/54 ALL PASSED** 🎉
-- Direction detection: **18/18 correct** (100%)
-- Bank import: **3/3** with 15+21+16 transactions
-- Invoice import: **18/18** imported with correct direction
-- Receipt import: **12/12** imported, ACME $30K auto-linked
-- Auto-match: **3 matched** (BAKER_MCKENZIE $34K, RENT $99.5K ↔ bank withdrawals)
-
----
-
-## Deployment URLs
-- **Frontend**: `https://be377ae6.opcc-crm-testing.pages.dev`
+## Deployment
+- **Frontend**: `https://e75644da.opcc-crm-testing.pages.dev`
 - **API**: `https://opcc-crm-api.ruhan-farhan.workers.dev`
 - **GitHub**: `https://github.com/techconnsme/development_code.git`
 
----
-
 ## Pending
-- [x] Fix D1 bind bug in `importStatementFromFile` — INSERT SQL was accidentally deleted from empty draft fallback
-- [x] Receipt UI rewrite — tabs (All/Linked/Unlinked), create form, view modal, review flags, link status column
-- [ ] Company-owned Cloudflare account migration (see memory: tecs-deployment-state)
+- [ ] Company-owned Cloudflare account migration

@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, WORKER_API_BASE } from '../lib/api';
@@ -26,6 +26,20 @@ export default function FileUpload() {
   const [description, setDescription] = useState('');
   const [uploading, setUploading] = useState(false);
   const [processingMsg, setProcessingMsg] = useState<string | null>(null);
+  const batchRef = useRef({ total: 0, done: 0, bank: 0, invoice: 0, card: 0 });
+
+  function pushToQueue(docType: string, reviewId: string, filename: string, flags: string) {
+    const stored = sessionStorage.getItem('reviewQueue');
+    let queue: { docType: string; reviewId: string; filename: string; flags: string }[] = [];
+    try { if (stored) queue = JSON.parse(stored); } catch {}
+    queue.push({ docType, reviewId, filename, flags });
+    sessionStorage.setItem('reviewQueue', JSON.stringify(queue));
+    sessionStorage.setItem('reviewQueueTotal', String(batchRef.current.total));
+    batchRef.current.done++;
+    if (docType === 'bank_statement') batchRef.current.bank++;
+    else if (docType === 'invoice') batchRef.current.invoice++;
+    else if (docType === 'card_statement') batchRef.current.card++;
+  }
 
   const handleDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); setDragOver(true); }, []);
   const handleDragLeave = useCallback(() => setDragOver(false), []);
@@ -39,7 +53,7 @@ export default function FileUpload() {
   }, []);
 
   // Upload one file: base64 → upload → import-document (OCR + type detection) → navigate
-  const uploadFile = async (file: File): Promise<string> => {
+  const uploadFile = async (file: File, skipNavigation = false): Promise<string> => {
     const token = localStorage.getItem('token');
     const activeClient = localStorage.getItem('activeClient');
     const headers: Record<string, string> = {
@@ -82,18 +96,20 @@ export default function FileUpload() {
       { method: 'POST', headers }
     );
     const result = await importResp.json().catch(() => ({}));
+    if (result?.ocr_text) console.log('[OCR-RAW-TEXT]', result.ocr_text);
     setProcessingMsg(null);
 
     // Duplicate handling
     if (importResp.status === 409) {
-      const dupInfo = result?.duplicate_info;
       if (result?.type === 'card_statement' && result?.statement_id) {
         toast.warning(tr('Duplicate card statement. Opening existing.', '重複的信用卡月結單。開啟現有。', '重复的信用卡月结单。开启现有。'));
+        if (skipNavigation) { pushToQueue('card_statement', result.statement_id, file.name, ''); return 'duplicate'; }
         nav(`/card-statements/review/${result.statement_id}`);
         return 'duplicate';
       }
       if (result?.type === 'bank_statement' && result?.statement_id) {
         toast.warning(tr('Duplicate bank statement. Opening existing.', '重複的銀行月結單。開啟現有。', '重复的银行月结单。开启现有。'));
+        if (skipNavigation) { pushToQueue('bank_statement', result.statement_id, file.name, ''); return 'duplicate'; }
         nav(`/bank-statements/review/${result.statement_id}`);
         return 'duplicate';
       }
@@ -105,12 +121,16 @@ export default function FileUpload() {
     const docType = result?.type;
     if (docType === 'card_statement' && result?.statement_id) {
       if (result?.ocr_failed) toast.warning(tr('Could not auto-read. Please enter details manually.', '無法自動讀取。請手動輸入。', '无法自动读取。请手动输入。'));
+      if (skipNavigation) { pushToQueue(docType, result.statement_id, file.name, ''); return 'ok'; }
       nav(`/card-statements/review/${result.statement_id}`);
     } else if (docType === 'bank_statement' && result?.statement_id) {
       if (result?.ocr_failed) toast.warning(tr('Could not auto-read. Please enter details manually.', '無法自動讀取。請手動輸入。', '无法自动读取。请手动输入。'));
+      if (skipNavigation) { pushToQueue(docType, result.statement_id, file.name, ''); return 'ok'; }
       nav(`/bank-statements/review/${result.statement_id}`);
     } else if (docType === 'invoice' && result?.invoice_id) {
-      nav(`/invoices/review/${result.invoice_id}${reviewPageFlags(result)}`);
+      const flags = reviewPageFlags(result);
+      if (skipNavigation) { pushToQueue(docType, result.invoice_id, file.name, flags); return 'ok'; }
+      nav(`/invoices/review/${result.invoice_id}${flags}`);
     } else if (result?.error) {
       toast.error(tr('Processing error:', '處理錯誤：', '处理错误：') + ' ' + result.error);
     }
@@ -120,18 +140,46 @@ export default function FileUpload() {
   const handleUpload = async () => {
     if (files.length === 0) return;
     setUploading(true);
+    const isBatch = files.length > 1;
+
+    if (isBatch) {
+      batchRef.current = { total: files.length, done: 0, bank: 0, invoice: 0, card: 0 };
+      sessionStorage.removeItem('reviewQueue');
+      sessionStorage.removeItem('reviewQueueTotal');
+    }
+
     let ok = 0;
     for (const file of files) {
       try {
-        await uploadFile(file);
+        await uploadFile(file, isBatch);
         ok++;
       } catch (e: any) {
         toast.error(`${file.name}: ${e.message}`);
+        if (isBatch) batchRef.current.done++;
       }
     }
+
     setUploading(false);
     setFiles([]);
     setDescription('');
+
+    if (isBatch && ok > 0) {
+      const stored = sessionStorage.getItem('reviewQueue');
+      const queue = stored ? JSON.parse(stored) : [];
+      const parts: string[] = [];
+      if (batchRef.current.bank > 0) parts.push(`${batchRef.current.bank} bank`);
+      if (batchRef.current.card > 0) parts.push(`${batchRef.current.card} card`);
+      if (batchRef.current.invoice > 0) parts.push(`${batchRef.current.invoice} invoice`);
+      toast.info(`Batch complete: ${parts.join(', ')} (${queue.length} queued). Save each to advance to the next.`);
+
+      if (queue.length > 0) {
+        const first = queue[0];
+        if (first.docType === 'bank_statement') nav(`/bank-statements/review/${first.reviewId}`);
+        else if (first.docType === 'card_statement') nav(`/card-statements/review/${first.reviewId}`);
+        else nav(`/invoices/review/${first.reviewId}${first.flags || ''}`);
+      }
+    }
+
     if (ok > 0) queryClient.invalidateQueries({ queryKey: ['file-storage'] });
   };
 

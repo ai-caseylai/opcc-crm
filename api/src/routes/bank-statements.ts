@@ -45,7 +45,7 @@ bank.get('/:id/file', async (c) => {
   if (!userId) return c.json({ error: 'Authentication required' }, 401);
 
   const row = await c.env.DB.prepare(
-    'SELECT file_data, r2_key, file_type, file_name, user_id FROM bank_statements WHERE id = ?'
+    'SELECT file_data, r2_key, file_type, file_name, user_id FROM bank_statements WHERE id = ? AND deleted_at IS NULL'
   ).bind(c.req.param('id')).first<{ file_data: string; r2_key: string | null; file_type: string; file_name: string; user_id: string }>();
   if (!row) return c.json({ error: 'Not found' }, 404);
 
@@ -102,12 +102,12 @@ bank.get('/:id/export-csv', async (c) => {
   }
   if (!userId) return c.json({ error: 'Authentication required' }, 401);
 
-  const stmt = await c.env.DB.prepare('SELECT id, file_name FROM bank_statements WHERE id = ? AND user_id = ?')
+  const stmt = await c.env.DB.prepare('SELECT id, file_name FROM bank_statements WHERE id = ? AND user_id = ? AND deleted_at IS NULL')
     .bind(c.req.param('id'), userId).first<{ id: string; file_name: string | null }>();
   if (!stmt) return c.json({ error: 'Not found' }, 404);
 
   const txs = await c.env.DB.prepare(
-    'SELECT transaction_date, description, deposit_amount, withdrawal_amount, balance, account_type, account_code, reference FROM bank_transactions WHERE bank_statement_id = ? ORDER BY sort_order'
+    'SELECT transaction_date, description, deposit_amount, withdrawal_amount, balance, account_type, account_code, reference FROM bank_transactions WHERE bank_statement_id = ? AND deleted_at IS NULL ORDER BY sort_order'
   ).bind(c.req.param('id')).all();
 
   let csv = 'Date,Description,Deposit,Withdrawal,Balance,Account Type,Account Code,Reference\n';
@@ -154,17 +154,35 @@ bank.post('/:id/confirm', async (c) => {
   const tenantId = c.get('client_user_id') || user.id;
   const id = c.req.param('id');
   const existing = await c.env.DB.prepare(
-    'SELECT id, status FROM bank_statements WHERE id = ? AND user_id = ?'
+    'SELECT id, status FROM bank_statements WHERE id = ? AND user_id = ? AND deleted_at IS NULL'
   ).bind(id, tenantId).first<{ id: string; status: string }>();
   if (!existing) return c.json({ error: 'Not found' }, 404);
-  if (existing.status !== 'draft') return c.json({ error: 'Already confirmed', status: existing.status }, 400);
+  // Idempotent: if already confirmed, just return success
+  if (existing.status !== 'draft' && existing.status !== 'pending_review') {
+    if (existing.status === 'active') return c.json({ success: true, id, status: 'active', already_confirmed: true });
+    return c.json({ error: `Cannot confirm — status is already "${existing.status}"`, status: existing.status }, 400);
+  }
+  // Detect duplicate: if another active statement shares the same r2_key, skip journal entries
+  let journalSkipped = false;
+  const existingR2 = await c.env.DB.prepare(
+    'SELECT r2_key FROM bank_statements WHERE id = ? AND deleted_at IS NULL'
+  ).bind(id).first<{ r2_key: string | null }>();
+  if (existingR2?.r2_key) {
+    const duplicate = await c.env.DB.prepare(
+      `SELECT bs.id FROM bank_statements bs
+       JOIN journal_entries je ON je.reference_id = bs.id AND je.reference_type = 'bank_transaction'
+       WHERE bs.user_id = ? AND bs.r2_key = ? AND bs.id != ? AND bs.deleted_at IS NULL LIMIT 1`
+    ).bind(tenantId, existingR2.r2_key, id).first();
+    if (duplicate) journalSkipped = true;
+  }
+
   const body = await c.req.json().catch(() => ({}));
   const balanceStatus = body.balance_status || 'unchecked';
   const balanceCheck = body.balance_check ? JSON.stringify(body.balance_check) : null;
   await c.env.DB.prepare(
-    "UPDATE bank_statements SET status = 'active', balance_status = ?, balance_check = ?, updated_at = datetime('now') WHERE id = ?"
+    "UPDATE bank_statements SET status = 'active', balance_status = ?, balance_check = ?, updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL"
   ).bind(balanceStatus, balanceCheck, id).run();
-  return c.json({ success: true, id, status: 'active' });
+  return c.json({ success: true, id, status: 'active', journal_skipped: journalSkipped });
 });
 
 // ── Edit statement header fields (used during review) ──
@@ -175,7 +193,7 @@ bank.patch('/:id', async (c) => {
   const body = await c.req.json();
 
   const existing = await c.env.DB.prepare(
-    'SELECT id FROM bank_statements WHERE id = ? AND user_id = ?'
+    'SELECT id FROM bank_statements WHERE id = ? AND user_id = ? AND deleted_at IS NULL'
   ).bind(id, tenantId).first();
   if (!existing) return c.json({ error: 'Not found' }, 404);
 
@@ -194,7 +212,7 @@ bank.patch('/:id', async (c) => {
   sets.push("updated_at = datetime('now')");
   params.push(id, tenantId);
   await c.env.DB.prepare(
-    `UPDATE bank_statements SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`
+    `UPDATE bank_statements SET ${sets.join(', ')} WHERE id = ? AND user_id = ? AND deleted_at IS NULL`
   ).bind(...params).run();
   return c.json({ success: true });
 });
@@ -208,7 +226,7 @@ bank.post('/auto-match', async (c) => {
   const deposits = await db.prepare(
     `SELECT id, transaction_date, description, deposit_amount, reference
      FROM bank_transactions
-     WHERE user_id = ? AND deposit_amount > 0 AND match_status = 'unmatched'
+     WHERE user_id = ? AND deleted_at IS NULL AND deposit_amount > 0 AND match_status = 'unmatched'
      ORDER BY transaction_date`
   ).bind(tenantId).all();
 
@@ -262,7 +280,7 @@ bank.post('/auto-match', async (c) => {
         : `金額 $${tx.deposit_amount} 相符`;
 
       await db.prepare(
-        `UPDATE bank_transactions SET invoice_id = ?, match_confidence = ?, match_status = 'suggested' WHERE id = ?`
+        `UPDATE bank_transactions SET invoice_id = ?, match_confidence = ?, match_status = 'suggested' WHERE id = ? AND deleted_at IS NULL`
       ).bind(bestMatch.id, bestConfidence, tx.id).run();
 
       matched.push({
@@ -290,7 +308,7 @@ bank.get('/match-suggestions', async (c) => {
      i.id as invoice_id, i.invoice_number, i.total as invoice_total, i.status as invoice_status
      FROM bank_transactions bt
      JOIN invoices i ON bt.invoice_id = i.id
-     WHERE bt.user_id = ? AND bt.match_status = 'suggested'
+      WHERE bt.user_id = ? AND bt.deleted_at IS NULL AND bt.match_status = 'suggested'
      ORDER BY bt.transaction_date`
   ).bind(tenantId).all();
   return c.json({ data: rows.results });
@@ -304,7 +322,7 @@ bank.patch('/transactions/:id', async (c) => {
   const txId = c.req.param('id');
   const body = await c.req.json();
 
-  const tx = await db.prepare('SELECT id FROM bank_transactions WHERE id = ? AND user_id = ?')
+  const tx = await db.prepare('SELECT id FROM bank_transactions WHERE id = ? AND user_id = ? AND deleted_at IS NULL')
     .bind(txId, tenantId).first();
   if (!tx) return c.json({ error: 'Transaction not found' }, 404);
 
@@ -320,7 +338,7 @@ bank.patch('/transactions/:id', async (c) => {
   if (sets.length === 0) return c.json({ error: 'No valid fields' }, 400);
 
   params.push(txId, tenantId);
-  await db.prepare(`UPDATE bank_transactions SET ${sets.join(', ')}, is_edited = 1 WHERE id = ? AND user_id = ?`)
+  await db.prepare(`UPDATE bank_transactions SET ${sets.join(', ')}, is_edited = 1 WHERE id = ? AND user_id = ? AND deleted_at IS NULL`)
     .bind(...params).run();
 
   await auditLog(db, user.id, 'update', 'bank_transaction', txId, body);
@@ -332,7 +350,7 @@ bank.patch('/transactions/:id', async (c) => {
     ).bind(txId).run();
   }
 
-  const row = await db.prepare('SELECT * FROM bank_transactions WHERE id = ?').bind(txId).first();
+  const row = await db.prepare('SELECT * FROM bank_transactions WHERE id = ? AND deleted_at IS NULL').bind(txId).first();
   return c.json(row);
 });
 
@@ -342,10 +360,10 @@ bank.delete('/transactions/:id', async (c) => {
   const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
   const txId = c.req.param('id');
-  const tx = await db.prepare('SELECT id FROM bank_transactions WHERE id = ? AND user_id = ?')
+  const tx = await db.prepare('SELECT id FROM bank_transactions WHERE id = ? AND user_id = ? AND deleted_at IS NULL')
     .bind(txId, tenantId).first();
   if (!tx) return c.json({ error: 'Transaction not found' }, 404);
-  await db.prepare('DELETE FROM bank_transactions WHERE id = ? AND user_id = ?').bind(txId, tenantId).run();
+  await db.prepare('DELETE FROM bank_transactions WHERE id = ? AND user_id = ? AND deleted_at IS NULL').bind(txId, tenantId).run();
   await auditLog(db, user.id, 'delete', 'bank_transaction', txId, {});
   return c.json({ success: true });
 });
@@ -361,7 +379,7 @@ bank.patch('/transactions/:id/match', async (c) => {
   let { invoice_id } = body;
 
   const tx = await db.prepare(
-    'SELECT id, transaction_date, invoice_id as current_invoice_id FROM bank_transactions WHERE id = ? AND user_id = ?'
+    'SELECT id, transaction_date, invoice_id as current_invoice_id FROM bank_transactions WHERE id = ? AND user_id = ? AND deleted_at IS NULL'
   ).bind(txId, tenantId).first<{ id: string; transaction_date: string; current_invoice_id: string | null }>();
   if (!tx) return c.json({ error: 'Transaction not found' }, 404);
 
@@ -377,7 +395,7 @@ bank.patch('/transactions/:id/match', async (c) => {
     if (!inv) return c.json({ error: 'Invoice not found' }, 404);
 
     await db.prepare(
-      `UPDATE bank_transactions SET invoice_id = ?, match_confidence = 'manual', match_status = 'matched' WHERE id = ?`
+      `UPDATE bank_transactions SET invoice_id = ?, match_confidence = 'manual', match_status = 'matched' WHERE id = ? AND deleted_at IS NULL`
     ).bind(invoice_id, txId).run();
 
     await db.prepare(
@@ -391,7 +409,7 @@ bank.patch('/transactions/:id/match', async (c) => {
   // reject/unlink: same behavior
   if (effectiveAction === 'reject' || effectiveAction === 'unlink') {
     await db.prepare(
-      `UPDATE bank_transactions SET invoice_id = NULL, match_confidence = NULL, match_status = 'unmatched' WHERE id = ?`
+      `UPDATE bank_transactions SET invoice_id = NULL, match_confidence = NULL, match_status = 'unmatched' WHERE id = ? AND deleted_at IS NULL`
     ).bind(txId).run();
     await auditLog(db, user.id, 'unlink_match', 'bank_transaction', txId, { action: effectiveAction });
     return c.json({ success: true });
@@ -565,7 +583,7 @@ bank.get('/:id', async (c) => {
      statement_year, statement_month, period_start, period_end,
      opening_balance, closing_balance, page_count, ocr_text, status,
      balance_status, balance_check, created_at
-     FROM bank_statements WHERE id = ? AND user_id = ?`
+     FROM bank_statements WHERE id = ? AND user_id = ? AND deleted_at IS NULL`
   ).bind(c.req.param('id'), tenantId).first();
   if (!stmt) return c.json({ error: 'Not found' }, 404);
 
@@ -576,8 +594,8 @@ bank.get('/:id', async (c) => {
      i.invoice_number, i.total as invoice_total, i.status as invoice_status
      FROM bank_transactions bt
      LEFT JOIN invoices i ON bt.invoice_id = i.id
-     WHERE bt.bank_statement_id = ?
-     ORDER BY bt.sort_order`
+      WHERE bt.bank_statement_id = ? AND bt.deleted_at IS NULL
+      ORDER BY bt.sort_order`
   ).bind(c.req.param('id')).all();
 
   return c.json({ ...stmt, transactions: txs.results });
@@ -600,11 +618,11 @@ bank.post('/import', async (c) => {
 
   // Dedup: check by r2_key OR by same year/month/account
   let existing = await db.prepare(
-    'SELECT id FROM bank_statements WHERE user_id = ? AND r2_key = ?'
+    'SELECT id FROM bank_statements WHERE user_id = ? AND r2_key = ? AND deleted_at IS NULL'
   ).bind(tenantId, r2_key).first();
   if (!existing && statement_year && statement_month) {
     existing = await db.prepare(
-      'SELECT id FROM bank_statements WHERE user_id = ? AND statement_year = ? AND statement_month = ? AND account_number = ? LIMIT 1'
+      'SELECT id FROM bank_statements WHERE user_id = ? AND statement_year = ? AND statement_month = ? AND account_number = ? AND deleted_at IS NULL LIMIT 1'
     ).bind(tenantId, statement_year, statement_month, account_number || null).first();
   }
   if (existing) return c.json({ error: 'Statement already imported for this period', id: (existing as any).id }, 409);
@@ -698,7 +716,7 @@ bank.post('/upload', async (c) => {
     `SELECT id, file_name, bank_name, account_number, branch, currency,
      statement_year, statement_month, period_start, period_end,
      opening_balance, closing_balance, ocr_text, status, created_at
-     FROM bank_statements WHERE id = ?`
+      FROM bank_statements WHERE id = ? AND deleted_at IS NULL`
   ).bind(id).first();
   return c.json({ ...row, ocr_used: c.env.AI ? !!ocrText && ocrText.length > 20 : false }, 201);
 });
@@ -776,7 +794,7 @@ bank.post('/:id/auto-categorize', async (c) => {
   const db = c.env.DB;
   const stmtId = c.req.param('id');
 
-  const stmt = await db.prepare('SELECT id FROM bank_statements WHERE id = ? AND user_id = ?')
+  const stmt = await db.prepare('SELECT id FROM bank_statements WHERE id = ? AND user_id = ? AND deleted_at IS NULL')
     .bind(stmtId, tenantId).first();
   if (!stmt) return c.json({ error: 'Statement not found' }, 404);
 
@@ -812,7 +830,7 @@ bank.post('/:id/auto-categorize', async (c) => {
   const directorPattern = /JOSEPH|LIN\s*PUI|LAI\s*KIN|RAYMOND|SZETO/i;
 
   const txs = await db.prepare(
-    'SELECT id, description, deposit_amount, withdrawal_amount FROM bank_transactions WHERE bank_statement_id = ? AND account_code IS NULL ORDER BY sort_order'
+    'SELECT id, description, deposit_amount, withdrawal_amount FROM bank_transactions WHERE bank_statement_id = ? AND deleted_at IS NULL AND account_code IS NULL ORDER BY sort_order'
   ).bind(stmtId).all();
 
   let categorized = 0;
@@ -845,7 +863,7 @@ bank.post('/:id/auto-categorize', async (c) => {
 
     if (!code) { skipped++; continue; }
 
-    await db.prepare('UPDATE bank_transactions SET account_code = ? WHERE id = ?')
+    await db.prepare('UPDATE bank_transactions SET account_code = ? WHERE id = ? AND deleted_at IS NULL')
       .bind(code, tx.id).run();
     results.push(`${tx.transaction_date?.slice(0,10)} | ${code} | ${desc.slice(0,50)}`);
     categorized++;
@@ -874,7 +892,7 @@ bank.post('/:id/import-csv', async (c) => {
   const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
 
-  const stmt = await db.prepare('SELECT id FROM bank_statements WHERE id = ? AND user_id = ?')
+  const stmt = await db.prepare('SELECT id FROM bank_statements WHERE id = ? AND user_id = ? AND deleted_at IS NULL')
     .bind(c.req.param('id'), tenantId).first();
   if (!stmt) return c.json({ error: 'Not found' }, 404);
 
@@ -901,12 +919,12 @@ bank.post('/:id/import-csv', async (c) => {
 
     // Try to match by date + amount
     const existing = await db.prepare(
-      'SELECT id FROM bank_transactions WHERE bank_statement_id = ? AND transaction_date = ? AND ABS(deposit_amount + withdrawal_amount - ?) < 0.01 LIMIT 1'
+      'SELECT id FROM bank_transactions WHERE bank_statement_id = ? AND transaction_date = ? AND ABS(deposit_amount + withdrawal_amount - ?) < 0.01 AND deleted_at IS NULL LIMIT 1'
     ).bind(c.req.param('id'), date, dep + wit).first<{ id: string }>();
 
     if (existing) {
       await db.prepare(
-        'UPDATE bank_transactions SET description = ?, deposit_amount = ?, withdrawal_amount = ?, balance = ?, account_type = ?, account_code = ?, reference = ? WHERE id = ?'
+        'UPDATE bank_transactions SET description = ?, deposit_amount = ?, withdrawal_amount = ?, balance = ?, account_type = ?, account_code = ?, reference = ? WHERE id = ? AND deleted_at IS NULL'
       ).bind(desc, dep, wit, bal, acctType, acctCode || null, ref || null, existing.id).run();
       updated++;
     } else if (desc) {
@@ -931,7 +949,7 @@ bank.post('/:id/reconcile', async (c) => {
   const stmtId = c.req.param('id');
 
   const stmt = await db.prepare(
-    'SELECT * FROM bank_statements WHERE id = ? AND user_id = ?'
+    'SELECT * FROM bank_statements WHERE id = ? AND user_id = ? AND deleted_at IS NULL'
   ).bind(stmtId, tenantId).first<{ id: string; closing_balance: number; period_end: string; account_number: string; account_code: string | null }>();
   if (!stmt) return c.json({ error: 'Statement not found' }, 404);
 
@@ -947,7 +965,7 @@ bank.post('/:id/reconcile', async (c) => {
   const outstandingTxs = await db.prepare(
     `SELECT id, transaction_date, description, deposit_amount, withdrawal_amount
      FROM bank_transactions
-     WHERE bank_statement_id = ? AND match_status NOT IN ('confirmed')
+     WHERE bank_statement_id = ? AND deleted_at IS NULL AND match_status NOT IN ('confirmed')
      ORDER BY transaction_date`
   ).bind(stmtId).all();
 
@@ -975,7 +993,7 @@ bank.post('/:id/reconcile/save', async (c) => {
   const { account_code, statement_balance, gl_balance, outstanding_deposits, outstanding_withdrawals, reconciled_balance, notes } = body;
 
   const stmt = await db.prepare(
-    'SELECT id, period_end FROM bank_statements WHERE id = ? AND user_id = ?'
+    'SELECT id, period_end FROM bank_statements WHERE id = ? AND user_id = ? AND deleted_at IS NULL'
   ).bind(stmtId, tenantId).first<{ id: string; period_end: string }>();
   if (!stmt) return c.json({ error: 'Statement not found' }, 404);
 
@@ -1003,7 +1021,7 @@ bank.get('/reconciliations/list', async (c) => {
   const rows = await c.env.DB.prepare(
     `SELECT br.*, bs.bank_name, bs.account_number, bs.statement_year, bs.statement_month
      FROM bank_reconciliations br
-     JOIN bank_statements bs ON br.bank_statement_id = bs.id
+      JOIN bank_statements bs ON br.bank_statement_id = bs.id AND bs.deleted_at IS NULL
      WHERE br.user_id = ?
      ORDER BY br.created_at DESC`
   ).bind(tenantId).all();
@@ -1189,7 +1207,7 @@ bank.post('/:id/transactions', async (c) => {
 
   // Determine next sort_order
   const cnt = await c.env.DB.prepare(
-    'SELECT COUNT(*) as n FROM bank_transactions WHERE bank_statement_id = ?'
+    'SELECT COUNT(*) as n FROM bank_transactions WHERE bank_statement_id = ? AND deleted_at IS NULL'
   ).bind(stmtId).first<{ n: number }>();
   const sortOrder = (cnt?.n || 0);
 

@@ -185,7 +185,7 @@ async function collectTransactionCodes(db: any, tenantId: string): Promise<strin
 
   // Collect from bank_transactions
   const btRows = await db.prepare(
-    `SELECT DISTINCT account_code FROM bank_transactions WHERE user_id = ? AND account_code IS NOT NULL AND account_code != ''`
+    `SELECT DISTINCT account_code FROM bank_transactions WHERE user_id = ? AND account_code IS NOT NULL AND account_code != '' AND deleted_at IS NULL`
   ).bind(tenantId).all();
   for (const r of btRows.results as any[]) codeSet.add(r.account_code);
 
@@ -845,7 +845,7 @@ bookkeeping.get('/trial-balance', async (c) => {
     `SELECT COALESCE(account_code, 'UNCAT') as account_code,
      'Uncategorized' as account_name, '' as account_type, 0 as opening_balance,
      SUM(deposit_amount) as total_debit, SUM(withdrawal_amount) as total_credit
-     FROM bank_transactions WHERE user_id = ? AND transaction_date <= ?
+     FROM bank_transactions WHERE user_id = ? AND transaction_date <= ? AND deleted_at IS NULL
      GROUP BY COALESCE(account_code, 'UNCAT') ORDER BY account_code`
   ).bind(tenantId, asOf).all();
 
@@ -916,7 +916,7 @@ bookkeeping.get('/income-statement', async (c) => {
   // Revenue: 4xxxx codes, plus uncategorized deposits that look like client payments
   const bankRevenue = await db.prepare(
     `SELECT COALESCE(SUM(deposit_amount), 0) as amount FROM bank_transactions
-     WHERE user_id = ? AND transaction_date >= ? AND transaction_date <= ?
+     WHERE user_id = ? AND transaction_date >= ? AND transaction_date <= ? AND deleted_at IS NULL
      AND (account_code LIKE '4%' OR (account_code IS NULL AND deposit_amount > 0
        AND description NOT LIKE '%LOAN REPAYMENT%'
        AND description NOT LIKE '%B/F%'
@@ -927,7 +927,7 @@ bookkeeping.get('/income-statement', async (c) => {
   // Expenses: 5xxxx/6xxxx/8xxxx codes, plus uncategorized withdrawals
   const bankExpenses = await db.prepare(
     `SELECT COALESCE(SUM(withdrawal_amount), 0) as amount FROM bank_transactions
-     WHERE user_id = ? AND transaction_date >= ? AND transaction_date <= ?
+     WHERE user_id = ? AND transaction_date >= ? AND transaction_date <= ? AND deleted_at IS NULL
      AND (account_code LIKE '5%' OR account_code LIKE '6%' OR account_code LIKE '8%' OR (account_code IS NULL AND withdrawal_amount > 0
        AND description NOT LIKE '%LOAN REPAYMENT%'
        AND description NOT LIKE '%TD DESIGNATED%'
@@ -938,17 +938,17 @@ bookkeeping.get('/income-statement', async (c) => {
   // Also count categorized separately for transparency
   const catRevenue = await db.prepare(
     `SELECT COALESCE(SUM(deposit_amount), 0) as amount FROM bank_transactions
-     WHERE user_id = ? AND transaction_date >= ? AND transaction_date <= ? AND account_code LIKE '4%'`
+     WHERE user_id = ? AND transaction_date >= ? AND transaction_date <= ? AND account_code LIKE '4%' AND deleted_at IS NULL`
   ).bind(tenantId, startDate, endDate).first<{ amount: number }>();
 
   const catExpenses = await db.prepare(
     `SELECT COALESCE(SUM(withdrawal_amount), 0) as amount FROM bank_transactions
-     WHERE user_id = ? AND transaction_date >= ? AND transaction_date <= ? AND (account_code LIKE '5%' OR account_code LIKE '6%' OR account_code LIKE '8%')`
+     WHERE user_id = ? AND transaction_date >= ? AND transaction_date <= ? AND (account_code LIKE '5%' OR account_code LIKE '6%' OR account_code LIKE '8%') AND deleted_at IS NULL`
   ).bind(tenantId, startDate, endDate).first<{ amount: number }>();
 
   const uncategorized = await db.prepare(
     `SELECT COUNT(*) as cnt, COALESCE(SUM(withdrawal_amount),0) as wit, COALESCE(SUM(deposit_amount),0) as dep
-     FROM bank_transactions WHERE user_id = ? AND account_code IS NULL`
+     FROM bank_transactions WHERE user_id = ? AND account_code IS NULL AND deleted_at IS NULL`
   ).bind(tenantId).first<{ cnt: number; wit: number; dep: number }>();
 
   const netIncome = (bankRevenue?.amount || 0) - (bankExpenses?.amount || 0);
@@ -1087,10 +1087,10 @@ bookkeeping.get('/balance-sheet', async (c) => {
 
   // Fallback: estimate from bank transactions
   const bankDeposits = await db.prepare(
-    `SELECT COALESCE(SUM(deposit_amount), 0) as amount FROM bank_transactions WHERE user_id = ? AND transaction_date <= ?`
+    `SELECT COALESCE(SUM(deposit_amount), 0) as amount FROM bank_transactions WHERE user_id = ? AND transaction_date <= ? AND deleted_at IS NULL`
   ).bind(tenantId, asOf).first<{ amount: number }>();
   const bankWithdrawals = await db.prepare(
-    `SELECT COALESCE(SUM(withdrawal_amount), 0) as amount FROM bank_transactions WHERE user_id = ? AND transaction_date <= ?`
+    `SELECT COALESCE(SUM(withdrawal_amount), 0) as amount FROM bank_transactions WHERE user_id = ? AND transaction_date <= ? AND deleted_at IS NULL`
   ).bind(tenantId, asOf).first<{ amount: number }>();
 
   const cashBalance = (bankDeposits?.amount || 0) - (bankWithdrawals?.amount || 0);
@@ -1176,7 +1176,7 @@ bookkeeping.get('/ledger', async (c) => {
   const bankRows = await db.prepare(
     `SELECT bt.*, i.invoice_number, i.supplier_id, i.customer_id
      FROM bank_transactions bt LEFT JOIN invoices i ON bt.invoice_id = i.id
-     WHERE bt.user_id = ? AND bt.transaction_date >= ? AND bt.transaction_date <= ?
+     WHERE bt.user_id = ? AND bt.transaction_date >= ? AND bt.transaction_date <= ? AND bt.deleted_at IS NULL
      ORDER BY bt.transaction_date`
   ).bind(tenantId, startDate, endDate).all();
 
@@ -1403,7 +1403,7 @@ bookkeeping.post('/post-payment/:transactionId', bookkeeperMiddleware, async (c)
   const tx = await db.prepare(
     `SELECT bt.*, i.invoice_number, i.total as invoice_total
      FROM bank_transactions bt LEFT JOIN invoices i ON bt.invoice_id = i.id
-     WHERE bt.id = ? AND bt.user_id = ? AND bt.match_status = 'confirmed'`
+     WHERE bt.id = ? AND bt.user_id = ? AND bt.match_status = 'confirmed' AND bt.deleted_at IS NULL`
   ).bind(txId, tenantId).first<{ id: string; transaction_date: string; deposit_amount: number; invoice_id: string; invoice_number: string; invoice_total: number }>();
   if (!tx || !tx.invoice_id) return c.json({ error: 'Transaction not found or not matched to an invoice' }, 404);
 

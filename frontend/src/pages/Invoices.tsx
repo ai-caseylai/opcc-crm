@@ -108,11 +108,11 @@ export default function Invoices() {
   const invoices = directionFilter === 'all' ? allInvoices
     : allInvoices.filter((inv: any) => inv.direction === directionFilter);
   const statusLabel = (s: string) => {
-    const labels: Record<string, string> = { draft: tr('Draft', '草稿', '草稿'), sent: tr('Sent', '應收', '应收'), paid: tr('Paid', '已收', '已收'), overdue: tr('Overdue', '逾期未收', '逾期未收'), cancelled: tr('Cancelled', '已取消', '已取消') };
+    const labels: Record<string, string> = { draft: tr('Draft', '草稿', '草稿'), sent: tr('Sent', '應收', '应收'), paid: tr('Paid', '已收', '已收'), overdue: tr('Overdue', '逾期未收', '逾期未收'), cancelled: tr('Cancelled', '已取消', '已取消'), pending_review: tr('⏳ Pending Review', '⏳ 待審核', '⏳ 待审核') };
     return labels[s] || s;
   };
   const statusBadge = (s: string) => {
-    const colors: Record<string, string> = { draft: 'bg-gray-100 text-gray-700', sent: 'bg-blue-100 text-blue-700', paid: 'bg-green-100 text-green-700', overdue: 'bg-red-100 text-red-700', cancelled: 'bg-gray-100 text-gray-500' };
+    const colors: Record<string, string> = { draft: 'bg-gray-100 text-gray-700', sent: 'bg-blue-100 text-blue-700', paid: 'bg-green-100 text-green-700', overdue: 'bg-red-100 text-red-700', cancelled: 'bg-gray-100 text-gray-500', pending_review: 'bg-yellow-100 text-yellow-700' };
     return `px-2 py-0.5 rounded-full text-xs font-medium ${colors[s] || 'bg-gray-100'}`;
   };
 
@@ -167,6 +167,7 @@ export default function Invoices() {
           <option value="draft">{tr('Draft', '草稿', '草稿')}</option>
           <option value="sent">{tr('Receivable', '應收', '應收')}</option>
           <option value="paid">{tr('Paid', '已收', '已收')}</option>
+          <option value="pending_review">{tr('⏳ Pending Review', '⏳ 待審核', '⏳ 待审核')}</option>
           <option value="overdue">{tr('Overdue', '逾期未收', '逾期未收')}</option>
         </select>
       </div>

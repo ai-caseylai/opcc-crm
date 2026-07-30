@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
@@ -15,6 +15,7 @@ function reviewPageFlags(result: any): string {
   if (result?.needs_direction_review) params.set('review_direction', '1');
   if (result?.company_not_detected) params.set('company_not_detected', '1');
   if (result?.is_duplicate) params.set('is_duplicate', '1');
+  if (result?.duplicate_status) params.set('dup_status', result.duplicate_status);
   if (result?.auto_linked_invoice_id) params.set('auto_linked', result.auto_linked_invoice_id);
   if (result?.direction) params.set('direction', result.direction);
   const qs = params.toString();
@@ -189,6 +190,7 @@ export default function FileStorage() {
   const navigate = useNavigate();
   const [processingMsg, setProcessingMsg] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const batchRef = useRef({ total: 0, done: 0, errors: 0, bank: 0, invoice: 0, receipt: 0, card: 0, navigated: false, queue: [] as {docType:string, reviewId:string, filename:string, flags:string}[] });
   const [folder, setFolder] = useState('');
   const [description, setDescription] = useState('');
   const [searchQ, setSearchQ] = useState('');
@@ -269,6 +271,7 @@ export default function FileStorage() {
           { method: 'POST', headers: importHeaders }
         );
         const result: any = await importResp.json();
+        if (result?.ocr_text) console.log('[OCR-RAW-TEXT]', result.ocr_text);
 
         setProcessingMsg(null);
         setUploading(false);
@@ -324,29 +327,82 @@ export default function FileStorage() {
           return;
         }
 
+        const isBatch = batchRef.current.total > 1;
+
+        // Build review queue entry
+        const filename = data?.filename || data?.original_name || '';
+        let reviewId = '', docTypeStr = docType as string, flags = '';
+        if (docType === 'bank_statement') reviewId = result?.statement_id;
+        else if (docType === 'card_statement') reviewId = result?.statement_id;
+        else if (docType === 'invoice') { reviewId = result?.invoice_id; flags = reviewPageFlags(result); }
+
+        console.log('[BATCH] onSuccess: docType=', docType, 'reviewId=', reviewId, 'isBatch=', isBatch, 'batchTotal=', batchRef.current.total);
+        if (isBatch && reviewId) {
+          console.log('[BATCH] queuing file, queue length was', (JSON.parse(sessionStorage.getItem('reviewQueue')||'[]')).length);
+          // User clicks "Review pending" toast to start the review flow
+          const stored = sessionStorage.getItem('reviewQueue');
+          let queue: {docType:string, reviewId:string, filename:string, flags:string}[] = [];
+          try { if (stored) queue = JSON.parse(stored); } catch {}
+          queue.push({ docType: docTypeStr, reviewId, filename, flags });
+          sessionStorage.setItem('reviewQueue', JSON.stringify(queue));
+          sessionStorage.setItem('reviewQueueTotal', String(batchRef.current.total));
+
+          batchRef.current.done++;
+          if (docType === 'bank_statement') batchRef.current.bank++;
+          else if (docType === 'invoice') batchRef.current.invoice++;
+          else if (docType === 'receipt') batchRef.current.receipt++;
+          else if (docType === 'card_statement') batchRef.current.card++;
+
+          if (batchRef.current.done >= batchRef.current.total) {
+            const b = batchRef.current;
+            const parts: string[] = [];
+            if (b.bank > 0) parts.push(`${b.bank} bank`);
+            if (b.card > 0) parts.push(`${b.card} card`);
+            if (b.invoice > 0) parts.push(`${b.invoice} invoice`);
+            if (b.receipt > 0) parts.push(`${b.receipt} receipt`);
+            const total = queue.length;
+            const label = parts.join(', ');
+            // Show clickable toast that starts the review flow
+            toast.info(
+              `📋 Batch complete: ${label} (${total} total). Go to the respective page to review them.`
+            );
+            queryClient.invalidateQueries({ queryKey: ['invoices'] });
+            queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
+            queryClient.invalidateQueries({ queryKey: ['card-statements'] });
+            queryClient.invalidateQueries({ queryKey: ['file-storage'] });
+            batchRef.current = { total: 0, done: 0, errors: 0, bank: 0, invoice: 0, receipt: 0, card: 0, navigated: false, queue: [] };
+          }
+          return;
+        }
+
+        // Single file: navigate directly to review
+        // Only navigate if user is still on File Storage page (prevents redirecting
+        // away from wherever the user navigated to while OCR was processing)
+        const onFileStorage = window.location.pathname.includes('/file-storage');
         if (docType === 'bank_statement' && result?.statement_id) {
-          if (result?.ocr_failed) {
-            toast.warning('The system could not automatically read this file. You will be taken to the review page where you can enter details manually.');
-          }
-          navigate(`/bank-statements/review/${result.statement_id}`);
+          if (result?.ocr_failed) toast.warning('Could not auto-read. Please enter details manually.');
+          if (onFileStorage) navigate(`/bank-statements/review/${result.statement_id}`);
+          else toast.info(`Bank statement imported: ${data?.filename || 'file'}`);
         } else if (docType === 'invoice' && result?.invoice_id) {
-          if (result?.ocr_failed) {
-            toast.warning('Could not automatically read this invoice. You will be taken to the review page to enter details manually.');
-          }
-          navigate(`/invoices/review/${result.invoice_id}${reviewPageFlags(result)}`);
+          if (result?.ocr_failed) toast.warning('Could not auto-read. Please enter details manually.');
+          if (onFileStorage) navigate(`/invoices/review/${result.invoice_id}${flags}`);
+          else toast.info(`Invoice imported: ${data?.filename || 'file'}`);
         } else if (docType === 'card_statement' && result?.statement_id) {
-          navigate(`/card-statements/review/${result.statement_id}`);
+          if (onFileStorage) navigate(`/card-statements/review/${result.statement_id}`);
+          else toast.info(`Card statement imported: ${data?.filename || 'file'}`);
         } else if (result?.error) {
           toast.error(`Could not auto-process: ${result.error}`);
         }
       } catch (err: any) {
         setProcessingMsg(null);
         setUploading(false);
+        if (batchRef.current.total > 1) batchRef.current.errors++;
         toast.error(`Could not process file: ${err?.message || 'Unknown error'}`);
       }
     },
     onError: (err: any) => {
       setProcessingMsg(null);
+      if (batchRef.current.total > 1) batchRef.current.errors++;
       toast.error(`Upload failed: ${err?.message || err?.error || 'Unknown error'}`);
       setUploading(false);
     },
@@ -393,6 +449,14 @@ export default function FileStorage() {
   const uploadFiles = useCallback(async (fileList: FileList | File[]) => {
     const arr = Array.from(fileList);
     if (arr.length === 0) return;
+
+    // Batch mode: track counts so we can suppress navigation and show summary
+    const isBatch = arr.length > 1;
+    console.log('[BATCH] uploadFiles called with', arr.length, 'files. isBatch:', isBatch);
+    if (isBatch) {
+      batchRef.current = { total: arr.length, done: 0, errors: 0, bank: 0, invoice: 0, receipt: 0, card: 0, navigated: false, queue: [] };
+      console.log('[BATCH] initialized batchRef, total:', arr.length);
+    }
 
     for (const file of arr) {
       // ── General duplicate check: same filename already in system ──────
@@ -579,7 +643,7 @@ export default function FileStorage() {
         // Just close — user decided not to re-upload
         return;
       } else if (invoiceId) {
-        navigate(`/invoices/review/${invoiceId}${reviewPageFlags(result)}`);
+        navigate(`/invoices/review/${invoiceId}`);
       }
       return;
     }
@@ -678,6 +742,33 @@ export default function FileStorage() {
           </div>
         </div>
       )}
+
+      {/* ── Review Queue Banner ── */}
+      {(() => {
+        try {
+          const q = JSON.parse(sessionStorage.getItem('reviewQueue') || '[]');
+          if (q.length > 0) {
+            const first = q[0];
+            const startReview = () => {
+              if (first.docType === 'bank_statement') navigate(`/bank-statements/review/${first.reviewId}`);
+              else if (first.docType === 'card_statement') navigate(`/card-statements/review/${first.reviewId}`);
+              else navigate(`/invoices/review/${first.reviewId}${first.flags || ''}`);
+            };
+            return (
+              <div className="bg-amber-50 border-2 border-amber-300 rounded-xl p-4 flex items-center justify-between">
+                <div>
+                  <p className="font-semibold text-amber-800">📋 {q.length} file(s) queued for review</p>
+                  <p className="text-xs text-amber-600 mt-0.5">Next: {first.filename}. Save each to advance to the next.</p>
+                </div>
+                <button onClick={startReview} className="px-4 py-2 bg-amber-600 text-white rounded-md text-sm font-medium hover:bg-amber-700">
+                  Review Now
+                </button>
+              </div>
+            );
+          }
+        } catch {}
+        return null;
+      })()}
 
       {/* Supervisor password modal for staff delete */}
       {supModal?.show && (

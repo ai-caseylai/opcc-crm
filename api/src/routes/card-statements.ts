@@ -37,7 +37,7 @@ card.get('/:id/file', async (c) => {
   }
   if (!userId) return c.json({ error: 'Authentication required' }, 401);
   const row = await c.env.DB.prepare(
-    'SELECT file_data, r2_key, file_type, file_name, user_id FROM card_statements WHERE id = ?'
+    'SELECT file_data, r2_key, file_type, file_name, user_id FROM card_statements WHERE id = ? AND deleted_at IS NULL'
   ).bind(c.req.param('id')).first<{ file_data: string; r2_key: string | null; file_type: string; file_name: string; user_id: string }>();
   if (!row) return c.json({ error: 'Not found' }, 404);
   let hasAccess = row.user_id === userId;
@@ -291,7 +291,7 @@ card.post('/:id/confirm', async (c) => {
   const tenantId = c.get('client_user_id') || user.id;
   const id = c.req.param('id');
   const existing = await c.env.DB.prepare(
-    'SELECT id, status FROM card_statements WHERE id = ? AND user_id = ?'
+    'SELECT id, status FROM card_statements WHERE id = ? AND user_id = ? AND deleted_at IS NULL'
   ).bind(id, tenantId).first<{ id: string; status: string }>();
   if (!existing) return c.json({ error: 'Not found' }, 404);
   if (existing.status !== 'draft') return c.json({ error: 'Already confirmed', status: existing.status }, 400);
@@ -299,7 +299,7 @@ card.post('/:id/confirm', async (c) => {
   const balanceStatus = body.balance_status || 'unchecked';
   const balanceCheck = body.balance_check ? JSON.stringify(body.balance_check) : null;
   await c.env.DB.prepare(
-    "UPDATE card_statements SET status = 'active', balance_status = ?, balance_check = ?, updated_at = datetime('now') WHERE id = ?"
+    "UPDATE card_statements SET status = 'active', balance_status = ?, balance_check = ?, updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL"
   ).bind(balanceStatus, balanceCheck, id).run();
   await auditLog(c.env.DB, tenantId, 'confirm', 'card_statement', id);
   return c.json({ success: true, id, status: 'active' });
@@ -311,7 +311,7 @@ card.patch('/:id', async (c) => {
   const id = c.req.param('id');
   const body = await c.req.json();
   const existing = await c.env.DB.prepare(
-    'SELECT id FROM card_statements WHERE id = ? AND user_id = ?'
+    'SELECT id FROM card_statements WHERE id = ? AND user_id = ? AND deleted_at IS NULL'
   ).bind(id, tenantId).first();
   if (!existing) return c.json({ error: 'Not found' }, 404);
   const allowed = ['card_issuer', 'card_network', 'card_number_last4', 'cardholder_name', 'currency',
@@ -326,7 +326,7 @@ card.patch('/:id', async (c) => {
   sets.push("updated_at = datetime('now')");
   params.push(id, tenantId);
   await c.env.DB.prepare(
-    `UPDATE card_statements SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`
+    `UPDATE card_statements SET ${sets.join(', ')} WHERE id = ? AND user_id = ? AND deleted_at IS NULL`
   ).bind(...params).run();
   return c.json({ success: true });
 });
@@ -337,7 +337,7 @@ card.patch('/transactions/:id', async (c) => {
   const id = c.req.param('id');
   const body = await c.req.json();
   const existing = await c.env.DB.prepare(
-    'SELECT id FROM card_transactions WHERE id = ? AND user_id = ?'
+    'SELECT id FROM card_transactions WHERE id = ? AND user_id = ? AND deleted_at IS NULL'
   ).bind(id, tenantId).first();
   if (!existing) return c.json({ error: 'Not found' }, 404);
   const allowed = ['transaction_date', 'posting_date', 'description', 'amount',
@@ -351,7 +351,7 @@ card.patch('/transactions/:id', async (c) => {
   if (sets.length === 0) return c.json({ error: 'No valid fields' }, 400);
   params.push(id, tenantId);
   await c.env.DB.prepare(
-    `UPDATE card_transactions SET ${sets.join(', ')}, is_edited = 1 WHERE id = ? AND user_id = ?`
+    `UPDATE card_transactions SET ${sets.join(', ')}, is_edited = 1 WHERE id = ? AND user_id = ? AND deleted_at IS NULL`
   ).bind(...params).run();
   return c.json({ success: true });
 });
@@ -362,7 +362,7 @@ card.post('/:id/transactions', async (c) => {
   const stmtId = c.req.param('id');
   const body = await c.req.json();
   const maxOrder = await c.env.DB.prepare(
-    'SELECT MAX(sort_order) as mx FROM card_transactions WHERE card_statement_id = ?'
+    'SELECT MAX(sort_order) as mx FROM card_transactions WHERE card_statement_id = ? AND deleted_at IS NULL'
   ).bind(stmtId).first<{ mx: number | null }>();
   const sortOrder = (maxOrder?.mx ?? -1) + 1;
   const id = `ct-${uuidv4().slice(0, 8)}`;
@@ -382,7 +382,7 @@ card.delete('/transactions/:id', async (c) => {
   const tenantId = c.get('client_user_id') || user.id;
   const id = c.req.param('id');
   const existing = await c.env.DB.prepare(
-    'SELECT id FROM card_transactions WHERE id = ? AND user_id = ?'
+    'SELECT id FROM card_transactions WHERE id = ? AND user_id = ? AND deleted_at IS NULL'
   ).bind(id, tenantId).first();
   if (!existing) return c.json({ error: 'Not found' }, 404);
   await c.env.DB.prepare('DELETE FROM card_transactions WHERE id = ?').bind(id).run();
@@ -426,7 +426,7 @@ card.post('/:id/auto-categorize', async (c) => {
     for (const rule of rules) {
       if (rule.pattern.test(desc)) {
         await db.prepare(
-          "UPDATE card_transactions SET expense_account_code = ?, match_status = 'categorized' WHERE id = ?"
+          "UPDATE card_transactions SET expense_account_code = ?, match_status = 'categorized' WHERE id = ? AND deleted_at IS NULL"
         ).bind(rule.code, tx.id).run();
         categorized++;
         break;

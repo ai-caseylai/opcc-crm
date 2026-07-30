@@ -186,6 +186,27 @@ export default function BankStatementReview() {
       api(`/bank-statements/${id}/transactions`, { method: 'POST', body }),
   });
 
+  // ── Review queue: after save/discard, load next queued item ──
+  function goNextInQueue() {
+    const raw = sessionStorage.getItem('reviewQueue');
+    if (!raw) return null;
+    try {
+      const queue: {docType:string, reviewId:string, filename:string, flags:string}[] = JSON.parse(raw);
+      if (queue.length > 0) {
+        const next = queue.shift()!;
+        if (queue.length > 0) sessionStorage.setItem('reviewQueue', JSON.stringify(queue));
+        else { sessionStorage.removeItem('reviewQueue'); sessionStorage.removeItem('reviewQueueTotal'); }
+        if (next.docType === 'bank_statement') navigate(`/bank-statements/review/${next.reviewId}`);
+        else if (next.docType === 'card_statement') navigate(`/card-statements/review/${next.reviewId}`);
+        else navigate(`/invoices/review/${next.reviewId}${next.flags || ''}`);
+        return true;
+      }
+    } catch {}
+    sessionStorage.removeItem('reviewQueue');
+    sessionStorage.removeItem('reviewQueueTotal');
+    return null;
+  }
+
   const confirmMut = useMutation({
     mutationFn: (body?: any) => api(`/bank-statements/${id}/confirm`, { method: 'POST', body }),
     onSuccess: () => {
@@ -193,7 +214,7 @@ export default function BankStatementReview() {
       queryClient.invalidateQueries({ queryKey: ['bank-statements-drafts'] });
       queryClient.invalidateQueries({ queryKey: ['bank-continuity'] });
       toast.success(tr('Saved to database! This statement is now confirmed.', '已儲存至數據庫！此月結單已確認。', '已储存至数据库！此月结单已确认。'));
-      navigate('/bank-statements');
+      setTimeout(() => { if (!goNextInQueue()) navigate('/bank-statements'); }, 600);
     },
     onError: (err: any) => {
       toast.error(`Failed to save: ${err?.message || err?.error || 'Unknown error'}`);
@@ -206,7 +227,7 @@ export default function BankStatementReview() {
       queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
       queryClient.invalidateQueries({ queryKey: ['bank-statements-drafts'] });
       queryClient.invalidateQueries({ queryKey: ['bank-continuity'] });
-      navigate('/file-storage');
+      if (!goNextInQueue()) navigate('/bank-statements');
     },
   });
 

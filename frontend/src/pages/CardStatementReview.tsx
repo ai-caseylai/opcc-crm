@@ -57,8 +57,28 @@ export default function CardStatementReview() {
   const saveHeaderMut = useMutation({ mutationFn: (body: any) => api(`/card-statements/${id}`, { method: 'PATCH', body }) });
   const saveTxMut = useMutation({ mutationFn: ({ txId, body }: { txId: string; body: any }) => api(`/card-statements/transactions/${txId}`, { method: 'PATCH', body }) });
   const deleteTxMut = useMutation({ mutationFn: (txId: string) => api(`/card-statements/transactions/${txId}`, { method: 'DELETE' }) });
-  const confirmMut = useMutation({ mutationFn: (body?: any) => api(`/card-statements/${id}/confirm`, { method: 'POST', body }), onSuccess: () => nav('/card-statements') });
-  const discardMut = useMutation({ mutationFn: () => api(`/card-statements/${id}`, { method: 'DELETE' }), onSuccess: () => nav('/card-statements') });
+  function goNextInQueue() {
+    const raw = sessionStorage.getItem('reviewQueue');
+    if (!raw) return null;
+    try {
+      const queue: {docType:string, reviewId:string, filename:string, flags:string}[] = JSON.parse(raw);
+      if (queue.length > 0) {
+        const next = queue.shift()!;
+        if (queue.length > 0) sessionStorage.setItem('reviewQueue', JSON.stringify(queue));
+        else { sessionStorage.removeItem('reviewQueue'); sessionStorage.removeItem('reviewQueueTotal'); }
+        if (next.docType === 'bank_statement') nav(`/bank-statements/review/${next.reviewId}`);
+        else if (next.docType === 'card_statement') nav(`/card-statements/review/${next.reviewId}`);
+        else nav(`/invoices/review/${next.reviewId}${next.flags || ''}`);
+        return true;
+      }
+    } catch {}
+    sessionStorage.removeItem('reviewQueue');
+    sessionStorage.removeItem('reviewQueueTotal');
+    return null;
+  }
+
+  const confirmMut = useMutation({ mutationFn: (body?: any) => api(`/card-statements/${id}/confirm`, { method: 'POST', body }), onSuccess: () => { if (!goNextInQueue()) nav('/card-statements'); } });
+  const discardMut = useMutation({ mutationFn: () => api(`/card-statements/${id}`, { method: 'DELETE' }), onSuccess: () => { if (!goNextInQueue()) nav('/card-statements'); } });
 
   if (isLoading || !stmt) return <div className="p-6 text-muted-foreground">Loading…</div>;
 

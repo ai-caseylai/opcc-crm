@@ -22,7 +22,10 @@ invoices.get('/', async (c) => {
   const docType = c.req.query('doc_type') || ''; // 'receipt' | 'invoice' | ''
   const direction = c.req.query('direction') || ''; // 'incoming' | 'outgoing' | ''
 
-  let query = `SELECT i.*, c.name as customer_name, c.company_name as customer_company, s.name as supplier_name FROM invoices i LEFT JOIN customers c ON i.customer_id = c.id LEFT JOIN suppliers s ON i.supplier_id = s.id WHERE i.user_id = ? AND i.status != 'pending_review'`;
+  // Default: exclude pending_review unless explicitly requested
+  const showPendingReview = status === 'pending_review';
+  let query = `SELECT i.*, c.name as customer_name, c.company_name as customer_company, s.name as supplier_name FROM invoices i LEFT JOIN customers c ON i.customer_id = c.id LEFT JOIN suppliers s ON i.supplier_id = s.id WHERE i.user_id = ?`;
+  if (!showPendingReview) query += " AND i.status != 'pending_review'";
   const params: any[] = [tenantId];
   if (status) { query += ' AND i.status = ?'; params.push(status); }
   if (search) { query += ' AND (i.invoice_number LIKE ? OR c.name LIKE ? OR s.name LIKE ? OR i.vendor_name LIKE ?)'; params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`); }
@@ -36,7 +39,8 @@ invoices.get('/', async (c) => {
 
   const rows = await db.prepare(query).bind(...params).all();
   const countRow = await db.prepare(
-    `SELECT COUNT(*) as count FROM invoices i LEFT JOIN customers c ON i.customer_id = c.id LEFT JOIN suppliers s ON i.supplier_id = s.id WHERE i.user_id = ? AND i.status != 'pending_review'` +
+    `SELECT COUNT(*) as count FROM invoices i LEFT JOIN customers c ON i.customer_id = c.id LEFT JOIN suppliers s ON i.supplier_id = s.id WHERE i.user_id = ?` +
+    (showPendingReview ? '' : " AND i.status != 'pending_review'") +
     (status ? ' AND i.status = ?' : '') +
     (search ? ' AND (i.invoice_number LIKE ? OR c.name LIKE ? OR s.name LIKE ? OR i.vendor_name LIKE ?)' : '') +
     (docType === 'receipt' ? ' AND i.receipt_number IS NOT NULL' : docType === 'invoice' ? ' AND i.receipt_number IS NULL' : '') +
@@ -337,6 +341,9 @@ invoices.delete('/:id', async (c) => {
     'SELECT id, customer_id, supplier_id, file_id FROM invoices WHERE id = ? AND user_id = ?'
   ).bind(id, tenantId).first<{ id: string; customer_id: string | null; supplier_id: string | null; file_id: string | null }>();
   if (!existing) return c.json({ error: 'Invoice not found' }, 404);
+
+  // Break circular FK: NULL out any linked_invoice_id references to this invoice
+  await db.prepare('UPDATE invoices SET linked_invoice_id = NULL WHERE linked_invoice_id = ?').bind(id).run();
 
   // Delete the invoice (invoice_items cascade via FK)
   await db.prepare('DELETE FROM invoices WHERE id = ? AND user_id = ?').bind(id, tenantId).run();

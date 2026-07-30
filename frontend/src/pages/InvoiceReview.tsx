@@ -37,8 +37,17 @@ export default function InvoiceReview() {
   const needsDirectionReview = searchParams.get('review_direction') === '1';
   const companyNotDetected = searchParams.get('company_not_detected') === '1';
   const isDuplicate = searchParams.get('is_duplicate') === '1';
+  const dupStatus = searchParams.get('dup_status') || '';
   const autoLinkedId = searchParams.get('auto_linked') || '';
   const suggestedDirection = searchParams.get('direction') || '';
+
+  // ── Review queue indicator ──
+  let queueRemaining = 0, queueTotal = 0;
+  try {
+    const q = JSON.parse(sessionStorage.getItem('reviewQueue') || '[]');
+    queueRemaining = q.length;
+    queueTotal = parseInt(sessionStorage.getItem('reviewQueueTotal') || '0');
+  } catch {}
 
   // PDF state
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
@@ -111,6 +120,31 @@ export default function InvoiceReview() {
     return () => { cancelled = true; if (revokeUrl) URL.revokeObjectURL(revokeUrl); };
   }, [invoiceData?.file_id, isPreviewable]);
 
+  // ── Review queue: after save/discard, load next queued item ──
+  function goNextInQueue() {
+    const raw = sessionStorage.getItem('reviewQueue');
+    if (!raw) return null;
+    try {
+      const queue: {docType:string, reviewId:string, filename:string, flags:string}[] = JSON.parse(raw);
+      if (queue.length > 0) {
+        const next = queue.shift()!;
+        sessionStorage.setItem('reviewQueue', JSON.stringify(queue));
+        const total = parseInt(sessionStorage.getItem('reviewQueueTotal') || '0');
+        const remaining = queue.length;
+        if (remaining > 0) sessionStorage.setItem('reviewQueue', JSON.stringify(queue));
+        else { sessionStorage.removeItem('reviewQueue'); sessionStorage.removeItem('reviewQueueTotal'); }
+        // Navigate to next item's review page
+        if (next.docType === 'bank_statement') navigate(`/bank-statements/review/${next.reviewId}`);
+        else if (next.docType === 'card_statement') navigate(`/card-statements/review/${next.reviewId}`);
+        else navigate(`/invoices/review/${next.reviewId}${next.flags}`);
+        return true;
+      }
+    } catch {}
+    sessionStorage.removeItem('reviewQueue');
+    sessionStorage.removeItem('reviewQueueTotal');
+    return null;
+  }
+
   // ── Mutations ──
   const confirmMut = useMutation({
     mutationFn: (body: any) => api(`/invoices/${id}/confirm`, { method: 'POST', body }),
@@ -118,8 +152,9 @@ export default function InvoiceReview() {
       queryClient.invalidateQueries({ queryKey: ['invoices'] });
       queryClient.invalidateQueries({ queryKey: ['invoices-receipts'] });
       setSaved(true);
-      // Receipts go to Expense Receipts page; invoices go to Invoices page
-      setTimeout(() => navigate(isReceipt ? '/expense-receipts' : '/invoices'), 1200);
+      setTimeout(() => {
+        if (!goNextInQueue()) navigate(isReceipt ? '/expense-receipts' : '/invoices');
+      }, 800);
     },
     onError: (err: any) => toast.info(`Save failed: ${err?.message || 'Unknown error'}`),
   });
@@ -129,7 +164,7 @@ export default function InvoiceReview() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['invoices'] });
       queryClient.invalidateQueries({ queryKey: ['file-storage'] });
-      navigate('/file-storage');
+      if (!goNextInQueue()) navigate('/file-storage');
     },
     onError: (err: any) => toast.info(`Discard failed: ${err?.message || 'Unknown error'}`),
   });
@@ -229,6 +264,12 @@ export default function InvoiceReview() {
             </p>
           </div>
         </div>
+        {queueTotal > 0 && (
+          <div className="text-xs bg-muted px-3 py-1 rounded-full font-medium text-muted-foreground">
+            📋 {queueTotal - queueRemaining}/{queueTotal} {tr('reviewed', '已審核', '已审核')}
+            {queueRemaining > 0 && <span className="ml-1">— {queueRemaining} {tr('remaining', '剩餘', '剩余')}</span>}
+          </div>
+        )}
       </div>
 
       {/* ── Direction review banner ── */}
@@ -288,18 +329,14 @@ export default function InvoiceReview() {
             <span className="text-2xl">🔁</span>
             <div>
               <p className="text-sm font-semibold text-orange-800 dark:text-orange-200">
-                {tr(
-                  'An invoice with this number already exists.',
-                  '此發票號碼已存在。',
-                  '此发票号码已存在。'
-                )}
+                {dupStatus === 'deleted'
+                  ? tr('This document was previously imported and later deleted.', '此文件曾導入後被刪除。', '此文件曾导入后被删除。')
+                  : tr('This document has already been imported.', '此文件已導入。', '此文件已导入。')}
               </p>
               <p className="text-xs text-orange-600 dark:text-orange-400 mt-0.5">
-                {tr(
-                  'A duplicate was detected. The invoice number has been adjusted to avoid conflicts. Please verify it is correct.',
-                  '檢測到重複。發票號碼已調整以避免衝突。請確認是否正確。',
-                  '检测到重复。发票号码已调整以避免冲突。请确认是否正确。'
-                )}
+                {dupStatus === 'deleted'
+                  ? tr('The previous record was soft-deleted. Saving will create a new record — journal entries will not be duplicated.', '舊記錄已軟刪除。儲存將建立新記錄 — 不會重複記帳。', '旧记录已软删除。储存将建立新记录 — 不会重复记帐。')
+                  : tr('A duplicate was detected. Please verify and edit if needed before saving.', '檢測到重複。請在儲存前確認並編輯。', '检测到重复。请在储存前确认并编辑。')}
               </p>
             </div>
           </div>

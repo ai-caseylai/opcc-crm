@@ -43,25 +43,29 @@ async function importStatementFromFile(
   fileId: string, userId: string, db: D1Database, fileBucket: R2Bucket, ai: any, deepseekKey: string, glmApiKey?: string,
 ): Promise<{ success: boolean; statement_id?: string; error?: string; transactions_count?: number; parsed_via_ai?: boolean; ocr_failed?: boolean; duplicate_info?: { type?: string; bank_name: string | null; period: string | null; file_name: string | null } }> {
   const fileRow = await db.prepare(
-    'SELECT id, r2_key, filename, original_name, file_type, ocr_text, ocr_status, category FROM file_records WHERE id = ? AND user_id = ?'
+    'SELECT id, r2_key, filename, original_name, file_type, ocr_text, ocr_status, category FROM file_records WHERE id = ? AND user_id = ? AND deleted_at IS NULL'
   ).bind(fileId, userId).first<{ id: string; r2_key: string; filename: string; original_name: string; file_type: string; ocr_text: string; ocr_status: string; category: string }>();
   if (!fileRow) return { success: false, error: 'File not found' };
 
-  // Check if a bank_statement already exists for this file (ignoring soft-deleted ones)
-  const existing = await db.prepare(
+  // Check for duplicate: active first, then soft-deleted
+  let isDuplicate = false, duplicateStatus: string | null = null, duplicateExistingId: string | null = null;
+  const existingActive = await db.prepare(
     'SELECT id, bank_name, period_start, period_end, file_name FROM bank_statements WHERE user_id = ? AND r2_key = ? AND deleted_at IS NULL'
   ).bind(userId, fileRow.r2_key).first<{ id: string; bank_name: string | null; period_start: string | null; period_end: string | null; file_name: string | null }>();
-  if (existing) return {
-    success: false,
-    error: 'Statement already imported',
-    statement_id: existing.id,
-    duplicate_info: {
-      type: 'bank_statement',
-      bank_name: existing.bank_name,
-      period: existing.period_start && existing.period_end ? `${existing.period_start} – ${existing.period_end}` : null,
-      file_name: existing.file_name,
-    },
-  };
+  if (existingActive) {
+    isDuplicate = true;
+    duplicateStatus = 'active';
+    duplicateExistingId = existingActive.id;
+  } else {
+    const existingDeleted = await db.prepare(
+      'SELECT id FROM bank_statements WHERE user_id = ? AND r2_key = ? AND deleted_at IS NOT NULL'
+    ).bind(userId, fileRow.r2_key).first<{ id: string }>();
+    if (existingDeleted) {
+      isDuplicate = true;
+      duplicateStatus = 'deleted';
+      duplicateExistingId = existingDeleted.id;
+    }
+  }
 
   // Get OCR text from file record or run GLM-OCR
   let ocrText = fileRow.ocr_text || '';
@@ -94,7 +98,7 @@ async function importStatementFromFile(
         console.log('[OCR-DEBUG] GLM exception:', e?.message || String(e));
       }
       if (ocrText) {
-        await db.prepare("UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ?").bind(ocrText, fileId).run();
+        await db.prepare("UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL").bind(ocrText, fileId).run();
       }
     }
   }
@@ -212,7 +216,7 @@ ${ocrText.slice(0, 8000)}` }],
   }
 
   await db.prepare(
-    "UPDATE file_records SET category = 'bank_statement', folder = 'Bank Statements', updated_at = datetime('now') WHERE id = ?"
+    "UPDATE file_records SET category = 'bank_statement', folder = 'Bank Statements', updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL"
   ).bind(fileId).run();
 
   // Auto-categorize transactions
@@ -253,7 +257,7 @@ ${ocrText.slice(0, 8000)}` }],
     const directorPattern = /JOSEPH|LIN\s*PUI|LAI\s*KIN|RAYMOND|SZETO/i;
 
     const txs = await db.prepare(
-      'SELECT id, description, deposit_amount FROM bank_transactions WHERE bank_statement_id = ? AND account_code IS NULL'
+      'SELECT id, description, deposit_amount FROM bank_transactions WHERE bank_statement_id = ? AND account_code IS NULL AND deleted_at IS NULL'
     ).bind(stmtId).all();
 
     for (const tx of txs.results as any[]) {
@@ -266,7 +270,7 @@ ${ocrText.slice(0, 8000)}` }],
       if (isDirector && /DIRECT\s+CREDIT|TRANSFER-DEBIT|FPS|自動轉賬|轉賬/.test(desc)) code = '22020';
       if (!code && tx.deposit_amount > 0 && /DIRECT\s+CREDIT|自動轉賬存入/i.test(desc)) code = isDirector ? '22020' : '41020';
       if (code) {
-        await db.prepare('UPDATE bank_transactions SET account_code = ? WHERE id = ?').bind(code, tx.id).run();
+        await db.prepare('UPDATE bank_transactions SET account_code = ? WHERE id = ? AND deleted_at IS NULL').bind(code, tx.id).run();
       }
     }
   } catch { /* non-critical */ }
@@ -317,7 +321,7 @@ ${ocrText.slice(0, 8000)}` }],
   // Auto-generate journal entries from categorized bank transactions
   try {
     const usedCodes = await db.prepare(
-      'SELECT DISTINCT account_code FROM bank_transactions WHERE bank_statement_id = ? AND account_code IS NOT NULL'
+      'SELECT DISTINCT account_code FROM bank_transactions WHERE bank_statement_id = ? AND account_code IS NOT NULL AND deleted_at IS NULL'
     ).bind(stmtId).all();
     const codeList = (usedCodes.results as any[]).map(r => r.account_code).filter(Boolean);
     if (codeList.length > 0) {
@@ -395,6 +399,9 @@ ${ocrText.slice(0, 8000)}` }],
     statement_id: stmtId,
     transactions_count: txCount,
     parsed_via_ai: !!parsed,
+    is_duplicate: isDuplicate,
+    duplicate_status: duplicateStatus,
+    duplicate_existing_id: duplicateExistingId,
   };
 }
 
@@ -403,7 +410,7 @@ async function importInvoiceFromFile(
   fileId: string, userId: string, db: D1Database, fileBucket: R2Bucket, ai: any, deepseekKey: string, glmApiKey?: string,
 ): Promise<{ success: boolean; invoice_id?: string; error?: string; items_count?: number; ocr_failed?: boolean; parsed?: any }> {
   const fileRow = await db.prepare(
-    'SELECT id, r2_key, filename, original_name, file_type, ocr_text, ocr_status, category, direction FROM file_records WHERE id = ? AND user_id = ?'
+    'SELECT id, r2_key, filename, original_name, file_type, ocr_text, ocr_status, category, direction FROM file_records WHERE id = ? AND user_id = ? AND deleted_at IS NULL'
   ).bind(fileId, userId).first<{ id: string; r2_key: string; filename: string; original_name: string; file_type: string; ocr_text: string; ocr_status: string; category: string; direction: string }>();
   if (!fileRow) return { success: false, error: 'File not found' };
 
@@ -447,7 +454,7 @@ async function importInvoiceFromFile(
       }
 
       if (ocrText && ocrText.length >= 20) {
-        await db.prepare("UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ?").bind(ocrText, fileId).run();
+        await db.prepare("UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL").bind(ocrText, fileId).run();
       }
     }
   }
@@ -470,7 +477,7 @@ async function importInvoiceFromFile(
       `INSERT INTO invoices (id, user_id, invoice_number, customer_id, status, issue_date, due_date, subtotal, total, currency, file_id)
        VALUES (?, ?, ?, ?, 'pending_review', date('now'), date('now', '+30 days'), 0, 0, 'HKD', ?)`
     ).bind(emptyInvId, userId, emptyInvNumber, placeholderCustomerId, fileId).run();
-    await db.prepare("UPDATE file_records SET category = 'invoice', ocr_status = 'failed', updated_at = datetime('now') WHERE id = ?").bind(fileId).run();
+    await db.prepare("UPDATE file_records SET category = 'invoice', ocr_status = 'failed', updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL").bind(fileId).run();
     return { success: true, invoice_id: emptyInvId, items_count: 0, ocr_failed: true };
   }
 
@@ -861,20 +868,17 @@ ${ocrText.slice(0, 8000)}`;
       : `${invNumber}-${Date.now().toString(36).slice(-3).toUpperCase()}`;
   }
 
-  // Also check by file_id — catches exact same file uploaded twice
+  // Check by file_id — flag but don't block (user can still review)
+  let duplicateExistingId: string | null = null;
+  let duplicateStatus: string | null = null;
   const existingByFile = await db.prepare(
     'SELECT id, invoice_number, receipt_number FROM invoices WHERE user_id = ? AND file_id = ?'
   ).bind(userId, fileId).first<{ id: string; invoice_number: string; receipt_number: string | null }>();
-  if (existingByFile) return {
-    success: false,
-    error: 'This file has already been imported',
-    invoice_id: existingByFile.id,
-    duplicate_info: {
-      type: isReceipt ? 'receipt' : 'invoice',
-      number: existingByFile.receipt_number || existingByFile.invoice_number,
-      vendor: customerName,
-    },
-  };
+  if (existingByFile) {
+    isDuplicate = true;
+    duplicateExistingId = existingByFile.id;
+    duplicateStatus = 'active';
+  }
 
   // Build review flags for persistent display in the Invoices list
   const reviewFlags: string[] = [];
@@ -924,7 +928,7 @@ ${ocrText.slice(0, 8000)}`;
 
   // Update file record
   await db.prepare(
-    "UPDATE file_records SET category = ?, direction = ?, payment_status = 'unmatched', amount = ?, folder = ?, updated_at = datetime('now') WHERE id = ?"
+    "UPDATE file_records SET category = ?, direction = ?, payment_status = 'unmatched', amount = ?, folder = ?, updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL"
   ).bind(isReceipt ? 'receipt' : 'invoice', direction, total, folder, fileId).run();
 
   // Return parsed data so the review page can pre-populate without another round-trip
@@ -938,6 +942,8 @@ ${ocrText.slice(0, 8000)}`;
     needs_direction_review: needsDirectionReview,
     company_not_detected: companyNotDetected,
     is_duplicate: isDuplicate,
+    duplicate_status: duplicateStatus,
+    duplicate_existing_id: duplicateExistingId,
     auto_linked_invoice_id: linkedInvoiceId,
     direction,
     parsed: {
@@ -1066,7 +1072,7 @@ files.get('/issues', async (c) => {
   const user = c.get('user');
   const tenantId = c.get('client_user_id') || user.id;
   const row = await c.env.DB.prepare(
-    "SELECT COUNT(*) as count FROM file_records WHERE user_id = ? AND ocr_status IN ('failed', 'unclear')"
+    "SELECT COUNT(*) as count FROM file_records WHERE user_id = ? AND ocr_status IN ('failed', 'unclear') AND deleted_at IS NULL"
   ).bind(tenantId).first<{ count: number }>();
   return c.json({ issues: row?.count || 0 });
 });
@@ -1125,21 +1131,26 @@ files.post('/upload', async (c) => {
   const cleanBase64 = file_data.replace(/^data:.*?;base64,/, '');
   const binary = Uint8Array.from(atob(cleanBase64), ch => ch.charCodeAt(0));
 
+  // Compute SHA-256 content hash for duplicate detection
+  const hashBuffer = await crypto.subtle.digest('SHA-256', binary);
+  const contentHash = Array.from(new Uint8Array(hashBuffer))
+    .map(b => b.toString(16).padStart(2, '0')).join('');
+
   await c.env.FILE_BUCKET.put(r2Key, binary, {
     httpMetadata: { contentType: file_type || 'application/octet-stream' },
     customMetadata: { originalName: safeName, userId: user.id },
   });
 
   await c.env.DB.prepare(
-    `INSERT INTO file_records (id, user_id, folder, filename, original_name, file_type, file_size, r2_key, description, ocr_text, ocr_status, category, direction, amount)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO file_records (id, user_id, folder, filename, original_name, file_type, file_size, r2_key, description, ocr_text, ocr_status, category, direction, amount, content_hash)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(id, tenantId, folder, displayName, safeName,
     file_type || 'application/octet-stream', file_size || binary.byteLength,
     r2Key, description || '', ocrResult.text, ocrResult.status, classification.category,
-    ocrDirection || null, ocrAmount).run();
+    ocrDirection || null, ocrAmount, contentHash).run();
 
   const row = await c.env.DB.prepare(
-    'SELECT id, folder, filename, original_name, file_type, file_size, description, ocr_status, category, created_at FROM file_records WHERE id = ?'
+    'SELECT id, folder, filename, original_name, file_type, file_size, description, ocr_status, category, created_at FROM file_records WHERE id = ? AND deleted_at IS NULL'
   ).bind(id).first();
 
   // Notify OCR worker via WebSocket
@@ -1361,7 +1372,7 @@ files.get('/:id', async (c) => {
   const user = c.get('user');
   const tenantId = c.get('client_user_id') || user.id;
   const row = await c.env.DB.prepare(
-    'SELECT id, folder, filename, original_name, file_type, file_size, description, ocr_text, ocr_status, category, direction, payment_status, amount, created_at, updated_at FROM file_records WHERE id = ? AND user_id = ?'
+    'SELECT id, folder, filename, original_name, file_type, file_size, description, ocr_text, ocr_status, category, direction, payment_status, amount, created_at, updated_at FROM file_records WHERE id = ? AND user_id = ? AND deleted_at IS NULL'
   ).bind(c.req.param('id'), tenantId).first();
   if (!row) return c.json({ error: 'Not found' }, 404);
   return c.json(row);
@@ -1372,7 +1383,7 @@ files.get('/:id/download', async (c) => {
   const user = c.get('user');
   const tenantId = c.get('client_user_id') || user.id;
   const row = await c.env.DB.prepare(
-    'SELECT r2_key, file_type, original_name, filename FROM file_records WHERE id = ? AND user_id = ?'
+    'SELECT r2_key, file_type, original_name, filename FROM file_records WHERE id = ? AND user_id = ? AND deleted_at IS NULL'
   ).bind(c.req.param('id'), tenantId).first();
   if (!row) return c.json({ error: 'Not found' }, 404);
 
@@ -1396,7 +1407,7 @@ files.patch('/:id', async (c) => {
   const id = c.req.param('id');
   const body = await c.req.json();
 
-  const existing = await c.env.DB.prepare('SELECT id FROM file_records WHERE id = ? AND user_id = ?')
+  const existing = await c.env.DB.prepare('SELECT id FROM file_records WHERE id = ? AND user_id = ? AND deleted_at IS NULL')
     .bind(id, tenantId).first();
   if (!existing) return c.json({ error: 'Not found' }, 404);
 
@@ -1413,11 +1424,11 @@ files.patch('/:id', async (c) => {
   sets.push("updated_at = datetime('now')");
   params.push(id, tenantId);
 
-  await c.env.DB.prepare(`UPDATE file_records SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`)
+  await c.env.DB.prepare(`UPDATE file_records SET ${sets.join(', ')} WHERE id = ? AND user_id = ? AND deleted_at IS NULL`)
     .bind(...params).run();
 
   const row = await c.env.DB.prepare(
-    'SELECT id, folder, filename, original_name, file_type, file_size, description, ocr_status, category, created_at, updated_at FROM file_records WHERE id = ?'
+    'SELECT id, folder, filename, original_name, file_type, file_size, description, ocr_status, category, created_at, updated_at FROM file_records WHERE id = ? AND deleted_at IS NULL'
   ).bind(id).first();
   return c.json(row);
 });
@@ -1460,7 +1471,7 @@ files.delete('/:id', async (c) => {
       const txRes = await c.env.DB.prepare(
         `UPDATE bank_transactions SET deleted_at = ?
          WHERE bank_statement_id IN (
-           SELECT id FROM bank_statements WHERE r2_key = ? AND user_id = ?
+           SELECT id FROM bank_statements WHERE r2_key = ? AND user_id = ? AND deleted_at IS NULL
          ) AND deleted_at IS NULL`
       ).bind(now, existing.r2_key, tenantId).run();
       transactionsRemoved = txRes.meta?.changes || 0;
@@ -1518,7 +1529,7 @@ files.post('/reprocess', async (c) => {
   const db = c.env.DB;
 
   const rows = await db.prepare(
-    "SELECT id, r2_key, filename, original_name, file_type FROM file_records WHERE user_id = ? AND (ocr_status IN ('pending','skipped','failed') OR category = '' OR category IS NULL) LIMIT 50"
+    "SELECT id, r2_key, filename, original_name, file_type FROM file_records WHERE user_id = ? AND (ocr_status IN ('pending','skipped','failed') OR category = '' OR category IS NULL) AND deleted_at IS NULL LIMIT 50"
   ).bind(tenantId).all();
 
   let processed = 0;
@@ -1568,7 +1579,7 @@ files.post('/reprocess', async (c) => {
       }
 
       await db.prepare(
-        "UPDATE file_records SET ocr_text = ?, ocr_status = ?, category = ?, folder = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?"
+        "UPDATE file_records SET ocr_text = ?, ocr_status = ?, category = ?, folder = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ? AND deleted_at IS NULL"
       ).bind(ocrText, ocrStatus, classification.category, classification.folder, row.id, tenantId).run();
 
       processed++;
@@ -1589,7 +1600,7 @@ files.post('/:id/ocr-result', async (c) => {
   const body = await c.req.json();
   const { ocr_text, ocr_status, category, folder } = body as { ocr_text?: string; ocr_status?: string; category?: string; folder?: string };
 
-  const existing = await db.prepare('SELECT id FROM file_records WHERE id = ? AND user_id = ?')
+  const existing = await db.prepare('SELECT id FROM file_records WHERE id = ? AND user_id = ? AND deleted_at IS NULL')
     .bind(id, tenantId).first();
   if (!existing) return c.json({ error: 'Not found' }, 404);
 
@@ -1603,8 +1614,8 @@ files.post('/:id/ocr-result', async (c) => {
   sets.push("updated_at = datetime('now')");
   params.push(id, tenantId);
 
-  await db.prepare(`UPDATE file_records SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).bind(...params).run();
-  const row = await db.prepare('SELECT id, filename, ocr_status, ocr_text, category, folder FROM file_records WHERE id = ?').bind(id).first();
+  await db.prepare(`UPDATE file_records SET ${sets.join(', ')} WHERE id = ? AND user_id = ? AND deleted_at IS NULL`).bind(...params).run();
+  const row = await db.prepare('SELECT id, filename, ocr_status, ocr_text, category, folder FROM file_records WHERE id = ? AND deleted_at IS NULL').bind(id).first();
 
   // Auto-import bank statements / invoices when Docker worker provides good OCR
   // DISABLED — /import-document is the sole trigger for creating statements/invoices.
@@ -1662,18 +1673,18 @@ files.post('/auto-match-invoices', async (c) => {
   const docFiles = await db.prepare(
     `SELECT id, filename, original_name, ocr_text, direction, amount, category
      FROM file_records
-     WHERE user_id = ? AND category IN ('invoice', 'receipt') AND payment_status = 'unmatched' AND amount IS NOT NULL AND amount > 0`
+     WHERE user_id = ? AND category IN ('invoice', 'receipt') AND payment_status = 'unmatched' AND amount IS NOT NULL AND amount > 0 AND deleted_at IS NULL`
   ).bind(tenantId).all();
 
   // Get unmatched bank transactions
   const deposits = await db.prepare(
     `SELECT id, transaction_date, description, deposit_amount
-     FROM bank_transactions WHERE user_id = ? AND deposit_amount > 0 AND match_status = 'unmatched'`
+     FROM bank_transactions WHERE user_id = ? AND deposit_amount > 0 AND match_status = 'unmatched' AND deleted_at IS NULL`
   ).bind(tenantId).all();
 
   const withdrawals = await db.prepare(
     `SELECT id, transaction_date, description, withdrawal_amount
-     FROM bank_transactions WHERE user_id = ? AND withdrawal_amount > 0 AND match_status = 'unmatched'`
+     FROM bank_transactions WHERE user_id = ? AND withdrawal_amount > 0 AND match_status = 'unmatched' AND deleted_at IS NULL`
   ).bind(tenantId).all();
 
   const matched: any[] = [];
@@ -1692,7 +1703,7 @@ files.post('/auto-match-invoices', async (c) => {
       if (Math.abs(file.amount - tx[amountKey]) < 0.01) {
         usedTxIds.add(tx.id);
         await db.prepare(
-          `UPDATE file_records SET payment_status = ? WHERE id = ?`
+          `UPDATE file_records SET payment_status = ? WHERE id = ? AND deleted_at IS NULL`
         ).bind(newStatus, file.id).run();
 
         // Also update linked invoice's file_record status for receipt-invoice pairs
@@ -1701,7 +1712,7 @@ files.post('/auto-match-invoices', async (c) => {
             'SELECT file_id FROM invoices WHERE id = (SELECT linked_invoice_id FROM invoices WHERE file_id = ?)'
           ).bind(file.id).first<{ file_id: string | null }>();
           if (linked?.file_id) {
-            await db.prepare("UPDATE file_records SET payment_status = 'received' WHERE id = ?")
+            await db.prepare("UPDATE file_records SET payment_status = 'received' WHERE id = ? AND deleted_at IS NULL")
               .bind(linked.file_id).run();
           }
         }
@@ -1734,7 +1745,7 @@ files.patch('/:id/direction', async (c) => {
     return c.json({ error: 'direction must be outgoing or incoming' }, 400);
   }
   await c.env.DB.prepare(
-    'UPDATE file_records SET direction = ? WHERE id = ? AND user_id = ?'
+    'UPDATE file_records SET direction = ? WHERE id = ? AND user_id = ? AND deleted_at IS NULL'
   ).bind(direction, id, tenantId).run();
   return c.json({ success: true });
 });
@@ -1826,7 +1837,7 @@ files.post('/:id/glm-ocr', async (c) => {
   const id = c.req.param('id');
 
   const fileRow = await c.env.DB.prepare(
-    'SELECT id, r2_key, filename, original_name, file_type, ocr_text FROM file_records WHERE id = ? AND user_id = ?'
+    'SELECT id, r2_key, filename, original_name, file_type, ocr_text FROM file_records WHERE id = ? AND user_id = ? AND deleted_at IS NULL'
   ).bind(id, tenantId).first<{ id: string; r2_key: string; filename: string; original_name: string; file_type: string; ocr_text: string }>();
   if (!fileRow) return c.json({ error: 'File not found' }, 404);
 
@@ -1859,12 +1870,12 @@ files.post('/:id/glm-ocr', async (c) => {
     // Save OCR result to file_records (full GLM-OCR JSON)
     const ocrText = typeof data === 'string' ? data : JSON.stringify(data);
     await c.env.DB.prepare(
-      "UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ?"
+      "UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL"
     ).bind(ocrText.slice(0, 50000), id).run();
 
     // Also update linked bank_statement ocr_text
     await c.env.DB.prepare(
-      "UPDATE bank_statements SET ocr_text = ?, updated_at = datetime('now') WHERE r2_key = (SELECT r2_key FROM file_records WHERE id = ?)"
+      "UPDATE bank_statements SET ocr_text = ?, updated_at = datetime('now') WHERE r2_key = (SELECT r2_key FROM file_records WHERE id = ? AND deleted_at IS NULL) AND deleted_at IS NULL"
     ).bind(ocrText.slice(0, 50000), id).run();
 
     return c.json({ success: true, file_id: id, ocr_result: data });
@@ -1878,7 +1889,7 @@ async function importCardStatementFromFile(
   fileId: string, userId: string, db: D1Database, fileBucket: R2Bucket, ai: any, deepseekKey: string, glmApiKey?: string,
 ): Promise<{ success: boolean; statement_id?: string; error?: string; transactions_count?: number; ocr_failed?: boolean; duplicate_info?: any }> {
   const fileRow = await db.prepare(
-    'SELECT id, r2_key, filename, original_name, file_type, ocr_text, ocr_status FROM file_records WHERE id = ? AND user_id = ?'
+    'SELECT id, r2_key, filename, original_name, file_type, ocr_text, ocr_status FROM file_records WHERE id = ? AND user_id = ? AND deleted_at IS NULL'
   ).bind(fileId, userId).first<{ id: string; r2_key: string; filename: string; original_name: string; file_type: string; ocr_text: string; ocr_status: string }>();
   if (!fileRow) return { success: false, error: 'File not found' };
 
@@ -1911,7 +1922,7 @@ async function importCardStatementFromFile(
         }
       }
     } catch {}
-    if (ocrText) await db.prepare("UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ?").bind(ocrText, fileId).run();
+    if (ocrText) await db.prepare("UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL").bind(ocrText, fileId).run();
   }
 
   if (!ocrText || ocrText.length < 10) {
@@ -2038,7 +2049,7 @@ files.post('/:id/import-document', async (c) => {
   let fileRow: any = null;
   for (let attempt = 0; attempt < 3; attempt++) {
     fileRow = await db.prepare(
-      'SELECT id, r2_key, original_name, file_type, ocr_text, category FROM file_records WHERE id = ? AND user_id = ?'
+      'SELECT id, r2_key, original_name, file_type, ocr_text, category, content_hash FROM file_records WHERE id = ? AND user_id = ? AND deleted_at IS NULL'
     ).bind(fileId, tenantId).first();
     if (fileRow) break;
     if (attempt < 2) await new Promise(r => setTimeout(r, 600));
@@ -2064,11 +2075,11 @@ files.post('/:id/import-document', async (c) => {
       }
     }
     // Clear OCR cache so it re-runs fresh
-    await db.prepare("UPDATE file_records SET ocr_text = '', ocr_status = 'pending' WHERE id = ? AND user_id = ?")
+    await db.prepare("UPDATE file_records SET ocr_text = '', ocr_status = 'pending' WHERE id = ? AND user_id = ? AND deleted_at IS NULL")
       .bind(fileId, tenantId).run();
     // Re-fetch fileRow with cleared OCR
     fileRow = await db.prepare(
-      'SELECT id, r2_key, original_name, file_type, ocr_text, category FROM file_records WHERE id = ? AND user_id = ?'
+      'SELECT id, r2_key, original_name, file_type, ocr_text, category FROM file_records WHERE id = ? AND user_id = ? AND deleted_at IS NULL'
     ).bind(fileId, tenantId).first<{ id: string; r2_key: string; original_name: string; file_type: string; ocr_text: string; category: string }>() || fileRow;
   }
 
@@ -2099,7 +2110,7 @@ files.post('/:id/import-document', async (c) => {
             : String(mdResult || '');
           if (candidate && candidate.length > 20) {
             ocrText = candidate;
-            await db.prepare("UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ?").bind(ocrText, fileId).run();
+            await db.prepare("UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL").bind(ocrText, fileId).run();
           }
         } catch (e: any) {
           console.log('[SMART-IMPORT] toMarkdown failed:', e?.message || e);
@@ -2123,7 +2134,7 @@ files.post('/:id/import-document', async (c) => {
             const candidate = typeof glmData === 'string' ? glmData : JSON.stringify(glmData);
             if (candidate && candidate.length > 20) {
               ocrText = candidate;
-              await db.prepare("UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ?").bind(ocrText, fileId).run();
+              await db.prepare("UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL").bind(ocrText, fileId).run();
             }
           }
         } catch (e: any) {
@@ -2227,6 +2238,19 @@ files.post('/:id/import-document', async (c) => {
   }
   console.log(`[SMART-IMPORT] file=${fileId} bankScore=${bankScore} invoiceScore=${invoiceScore} cardScore=${cardScore} → ${type}`);
 
+  // Duplicate detection: check content_hash for soft duplicate flag
+  // (individual import functions handle the actual duplicate logic — never block here)
+  let hashDuplicate = false, hashDuplicateId: string | null = null;
+  if (fileRow.content_hash && !force) {
+    const existingFile = await db.prepare(
+      `SELECT id FROM file_records WHERE user_id = ? AND content_hash = ? AND id != ? AND deleted_at IS NULL`
+    ).bind(tenantId, fileRow.content_hash, fileId).first<{ id: string }>();
+    if (existingFile) {
+      hashDuplicate = true;
+      hashDuplicateId = existingFile.id;
+    }
+  }
+
   if (type === 'card_statement') {
     const result = await importCardStatementFromFile(
       fileId, tenantId, db, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY, c.env.GLM_API_KEY
@@ -2235,7 +2259,7 @@ files.post('/:id/import-document', async (c) => {
       const status = result.error === 'File not found' ? 404 : result.error === 'Statement already imported' ? 409 : 422;
       return c.json({ type, error: result.error, statement_id: result.statement_id, duplicate_info: result.duplicate_info, scores: { bankScore, invoiceScore, cardScore } }, status as any);
     }
-    return c.json({ type, ...result, scores: { bankScore, invoiceScore, cardScore } }, 201);
+    return c.json({ type, ...result, scores: { bankScore, invoiceScore, cardScore }, ocr_text: ocrText }, 201);
   }
 
   if (type === 'bank_statement') {
@@ -2246,7 +2270,7 @@ files.post('/:id/import-document', async (c) => {
       const status = result.error === 'File not found' ? 404 : result.error === 'Statement already imported' ? 409 : 422;
       return c.json({ type, error: result.error, statement_id: result.statement_id, duplicate_info: result.duplicate_info, scores: { bankScore, invoiceScore, cardScore } }, status as any);
     }
-    return c.json({ type, ...result, scores: { bankScore, invoiceScore, cardScore } }, 201);
+    return c.json({ type, ...result, scores: { bankScore, invoiceScore, cardScore }, ocr_text: ocrText }, 201);
   } else {
     const result = await importInvoiceFromFile(
       fileId, tenantId, db, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY, c.env.GLM_API_KEY
@@ -2255,7 +2279,7 @@ files.post('/:id/import-document', async (c) => {
       const status = result.error === 'File not found' ? 404 : result.error?.includes('already exists') || result.error?.includes('already been imported') ? 409 : 422;
       return c.json({ type, error: result.error, invoice_id: result.invoice_id, duplicate_info: result.duplicate_info, scores: { bankScore, invoiceScore, cardScore } }, status as any);
     }
-    return c.json({ type, ...result, scores: { bankScore, invoiceScore, cardScore } }, 201);
+    return c.json({ type, ...result, scores: { bankScore, invoiceScore, cardScore }, ocr_text: ocrText }, 201);
   }
 });
 
