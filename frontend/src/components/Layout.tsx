@@ -6,6 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { api } from '../lib/api';
 import Chatbot from './Chatbot';
 import CookieConsent from './CookieConsent';
+import TokenPopup from './TokenPopup';
 import CompanySwitcher from './FirmClientSwitcher';
 import { tr } from '../lib/i18nHelpers';
 import {
@@ -511,6 +512,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </div>
       </div>
       <CookieConsent />
+      <TokenPopup />
     </div>
   );
 }

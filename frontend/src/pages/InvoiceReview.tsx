@@ -255,7 +255,7 @@ export default function InvoiceReview() {
   const customers: any[] = invoiceData?.customers || [];
 
   return (
-    <div className="flex flex-col h-[calc(100vh-4rem)]">
+    <div className="flex flex-col h-[calc(100vh-4rem)]" key={id}>
       {/* ── Top bar ── */}
       <div className="flex items-center justify-between px-4 py-3 border-b bg-card flex-shrink-0">
         <div className="flex items-center gap-3">

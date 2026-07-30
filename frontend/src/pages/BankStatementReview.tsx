@@ -460,7 +460,7 @@ export default function BankStatementReview() {
   };
 
   return (
-    <div className="p-4 space-y-4 max-w-[1800px] mx-auto">
+    <div className="p-4 space-y-4 max-w-[1800px] mx-auto" key={id}>
       {/* Banner */}
       {isDraft ? (
         <div className="rounded-lg border-2 border-yellow-400 bg-yellow-50 dark:bg-yellow-950 p-4">

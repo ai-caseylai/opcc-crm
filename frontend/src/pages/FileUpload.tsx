@@ -5,6 +5,7 @@ import { api, WORKER_API_BASE } from '../lib/api';
 import { useToast } from '../components/Toast';
 import { Upload, FileText, Image, File, Loader2 } from 'lucide-react';
 import { tr } from '../lib/i18nHelpers';
+import { writeTokenUsage, clearTokenUsage } from '../components/TokenPopup';
 
 function reviewPageFlags(result: any): string {
   const params = new URLSearchParams();
@@ -28,7 +29,7 @@ export default function FileUpload() {
   const [processingMsg, setProcessingMsg] = useState<string | null>(null);
   const batchRef = useRef({ total: 0, done: 0, bank: 0, invoice: 0, card: 0 });
   const [batchProgress, setBatchProgress] = useState({ done: 0, total: 0, currentFile: '' });
-  const totalTokensRef = useRef(0);
+  const [tokenCardDismissed, setTokenCardDismissed] = useState(false);
 
   function pushToQueue(docType: string, reviewId: string, filename: string, flags: string) {
     const stored = sessionStorage.getItem('reviewQueue');
@@ -105,9 +106,13 @@ export default function FileUpload() {
     const result = await importResp.json().catch(() => ({}));
     if (result?.ocr_text) console.log('[OCR-RAW-TEXT]', result.ocr_text);
     if (result?.deepseek_raw) console.log('[DEEPSEEK-OUTPUT]', JSON.parse(result.deepseek_raw));
-    // Accumulate DeepSeek token usage
+    // Accumulate DeepSeek token usage to sessionStorage (persists across page nav)
     if (result?.usage?.total_tokens) {
-      totalTokensRef.current += result.usage.total_tokens;
+      writeTokenUsage({
+        prompt: result.usage.prompt_tokens || 0,
+        completion: result.usage.completion_tokens || 0,
+        total: result.usage.total_tokens,
+      });
     }
     setProcessingMsg(null);
 
@@ -157,7 +162,8 @@ export default function FileUpload() {
     if (isBatch) {
       batchRef.current = { total: files.length, done: 0, bank: 0, invoice: 0, card: 0 };
       setBatchProgress({ done: 0, total: files.length, currentFile: '' });
-      totalTokensRef.current = 0;
+      clearTokenUsage();
+      setTokenCardDismissed(false);
       sessionStorage.removeItem('reviewQueue');
       sessionStorage.removeItem('reviewQueueTotal');
     }
@@ -180,8 +186,8 @@ export default function FileUpload() {
     setFiles([]);
     setDescription('');
 
-    const totalTokens = totalTokensRef.current;
-    const tokenLabel = totalTokens > 0 ? ` · Tokens: ~${totalTokens.toLocaleString()}` : '';
+    const storedTokens = (() => { try { const r = sessionStorage.getItem('aiTokenUsage'); return r ? JSON.parse(r) : null; } catch { return null; } })();
+    const tokenLabel = storedTokens?.total > 0 ? ` · Tokens: ~${storedTokens.total.toLocaleString()}` : '';
 
     if (isBatch && ok > 0) {
       const stored = sessionStorage.getItem('reviewQueue');
@@ -287,12 +293,12 @@ export default function FileUpload() {
               </div>
               <p className="text-xs text-muted-foreground text-right">
                 {batchProgress.done} / {batchProgress.total}
-                {totalTokensRef.current > 0 && ` · Tokens: ~${totalTokensRef.current.toLocaleString()}`}
               </p>
             </div>
           )}
         </div>
       )}
+
     </div>
   );
 }

@@ -127,7 +127,7 @@ export default function CardStatementReview() {
   const fmt = (v: number | null | undefined) => v != null ? v.toLocaleString(undefined, { minimumFractionDigits: 2 }) : '—';
 
   return (
-    <div className="flex h-[calc(100vh-4rem)]">
+    <div className="flex h-[calc(100vh-4rem)]" key={id}>
       <div className="w-3/5 border-r bg-muted/10">
         {pdfUrl ? <iframe src={pdfUrl} className="w-full h-full" title="PDF" /> : <div className="flex items-center justify-center h-full text-muted-foreground">Loading PDF…</div>}
       </div>
