@@ -43,6 +43,7 @@ interface AuthContextType {
   activeClient: ClientInfo | null;
   switchClient: (clientId: string | null) => void;
   isFirmUser: boolean;
+  refreshClients: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -88,9 +89,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setLoading(false);
   }, []);
 
-  // Fetch firm clients when user has firm membership
-  useEffect(() => {
-    if (!token || !user?.firm_id) {
+  // Fetch firm clients when user has firm membership or is standalone supervisor/accountant/admin
+  const fetchClients = useCallback(() => {
+    const canManageClients = user?.firm_id || ['admin', 'supervisor', 'accountant'].includes(user?.role || '');
+    if (!token || !canManageClients) {
       setFirmClients([]);
       setActiveClient(null);
       return;
@@ -99,13 +101,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .then(data => {
         const clients = data.data || [];
         setFirmClients(clients);
-        // If activeClient is stale (no longer in list), clear it
+        // Restore activeClient from localStorage, but use fresh data from API
         const saved = localStorage.getItem('activeClient');
         if (saved) {
           try {
             const parsed = JSON.parse(saved);
-            if (clients.some((c: ClientInfo) => c.id === parsed.id)) {
-              setActiveClient(parsed);
+            const fresh = clients.find((c: ClientInfo) => c.id === parsed.id);
+            if (fresh) {
+              localStorage.setItem('activeClient', JSON.stringify(fresh));
+              setActiveClient(fresh);
             } else {
               localStorage.removeItem('activeClient');
               setActiveClient(null);
@@ -114,7 +118,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       })
       .catch(() => {});
-  }, [token, user?.firm_id]);
+  }, [token, user?.firm_id, user?.role]);
+
+  useEffect(() => { fetchClients(); }, [fetchClients]);
 
   const login = useCallback(async (email: string, password: string) => {
     const data = await api('/auth/login', {
@@ -164,7 +170,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   return (
     <AuthContext.Provider value={{
       user, token, loading, company, login, register, logout,
-      firmClients, activeClient, switchClient, isFirmUser,
+      firmClients, activeClient, switchClient, isFirmUser, refreshClients: fetchClients,
     }}>
       {children}
     </AuthContext.Provider>

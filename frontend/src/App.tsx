@@ -14,10 +14,13 @@ import Suppliers from './pages/Suppliers';
 import Products from './pages/Products';
 import Invoices from './pages/Invoices';
 import InvoiceReview from './pages/InvoiceReview';
+import AP from './pages/AP';
+import AR from './pages/AR';
 import Quotations from './pages/Quotations';
 import PurchaseOrders from './pages/PurchaseOrders';
 import ServiceOrders from './pages/ServiceOrders';
 import Bookkeeping from './pages/Bookkeeping';
+import FileUpload from './pages/FileUpload';
 import FixedAssets from './pages/FixedAssets';
 import ImportData from './pages/ImportData';
 import CalendarPage from './pages/CalendarPage';
@@ -49,8 +52,20 @@ import Compliance from './pages/Compliance';
 import AiMemory from './pages/AiMemory';
 import PricingPage from './pages/PricingPage';
 import SubscriptionPage from './pages/SubscriptionPage';
+import StubPage from './pages/StubPage';
+import ChartOfAccounts from './pages/ChartOfAccounts';
+import CardStatements from './pages/CardStatements';
+import CardStatementReview from './pages/CardStatementReview';
+import NewClient from './pages/NewClient';
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30_000, // 30s — prevent refetch cascade during navigation
+      retry: 1,
+    },
+  },
+});
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -76,6 +91,7 @@ const FEATURE_ROUTES: Record<string, string> = {
   '/quotations': 'quotations',
   '/bookkeeping': 'bookkeeping',
   '/bank-statements': 'bankStatements',
+  '/card-statements': 'cardStatements',
   '/expense-receipts': 'expenseReceipts',
   '/calendar': 'calendar',
   '/messages': 'messages',
@@ -153,6 +169,31 @@ function AppRoutes() {
       <Route path="/card-generator" element={<ProtectedRoute><CardGenerator /></ProtectedRoute>} />
       <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
       <Route path="/firm/manage" element={<ProtectedRoute><FirmManagement /></ProtectedRoute>} />
+      {/* P1 Stub Pages */}
+      <Route path="/new-client" element={<ProtectedRoute><NewClient /></ProtectedRoute>} />
+      <Route path="/file-upload" element={<ProtectedRoute><FileUpload /></ProtectedRoute>} />
+      <Route path="/entries" element={<ProtectedRoute><Bookkeeping hideTabs initialTab="entries" /></ProtectedRoute>} />
+      <Route path="/income-statement" element={<ProtectedRoute><Bookkeeping hideTabs initialTab="pl" /></ProtectedRoute>} />
+      <Route path="/trial-balance" element={<ProtectedRoute><Bookkeeping hideTabs initialTab="trial" /></ProtectedRoute>} />
+      <Route path="/balance-sheet" element={<ProtectedRoute><Bookkeeping hideTabs initialTab="bs" /></ProtectedRoute>} />
+      <Route path="/gl-report" element={<ProtectedRoute><Bookkeeping hideTabs initialTab="ledger" /></ProtectedRoute>} />
+      <Route path="/general-ledger" element={<ProtectedRoute><Bookkeeping hideTabs initialTab="ledger" /></ProtectedRoute>} />
+      <Route path="/coa" element={<ProtectedRoute><ChartOfAccounts /></ProtectedRoute>} />
+      <Route path="/card-statements" element={<ProtectedRoute><FeatureGuard><CardStatements /></FeatureGuard></ProtectedRoute>} />
+      <Route path="/card-statements/review/:id" element={<ProtectedRoute><FeatureGuard><CardStatementReview /></FeatureGuard></ProtectedRoute>} />
+      <Route path="/ap" element={<ProtectedRoute><AP /></ProtectedRoute>} />
+      <Route path="/ar" element={<ProtectedRoute><AR /></ProtectedRoute>} />
+      <Route path="/payroll" element={<ProtectedRoute><StubPage title="Payroll" zhHant="薪資" zhHans="薪资" /></ProtectedRoute>} />
+      <Route path="/petty-cash" element={<ProtectedRoute><StubPage title="Petty Cash" zhHant="零用金" zhHans="零用金" /></ProtectedRoute>} />
+      <Route path="/mpf" element={<ProtectedRoute><StubPage title="MPF" zhHant="強積金" zhHans="强积金" /></ProtectedRoute>} />
+      <Route path="/financial-statements" element={<ProtectedRoute><Bookkeeping hideTabs initialTab="entries" /></ProtectedRoute>} />
+      <Route path="/company/br" element={<ProtectedRoute><StubPage title="Business Registration (BR)" zhHant="商業登記證" zhHans="商业登记证" /></ProtectedRoute>} />
+      <Route path="/company/ci" element={<ProtectedRoute><StubPage title="Certificate of Incorporation" zhHant="公司註冊證書" zhHans="公司注册证书" /></ProtectedRoute>} />
+      <Route path="/company/ei" element={<ProtectedRoute><StubPage title="Employer Information (EI)" zhHant="僱主資料" zhHans="雇主资料" /></ProtectedRoute>} />
+      <Route path="/contracts" element={<ProtectedRoute><StubPage title="Contracts" zhHant="合約" zhHans="合约" /></ProtectedRoute>} />
+      <Route path="/company/financial-year" element={<ProtectedRoute><StubPage title="Financial Year" zhHant="會計年度" zhHans="会计年度" /></ProtectedRoute>} />
+      <Route path="/company/opening-year" element={<ProtectedRoute><StubPage title="Opening Year" zhHant="開始年度" zhHans="开始年度" /></ProtectedRoute>} />
+      <Route path="/company/accounting-info" element={<ProtectedRoute><StubPage title="Accounting Information" zhHant="會計資料" zhHans="会计资料" /></ProtectedRoute>} />
       <Route path="*" element={<Navigate to="/" />} />
     </Routes>
   );

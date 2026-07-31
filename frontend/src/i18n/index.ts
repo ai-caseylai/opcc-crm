@@ -14,9 +14,9 @@ i18n
       'zh-Hant': { translation: zhHant },
       'zh-Hans': { translation: zhHans },
     },
-    fallbackLng: 'zh-Hant',
+    fallbackLng: 'en',
     detection: {
-      order: ['localStorage', 'navigator'],
+      order: ['localStorage'],
       caches: ['localStorage'],
     },
     interpolation: {

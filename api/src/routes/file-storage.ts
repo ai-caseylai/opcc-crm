@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { Bindings, Variables } from '../types';
 import { authMiddleware, requireHigherTier } from '../middleware/auth';
 import { wsBroadcast } from './ws';
+import { generateReceiptNumber, detectOwnNumber } from '../lib/numbering';
 import { processBankStatement, extractCompanyInfo, extractBankInfo } from '../lib/bank-ocr';
 
 // Audit logging helper
@@ -42,69 +43,63 @@ async function importStatementFromFile(
   fileId: string, userId: string, db: D1Database, fileBucket: R2Bucket, ai: any, deepseekKey: string, glmApiKey?: string,
 ): Promise<{ success: boolean; statement_id?: string; error?: string; transactions_count?: number; parsed_via_ai?: boolean; ocr_failed?: boolean; duplicate_info?: { type?: string; bank_name: string | null; period: string | null; file_name: string | null } }> {
   const fileRow = await db.prepare(
-    'SELECT id, r2_key, filename, original_name, file_type, ocr_text, ocr_status, category FROM file_records WHERE id = ? AND user_id = ?'
+    'SELECT id, r2_key, filename, original_name, file_type, ocr_text, ocr_status, category FROM file_records WHERE id = ? AND user_id = ? AND deleted_at IS NULL'
   ).bind(fileId, userId).first<{ id: string; r2_key: string; filename: string; original_name: string; file_type: string; ocr_text: string; ocr_status: string; category: string }>();
   if (!fileRow) return { success: false, error: 'File not found' };
 
-  // Check if a bank_statement already exists for this file (ignoring soft-deleted ones)
-  const existing = await db.prepare(
+  // Check for duplicate: active first, then soft-deleted
+  let isDuplicate = false, duplicateStatus: string | null = null, duplicateExistingId: string | null = null;
+  const existingActive = await db.prepare(
     'SELECT id, bank_name, period_start, period_end, file_name FROM bank_statements WHERE user_id = ? AND r2_key = ? AND deleted_at IS NULL'
   ).bind(userId, fileRow.r2_key).first<{ id: string; bank_name: string | null; period_start: string | null; period_end: string | null; file_name: string | null }>();
-  if (existing) return {
-    success: false,
-    error: 'Statement already imported',
-    statement_id: existing.id,
-    duplicate_info: {
-      type: 'bank_statement',
-      bank_name: existing.bank_name,
-      period: existing.period_start && existing.period_end ? `${existing.period_start} – ${existing.period_end}` : null,
-      file_name: existing.file_name,
-    },
-  };
+  if (existingActive) {
+    isDuplicate = true;
+    duplicateStatus = 'active';
+    duplicateExistingId = existingActive.id;
+  } else {
+    const existingDeleted = await db.prepare(
+      'SELECT id FROM bank_statements WHERE user_id = ? AND r2_key = ? AND deleted_at IS NOT NULL'
+    ).bind(userId, fileRow.r2_key).first<{ id: string }>();
+    if (existingDeleted) {
+      isDuplicate = true;
+      duplicateStatus = 'deleted';
+      duplicateExistingId = existingDeleted.id;
+    }
+  }
 
   // Get OCR text from file record or run GLM-OCR
   let ocrText = fileRow.ocr_text || '';
   if (!ocrText || ocrText.length < 20) {
     const obj = await fileBucket.get(fileRow.r2_key);
-    if (obj) {
-      const buffer = await obj.arrayBuffer();
-      const mimeType = fileRow.file_type || 'application/pdf';
-
-      // Attempt 1: GLM-OCR — best for all PDFs
-      if (glmApiKey) {
-        try {
-          const bytes = new Uint8Array(buffer);
-          let binary = '';
-          for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-          const base64 = btoa(binary);
-          const glmResp = await fetch('https://api.z.ai/api/paas/v4/layout_parsing', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${glmApiKey}` },
-            body: JSON.stringify({ model: 'glm-ocr', file: `data:${mimeType};base64,${base64}` }),
-          });
-          if (glmResp.ok) {
-            const glmData = await glmResp.json() as any;
-            ocrText = typeof glmData === 'string' ? glmData : JSON.stringify(glmData);
-          }
-        } catch {}
-        if (ocrText) {
-          await db.prepare("UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ?").bind(ocrText, fileId).run();
+    if (obj && glmApiKey) {
+      try {
+        const buffer = await obj.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        const base64 = btoa(binary);
+        const mimeType = fileRow.file_type || 'application/pdf';
+        console.log('[OCR-DEBUG] Calling GLM, file size:', buffer.byteLength, 'mime:', mimeType);
+        const glmResp = await fetch('https://api.z.ai/api/paas/v4/layout_parsing', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${glmApiKey}` },
+          body: JSON.stringify({ model: 'glm-ocr', file: `data:${mimeType};base64,${base64}` }),
+        });
+        console.log('[OCR-DEBUG] GLM response status:', glmResp.status);
+        if (glmResp.ok) {
+          const glmData = await glmResp.json() as any;
+          glmUsage = glmData.usage || null;
+          ocrText = typeof glmData === 'string' ? glmData : JSON.stringify(glmData);
+          console.log('[OCR-DEBUG] GLM ocrText length:', ocrText.length, 'preview:', ocrText.slice(0, 200));
+        } else {
+          const errBody = await glmResp.text();
+          console.log('[OCR-DEBUG] GLM error body:', errBody.slice(0, 500));
         }
+      } catch (e: any) {
+        console.log('[OCR-DEBUG] GLM exception:', e?.message || String(e));
       }
-
-      // Attempt 2: Cloudflare AI toMarkdown — fast free fallback
-      if ((!ocrText || ocrText.length < 20) && ai) {
-        try {
-          const mdResult = await (ai as any).toMarkdown([{
-            name: fileRow.original_name || fileRow.filename || 'statement.pdf',
-            blob: new Blob([buffer], { type: mimeType }),
-          }]);
-          const candidate = Array.isArray(mdResult) ? mdResult.map((r: any) => r?.data || r?.content || '').join('\n') : String(mdResult || '');
-          if (candidate && candidate.length > 20) ocrText = candidate;
-        } catch {}
-        if (ocrText && ocrText.length >= 20) {
-          await db.prepare("UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ?").bind(ocrText, fileId).run();
-        }
+      if (ocrText) {
+        await db.prepare("UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL").bind(ocrText, fileId).run();
       }
     }
   }
@@ -117,10 +112,10 @@ async function importStatementFromFile(
     const emptyId = `bs-${crypto.randomUUID().slice(0, 8)}`;
     const inferredBank = inferBankName(fileRow.original_name || fileRow.filename || '');
     await db.prepare(
-
-
-
-    ).bind(emptyId, userId, fileRow.original_name || fileRow.filename, fileRow.r2_key, inferredBank).run();
+      `INSERT INTO bank_statements (id, user_id, file_name, r2_key, bank_name, currency, status,
+       opening_balance, closing_balance, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'HKD', 'draft', 0, 0, datetime('now'), datetime('now'))`
+    ).bind(emptyId, userId, String(fileRow.original_name || fileRow.filename || 'statement.pdf'), String(fileRow.r2_key || ''), inferredBank || null).run();
     return {
       success: true,
       statement_id: emptyId,
@@ -131,6 +126,8 @@ async function importStatementFromFile(
 
   // Parse with DeepSeek AI
   let parsed: any = null;
+  let usage: any = null;
+  let glmUsage: any = null;
   if (deepseekKey) {
     try {
       const parseResp = await fetch('https://api.deepseek.com/chat/completions', {
@@ -166,40 +163,19 @@ IMPORTANT — deciding whether a line's amount is a deposit or a withdrawal:
 Return ONLY valid JSON, no explanation. If you can't parse something, use null.
 
 OCR TEXT:
-${ocrText.slice(0, 16000)}` }],
-          max_tokens: 8000,
+${ocrText.slice(0, 8000)}` }],
+          max_tokens: 4000,
         }),
       });
       const parseData = await parseResp.json() as any;
       const raw = parseData.choices?.[0]?.message?.content || '';
+      usage = parseData.usage || null;
+      console.log('[DEEPSEEK-RAW-BANK]', raw.slice(0, 2000));
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
       if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
     } catch {}
   }
-
-  // Cross-file duplicate check: same bank + same period = same statement
-  // This catches re-uploads of the same PDF with a different filename (which gets a different r2_key)
-  const parsedBankName = parsed?.bank_name || inferBankName(ocrText, fileRow.original_name || fileRow.filename) || null;
-  const parsedPeriodStart = parsed?.period_start || null;
-  const parsedPeriodEnd = parsed?.period_end || null;
-  if (parsedBankName && parsedPeriodStart) {
-    const crossDup = await db.prepare(
-      'SELECT id, bank_name, period_start, period_end, file_name FROM bank_statements WHERE user_id = ? AND bank_name = ? AND period_start = ? AND deleted_at IS NULL'
-    ).bind(userId, parsedBankName, parsedPeriodStart).first<{ id: string; bank_name: string | null; period_start: string | null; period_end: string | null; file_name: string | null }>();
-    if (crossDup) {
-      return {
-        success: false,
-        error: 'This statement period already exists',
-        statement_id: crossDup.id,
-        duplicate_info: {
-          type: 'bank_statement',
-          bank_name: crossDup.bank_name,
-          period: crossDup.period_start && crossDup.period_end ? `${crossDup.period_start} – ${crossDup.period_end}` : null,
-          file_name: crossDup.file_name,
-        },
-      };
-    }
-  }
+  const deepseekRaw = parsed ? JSON.stringify(parsed).slice(0, 3000) : null;
 
   const stmtId = `bs-${uuidv4().slice(0, 8)}`;
   // Bank name: prefer AI parse, else infer from OCR text + filename (Lily #1, #9)
@@ -218,16 +194,32 @@ ${ocrText.slice(0, 16000)}` }],
   const openingBal = parsed?.opening_balance ?? null;
   const closingBal = parsed?.closing_balance ?? null;
 
+  // Period+account duplicate check: same bank + account + month = same statement
+  // (catches different scanners producing different files of the same document)
+  if (!isDuplicate && bankName && accountNumber && stmtYear && stmtMonth) {
+    const periodDup = await db.prepare(
+      `SELECT id FROM bank_statements
+       WHERE user_id = ? AND bank_name = ? AND account_number = ?
+       AND statement_year = ? AND statement_month = ? AND id != ?
+       AND deleted_at IS NULL LIMIT 1`
+    ).bind(userId, bankName, accountNumber, stmtYear, stmtMonth, 'none').first<{ id: string }>();
+    if (periodDup) {
+      isDuplicate = true;
+      duplicateStatus = 'active';
+      if (!duplicateExistingId) duplicateExistingId = periodDup.id;
+    }
+  }
+
   await db.prepare(
-    `INSERT INTO bank_statements (id, user_id, file_name, file_type, file_data, r2_key,
-     bank_name, account_number, branch, currency, account_type,
+    `INSERT INTO bank_statements (id, user_id, file_name, file_type, r2_key,
+     bank_name, account_number, currency,
      statement_year, statement_month, period_start, period_end,
-     opening_balance, closing_balance, page_count, ocr_text, status)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-  ).bind(stmtId, userId, fileRow.original_name || fileRow.filename, fileRow.file_type, '',
-    fileRow.r2_key, bankName, accountNumber, null, currency, null,
-    stmtYear, stmtMonth, periodStart, periodEnd,
-    openingBal, closingBal, null, ocrText, 'draft'
+     opening_balance, closing_balance, ocr_text, status)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+  ).bind(stmtId, userId, String(fileRow.original_name || fileRow.filename || 'statement.pdf'), String(fileRow.file_type || 'application/pdf'),
+    String(fileRow.r2_key || ''), String(bankName || ''), String(accountNumber || ''), String(currency || 'HKD'),
+    stmtYear || null, stmtMonth || null, periodStart || null, periodEnd || null,
+    typeof openingBal === 'number' ? openingBal : null, typeof closingBal === 'number' ? closingBal : null, String(ocrText || ''), 'draft'
   ).run();
 
   let txCount = 0;
@@ -237,16 +229,16 @@ ${ocrText.slice(0, 16000)}` }],
     const txId = `bt-${uuidv4().slice(0, 8)}`;
     await db.prepare(
       `INSERT INTO bank_transactions (id, bank_statement_id, user_id, transaction_date, description,
-       deposit_amount, withdrawal_amount, balance, account_type, sort_order)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`
-    ).bind(txId, stmtId, userId, tx.transaction_date, tx.description || '',
-      tx.deposit_amount || 0, tx.withdrawal_amount || 0, tx.balance ?? null, tx.account_type || null, txCount
+       deposit_amount, withdrawal_amount, balance, sort_order)
+       VALUES (?,?,?,?,?,?,?,?,?)`
+    ).bind(txId, stmtId, userId, String(tx.transaction_date || ''), String(tx.description || ''),
+      Number(tx.deposit_amount || 0), Number(tx.withdrawal_amount || 0), typeof tx.balance === 'number' ? tx.balance : null, txCount
     ).run();
     txCount++;
   }
 
   await db.prepare(
-    "UPDATE file_records SET category = 'bank_statement', folder = 'Bank Statements', updated_at = datetime('now') WHERE id = ?"
+    "UPDATE file_records SET category = 'bank_statement', folder = 'Bank Statements', updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL"
   ).bind(fileId).run();
 
   // Auto-categorize transactions
@@ -287,7 +279,7 @@ ${ocrText.slice(0, 16000)}` }],
     const directorPattern = /JOSEPH|LIN\s*PUI|LAI\s*KIN|RAYMOND|SZETO/i;
 
     const txs = await db.prepare(
-      'SELECT id, description, deposit_amount FROM bank_transactions WHERE bank_statement_id = ? AND account_code IS NULL'
+      'SELECT id, description, deposit_amount FROM bank_transactions WHERE bank_statement_id = ? AND account_code IS NULL AND deleted_at IS NULL'
     ).bind(stmtId).all();
 
     for (const tx of txs.results as any[]) {
@@ -300,7 +292,7 @@ ${ocrText.slice(0, 16000)}` }],
       if (isDirector && /DIRECT\s+CREDIT|TRANSFER-DEBIT|FPS|自動轉賬|轉賬/.test(desc)) code = '22020';
       if (!code && tx.deposit_amount > 0 && /DIRECT\s+CREDIT|自動轉賬存入/i.test(desc)) code = isDirector ? '22020' : '41020';
       if (code) {
-        await db.prepare('UPDATE bank_transactions SET account_code = ? WHERE id = ?').bind(code, tx.id).run();
+        await db.prepare('UPDATE bank_transactions SET account_code = ? WHERE id = ? AND deleted_at IS NULL').bind(code, tx.id).run();
       }
     }
   } catch { /* non-critical */ }
@@ -348,11 +340,93 @@ ${ocrText.slice(0, 16000)}` }],
     }
   } catch { /* non-critical */ }
 
+  // Auto-generate journal entries from categorized bank transactions
+  try {
+    const usedCodes = await db.prepare(
+      'SELECT DISTINCT account_code FROM bank_transactions WHERE bank_statement_id = ? AND account_code IS NOT NULL AND deleted_at IS NULL'
+    ).bind(stmtId).all();
+    const codeList = (usedCodes.results as any[]).map(r => r.account_code).filter(Boolean);
+    if (codeList.length > 0) {
+      // Ensure accounts exist
+      const existingAccts = await db.prepare(
+        `SELECT account_code FROM accounts WHERE user_id = ? AND account_code IN (${codeList.map(() => '?').join(',')})`
+      ).bind(userId, ...codeList).all();
+      const existSet = new Set((existingAccts.results as any[]).map(r => r.account_code));
+      for (const code of codeList) {
+        if (!existSet.has(code)) {
+          const type = code.startsWith('1') ? 'asset' : code.startsWith('2') ? 'liability' : code.startsWith('3') ? 'equity' : code.startsWith('4') ? 'revenue' : 'expense';
+          await db.prepare(
+            'INSERT INTO accounts (id, user_id, account_code, account_name, account_type) VALUES (?, ?, ?, ?, ?)'
+          ).bind(`acc-${uuidv4().slice(0, 8)}`, userId, code, code, type).run();
+        }
+      }
+
+      // Load account map
+      const allAccts = await db.prepare(
+        'SELECT account_code, account_name FROM accounts WHERE user_id = ? AND is_active = 1'
+      ).bind(userId).all();
+      const acctMap = new Map<string, string>();
+      for (const r of allAccts.results as any[]) acctMap.set(r.account_code, r.account_name);
+
+      // Get unprocessed transactions
+      const existingRefs = await db.prepare(
+        "SELECT reference_id FROM journal_entries WHERE user_id = ? AND reference_type = 'bank_transaction'"
+      ).bind(userId).all();
+      const refSet = new Set((existingRefs.results as any[]).map(r => r.reference_id));
+
+      const txs = await db.prepare(
+        'SELECT * FROM bank_transactions WHERE bank_statement_id = ? AND deleted_at IS NULL ORDER BY transaction_date'
+      ).bind(stmtId).all();
+      let created = 0;
+      for (const tx of txs.results as any[]) {
+        if (refSet.has(tx.id)) continue;
+        const desc = tx.description || '';
+        const entryId = `je-${uuidv4().slice(0, 8)}`;
+        const entryNum = `JE-AUTO-${String(Date.now()).slice(-6)}-${uuidv4().slice(0, 4)}`;
+        const lines: { code: string; name: string; debit: number; credit: number }[] = [];
+
+        if (tx.deposit_amount > 0) {
+          lines.push({ code: '11101', name: acctMap.get('11101') || 'Cash on Hand', debit: tx.deposit_amount, credit: 0 });
+          const assignedCode = tx.account_code || '41101';
+          if (assignedCode !== '11101') {
+            lines.push({ code: assignedCode, name: acctMap.get(assignedCode) || assignedCode, debit: 0, credit: tx.deposit_amount });
+          }
+        }
+        if (tx.withdrawal_amount > 0) {
+          const assignedCode = tx.account_code || '62303';
+          if (assignedCode !== '11101') {
+            lines.push({ code: assignedCode, name: acctMap.get(assignedCode) || assignedCode, debit: tx.withdrawal_amount, credit: 0 });
+          }
+          lines.push({ code: '11101', name: acctMap.get('11101') || 'Cash on Hand', debit: 0, credit: tx.withdrawal_amount });
+        }
+
+        if (lines.length > 0) {
+          await db.prepare(
+            'INSERT INTO journal_entries (id, user_id, entry_number, entry_date, description, reference_type, reference_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
+          ).bind(entryId, userId, entryNum, tx.transaction_date, desc, 'bank_transaction', tx.id).run();
+          for (let i = 0; i < lines.length; i++) {
+            const l = lines[i];
+            await db.prepare(
+              'INSERT INTO journal_lines (id, entry_id, account_code, account_name, description, debit, credit, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+            ).bind(`jl-${uuidv4().slice(0, 8)}`, entryId, l.code, l.name, desc, l.debit, l.credit, i).run();
+          }
+          created++;
+        }
+      }
+    }
+  } catch { /* non-critical - auto-generation is best-effort */ }
+
   return {
     success: true,
     statement_id: stmtId,
     transactions_count: txCount,
     parsed_via_ai: !!parsed,
+    usage,
+    glm_usage: glmUsage,
+    deepseek_raw: deepseekRaw,
+    is_duplicate: isDuplicate,
+    duplicate_status: duplicateStatus,
+    duplicate_existing_id: duplicateExistingId,
   };
 }
 
@@ -361,7 +435,7 @@ async function importInvoiceFromFile(
   fileId: string, userId: string, db: D1Database, fileBucket: R2Bucket, ai: any, deepseekKey: string, glmApiKey?: string,
 ): Promise<{ success: boolean; invoice_id?: string; error?: string; items_count?: number; ocr_failed?: boolean; parsed?: any }> {
   const fileRow = await db.prepare(
-    'SELECT id, r2_key, filename, original_name, file_type, ocr_text, ocr_status, category, direction FROM file_records WHERE id = ? AND user_id = ?'
+    'SELECT id, r2_key, filename, original_name, file_type, ocr_text, ocr_status, category, direction FROM file_records WHERE id = ? AND user_id = ? AND deleted_at IS NULL'
   ).bind(fileId, userId).first<{ id: string; r2_key: string; filename: string; original_name: string; file_type: string; ocr_text: string; ocr_status: string; category: string; direction: string }>();
   if (!fileRow) return { success: false, error: 'File not found' };
 
@@ -386,6 +460,7 @@ async function importInvoiceFromFile(
           });
           if (glmResp.ok) {
             const glmData = await glmResp.json() as any;
+            glmUsage = glmData.usage || null;
             const candidate = typeof glmData === 'string' ? glmData : JSON.stringify(glmData);
             if (candidate && candidate.length > 20) ocrText = candidate;
           }
@@ -405,7 +480,7 @@ async function importInvoiceFromFile(
       }
 
       if (ocrText && ocrText.length >= 20) {
-        await db.prepare("UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ?").bind(ocrText, fileId).run();
+        await db.prepare("UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL").bind(ocrText, fileId).run();
       }
     }
   }
@@ -428,7 +503,7 @@ async function importInvoiceFromFile(
       `INSERT INTO invoices (id, user_id, invoice_number, customer_id, status, issue_date, due_date, subtotal, total, currency, file_id)
        VALUES (?, ?, ?, ?, 'pending_review', date('now'), date('now', '+30 days'), 0, 0, 'HKD', ?)`
     ).bind(emptyInvId, userId, emptyInvNumber, placeholderCustomerId, fileId).run();
-    await db.prepare("UPDATE file_records SET category = 'invoice', ocr_status = 'failed', updated_at = datetime('now') WHERE id = ?").bind(fileId).run();
+    await db.prepare("UPDATE file_records SET category = 'invoice', ocr_status = 'failed', updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL").bind(fileId).run();
     return { success: true, invoice_id: emptyInvId, items_count: 0, ocr_failed: true };
   }
 
@@ -438,7 +513,41 @@ async function importInvoiceFromFile(
   const originalName = (fileRow.original_name || fileRow.filename || '').toLowerCase();
   const isReceipt = /receipt/i.test(originalName) || /RECEIPT\s*#|we have received|payment received|hereby confirmed/i.test(ocrText);
 
+  // ── Regex pre-extraction (runs before AI, used to validate/correct AI output) ──
+  function regexExtractInvoiceParties(text: string): { letterheadVendor: string | null; billToCustomer: string | null } {
+    // Extract the letterhead: first company-like name at the top, often followed by INVOICE or an address
+    // Pattern: "COMPANY NAME LIMITED INVOICE" or "COMPANY NAME\nCity, Country\nINVOICE"
+    const letterheadMatch = text.match(
+      /^[#\s]*(?:##\s*Page\s*\d+\s*)?([A-Z][A-Z\s&.'-]{4,60}(?:LIMITED|LTD|INC|CORP|CORPORATION|COMPANY|GMBH|LLC|LLP|CO\.?|HOLDINGS|GROUP))\b/mi
+    );
+    const letterheadVendor = letterheadMatch ? letterheadMatch[1].trim() : null;
+
+    // Extract the Bill To / Customer name — handle compact OCR where fields run together
+    // e.g. "BILL TOXENUS TECHNOLOGY LIMITEDUnit 1201" → captures "XENUS TECHNOLOGY LIMITED"
+    // Stop at lowercase-after-uppercase transition, digit, or common address words
+    const billToMatch = text.match(
+      /(?:BILL\s*TO|Bill\s*To:|Customer:|Attn:|To:)\s*\n?\s*([A-Z][A-Z\s&.'-]{4,60}(?:LIMITED|LTD|INC|CORP|CORPORATION|COMPANY|GMBH|LLC|LLP|CO\.?|HOLDINGS|GROUP)?)/mi
+    );
+    let billToCustomer: string | null = null;
+    if (billToMatch) {
+      let raw = billToMatch[1].trim();
+      // Clean up: truncate at first lowercase-after-uppercase boundary (compact OCR artifact)
+      // e.g. "XENUS TECHNOLOGY LIMITEDUnit" → "XENUS TECHNOLOGY LIMITED"
+      const cleanup = raw.match(/^([A-Z][A-Z\s&.'-]{3,60}(?:LIMITED|LTD|INC|CORP|CORPORATION|COMPANY|GMBH|LLC|LLP|CO\.?|HOLDINGS|GROUP)?)/i);
+      if (cleanup) raw = cleanup[1].trim();
+      // Remove trailing artifacts like "Unit", "Tel", "Fax", "Email", etc.
+      raw = raw.replace(/\s*(?:Unit|Tel|Fax|Email|Phone|Attn|Date|Issue|Due|Currency|Invoice|Total)\s*.*$/i, '').trim();
+      if (raw.length > 2) billToCustomer = raw;
+    }
+
+    return { letterheadVendor, billToCustomer };
+  }
+
+  const regexParties = !isReceipt ? regexExtractInvoiceParties(ocrText) : { letterheadVendor: null, billToCustomer: null };
+
   let parsed: any = null;
+  let usage: any = null;
+  let glmUsage: any = null;
   if (deepseekKey) {
     try {
       const promptForReceipt = `Parse this PAYMENT RECEIPT into structured JSON. Extract:
@@ -455,13 +564,22 @@ async function importInvoiceFromFile(
 Return ONLY valid JSON, no explanation. Use null for missing values.
 
 OCR TEXT:
-${ocrText.slice(0, 12000)}`;
+${ocrText.slice(0, 8000)}`;
 
-      const promptForInvoice = `Parse this invoice OCR text into structured JSON. Extract:
-- invoice_number: the invoice number/ID
-- vendor_name: the company that ISSUED this invoice (the seller). Look for their company name near their address, email, website, or phone number at the top. If the text starts with "Customer:" as the first line, that is NOT the vendor — keep looking for the issuer's details elsewhere (address, email domain, signature name like "Casey Lai" from muselabs-eng.com = Muse Labs). If you cannot determine the vendor, return null.
-- customer_name: the company being BILLED. This is ALWAYS in a field explicitly labelled "Customer:", "Bill To:", "Attn:", or "To:". Example: "Customer: Proficiency and Reliance Company Limited" → customer_name = "Proficiency and Reliance Company Limited".
+      // Build hints from regex pre-extraction to guide the AI
+      const regexHints = !isReceipt && (regexParties.letterheadVendor || regexParties.billToCustomer)
+        ? `HINTS (use these to guide your extraction):
+  - The issuer (vendor) at the top of the document appears to be: ${regexParties.letterheadVendor || 'NOT FOUND'}
+  - The party being billed (customer) appears to be: ${regexParties.billToCustomer || 'NOT FOUND'}
+  - IMPORTANT: vendor_name MUST be the issuer (top of document), customer_name MUST be the billed party (after Bill To:/Customer:).
+`
+        : '';
+
+      const promptForInvoice = `${regexHints}Parse this invoice OCR text into structured JSON. Extract:
+- vendor_name: the company that ISSUED this invoice. This is the company at the VERY TOP of the document — look for the name immediately followed by "INVOICE", "TAX INVOICE", or an address (city, country). If the HINTS section above found a letterhead vendor, use that value.
+- customer_name: the company being BILLED. This appears after a label like "Bill To:", "Customer:", "Attn:", or "To:". If the HINTS section above found a billed party, use that value.
 - customer_email: optional customer email
+- invoice_number: the invoice number/ID
 - issue_date: YYYY-MM-DD
 - due_date: YYYY-MM-DD if visible
 - currency: default "HKD"
@@ -480,14 +598,43 @@ ${ocrText.slice(0, 8000)}`;
         body: JSON.stringify({
           model: 'deepseek-chat',
           messages: [{ role: 'user', content: isReceipt ? promptForReceipt : promptForInvoice }],
-          max_tokens: 6000,
+          max_tokens: 4000,
         }),
       });
       const data = await resp.json() as any;
       const raw = data.choices?.[0]?.message?.content || '';
+      usage = data.usage || null;
+      console.log('[DEEPSEEK-RAW-INVOICE]', raw.slice(0, 2000));
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
       if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
     } catch {}
+  }
+  const deepseekRaw = parsed ? JSON.stringify(parsed).slice(0, 3000) : null;
+
+  // ── Post-AI correction: if AI swapped vendor/customer, fix using regex extraction ──
+  if (!isReceipt && parsed && regexParties.letterheadVendor) {
+    const norm = (s: string | null | undefined) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const aiVendorNorm = norm(parsed.vendor_name);
+    const regexLetterheadNorm = norm(regexParties.letterheadVendor);
+    const regexCustomerNorm = norm(regexParties.billToCustomer);
+
+    // If AI vendor matches regex Bill To (not the letterhead), the AI got it backwards
+    if (regexCustomerNorm && aiVendorNorm === regexCustomerNorm && aiVendorNorm !== regexLetterheadNorm) {
+      // Swap: the letterhead is the real vendor, the Bill To is the real customer
+      parsed = {
+        ...parsed,
+        vendor_name: regexParties.letterheadVendor,
+        customer_name: parsed.vendor_name, // the AI's "vendor" was actually the customer
+      };
+    }
+    // If AI returned no vendor_name but regex found the letterhead
+    if (!parsed.vendor_name && regexParties.letterheadVendor) {
+      parsed.vendor_name = regexParties.letterheadVendor;
+    }
+    // If AI returned no customer_name but regex found the Bill To
+    if (!parsed.customer_name && regexParties.billToCustomer) {
+      parsed.customer_name = regexParties.billToCustomer;
+    }
   }
 
   // For receipts: the "customer" is the payer (the company that made the payment)
@@ -504,30 +651,41 @@ ${ocrText.slice(0, 8000)}`;
 
   let counterpartyName: string | null = null;
   let isIncoming = false;
+  let needsDirectionReview = false; // AI can't confidently determine direction
+  let companyNotDetected = false;   // User's company not found in vendor or customer names
 
   if (!isReceipt) {
     const ownCompany = await db.prepare('SELECT name FROM company_settings WHERE user_id = ?').bind(userId).first<{ name: string | null }>();
     const ownNorm = normalizeCompanyName(ownCompany?.name);
     const vendorNorm = normalizeCompanyName(parsed?.vendor_name);
     const customerNorm = normalizeCompanyName(parsed?.customer_name);
+    const hasVendor = !!(parsed?.vendor_name && parsed.vendor_name.trim().length > 2);
+    const hasCustomer = !!(parsed?.customer_name && parsed.customer_name.trim().length > 2);
+    const ownKnown = !!(ownNorm && ownNorm.length > 3);
 
-    if (ownNorm && ownNorm.length > 3 && customerNorm && (customerNorm.includes(ownNorm) || ownNorm.includes(customerNorm))) {
-      // The "Customer:" field on this invoice is US — so this is a bill FROM a supplier TO us.
+    if (ownKnown && customerNorm && (customerNorm.includes(ownNorm) || ownNorm.includes(customerNorm))) {
+      // ✅ The "Bill To:" / "Customer:" field on this invoice is US — supplier billed us.
       isIncoming = true;
       counterpartyName = parsed?.vendor_name || null;
-    } else if (ownNorm && ownNorm.length > 3 && vendorNorm && (vendorNorm.includes(ownNorm) || ownNorm.includes(vendorNorm))) {
-      // The letterhead is US — so this is an invoice WE issued to a customer.
+    } else if (ownKnown && vendorNorm && (vendorNorm.includes(ownNorm) || ownNorm.includes(vendorNorm))) {
+      // ✅ The letterhead is US — we issued this invoice to a customer.
       isIncoming = false;
       counterpartyName = parsed?.customer_name || null;
+    } else if (hasVendor && hasCustomer && ownKnown) {
+      // ⚠️ Both vendor and customer are valid third parties, neither matches our company.
+      // Default: assume this is an invoice we RECEIVED from a supplier (incoming/AP).
+      // Flag for user confirmation on the review page.
+      isIncoming = true;
+      counterpartyName = parsed?.vendor_name || null;
+      needsDirectionReview = true;
+      companyNotDetected = true;
     } else {
-      // Company settings not set or no match — use payment section as signal:
-      // If the OCR contains a bank account/payment section with vendor_name in A/C Name field
-      // → vendor_name is the payee (us) → outgoing invoice we issued.
-      // If customer_name appears in A/C Name → incoming (supplier billing us).
+      // Company settings not set, only one party extracted, or OCR incomplete.
+      // Fall back to heuristics — but also flag for review since we're uncertain.
+      needsDirectionReview = true;
       const ocrUpper = ocrText.toUpperCase();
       const acNameMatch = ocrUpper.match(/A\/C\s*NAME\s*[:：]?\s*([A-Z\s&']+?)(?:\n|$)/);
       const acName = normalizeCompanyName(acNameMatch?.[1] || '');
-      // Extract email domain for vendor detection
       const emailMatch = ocrText.match(/([a-zA-Z0-9._%+-]+@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,}))/);
       const emailDomain = normalizeCompanyName(emailMatch?.[2]?.split('.')[0] || '');
       const vendorNormShort = normalizeCompanyName(parsed?.vendor_name?.split(' ').slice(0, 2).join(' ') || '');
@@ -537,39 +695,31 @@ ${ocrText.slice(0, 8000)}`;
         const customerNormFull = normalizeCompanyName(parsed?.customer_name || '');
 
         if (customerNormFull.length > 3 && acName.includes(customerNormFull)) {
-          // A/C Name matches customer → customer is the payee → incoming (supplier billed us)
-          // e.g. acName=PROFICIENCY → customer=PNR → PNR is payee → outgoing (we are the payee)
-          // Wait: if A/C Name = customer, that means CUSTOMER receives payment = WE receive payment = OUTGOING
           isIncoming = false;
           counterpartyName = parsed?.customer_name || null;
         } else if (vendorNormFull.length > 3 && acName.includes(vendorNormFull)) {
-          // A/C Name matches vendor → vendor receives payment → vendor is third party → INCOMING
           isIncoming = true;
           counterpartyName = parsed?.vendor_name || null;
         } else if (customerNormFull.length > 3 && ownNorm && ownNorm.length > 3 && customerNormFull.includes(ownNorm.slice(0, 6))) {
-          // Customer matches our company (partial) → we are the customer → incoming
           isIncoming = true;
           counterpartyName = acName ? acName : (parsed?.vendor_name || null);
         } else {
-          // A/C Name doesn't match either side clearly
-          // If vendor_name is null (image logo), the A/C Name IS the vendor
-          // A/C Name != customer → A/C Name must be a third party → incoming
           if (!vendorNormFull && acName && customerNormFull.length > 3 && !acName.includes(customerNormFull)) {
             isIncoming = true;
-            // Use A/C Name as the vendor/supplier name since it's the payee
             const rawAcName = ocrText.toUpperCase().match(/A\/C\s*NAME\s*[:：]?\s*([A-Z\s&']+?)(?:\n|$)/)?.[1]?.trim() || null;
             counterpartyName = rawAcName ? rawAcName.split('\n')[0].trim() : null;
           } else {
-            isIncoming = false;
+            // Last resort: if we have a vendor name but no customer, default to incoming (bill from supplier)
+            isIncoming = hasVendor;
             counterpartyName = parsed?.customer_name || parsed?.vendor_name || null;
           }
         }
       } else if (emailDomain && emailDomain.length > 3 && vendorNormShort && (emailDomain.includes(vendorNormShort.slice(0, 5)) || vendorNormShort.includes(emailDomain.slice(0, 5)))) {
-        // Email domain matches vendor name → vendor is a real third-party company → incoming
         isIncoming = true;
         counterpartyName = parsed?.vendor_name || null;
       } else {
-        isIncoming = false;
+        // No signals at all — default to incoming (assume supplier bill received)
+        isIncoming = true;
         counterpartyName = parsed?.customer_name || parsed?.vendor_name || null;
       }
     }
@@ -614,7 +764,7 @@ ${ocrText.slice(0, 8000)}`;
     }
     // For incoming invoices, we (PNR) are the customer being billed.
     // Find or create a self-customer record representing our own company.
-    const ownCompanyName = (await db.prepare('SELECT name FROM company_settings WHERE user_id = ?').bind(userId).first<{ name: string | null }>())?.name || 'My Company';
+    const ownCompanyName = (await db.prepare('SELECT name FROM company_settings WHERE user_id = ?').bind(userId).first<{ name: string | null }>())?.name || 'My Company (please set your company name in Settings)';
     const selfCust = await db.prepare('SELECT id FROM customers WHERE user_id = ? AND name = ?').bind(userId, ownCompanyName).first<{ id: string }>();
     if (selfCust) {
       customerId = selfCust.id;
@@ -686,34 +836,42 @@ ${ocrText.slice(0, 8000)}`;
     }
   }
   if (items.length === 0) {
-    // AI/OCR failed to extract line items — create a pending_review draft like bank statements do
-    const emptyInvId = `i-${uuidv4().slice(0, 8)}`;
-    const emptyInvNumber = `DRAFT-${Date.now().toString(36).toUpperCase()}`;
-    const placeholderCust = await db.prepare('SELECT id FROM customers WHERE user_id = ? ORDER BY created_at LIMIT 1').bind(userId).first<{ id: string }>();
-    let fallbackCustId: string;
-    if (placeholderCust) {
-      fallbackCustId = placeholderCust.id;
-    } else {
-      fallbackCustId = `c-${uuidv4().slice(0, 8)}`;
-      await db.prepare('INSERT INTO customers (id, user_id, name, is_active) VALUES (?, ?, ?, 1)').bind(fallbackCustId, userId, 'Unknown Customer', true).run();
-    }
-    await db.prepare(
-      `INSERT INTO invoices (id, user_id, invoice_number, customer_id, status, issue_date, due_date, subtotal, total, currency, file_id)
-       VALUES (?, ?, ?, ?, 'pending_review', date('now'), date('now', '+30 days'), 0, 0, 'HKD', ?)`
-    ).bind(emptyInvId, userId, emptyInvNumber, fallbackCustId, fileId).run();
-    await db.prepare("UPDATE file_records SET category = 'invoice', ocr_status = 'failed', updated_at = datetime('now') WHERE id = ?").bind(fileId).run();
-    return { success: true, invoice_id: emptyInvId, items_count: 0, ocr_failed: true };
+    // Still no items - create placeholder so user can fill in manually on review page
+    items.push({ description: 'Invoice item', quantity: 1, unit_price: 0, amount: 0, sort_order: 0 });
   }
 
   const subtotal = items.reduce((s: number, it: any) => s + it.amount, 0);
   const total = parsed?.total || subtotal;
 
-  // For receipts: use receipt_number column; invoice_number gets a REC- prefix so it never
-  // collides with real invoice numbers and the two can be told apart by receipt_number IS NOT NULL
+  // Smart number detection: check if OCR-extracted number matches client's pattern
+  const patterns = await db.prepare(
+    'SELECT invoice_number_pattern, receipt_number_pattern FROM company_settings WHERE user_id = ?'
+  ).bind(userId).first<{ invoice_number_pattern: string | null; receipt_number_pattern: string | null }>();
+
+  // For receipts: use receipt_number column as the display number
   const receiptNum = isReceipt ? (parsed?.receipt_number || parsed?.invoice_number || null) : null;
-  const invNumber = isReceipt
-    ? `REC-${Date.now().toString(36).toUpperCase()}`
-    : (parsed?.invoice_number || `INV-${Date.now().toString(36).toUpperCase()}`);
+  let counterpartyRef: string | null = null;
+
+  let invNumber: string;
+  if (isReceipt) {
+    const ocrNum = parsed?.receipt_number || parsed?.invoice_number || null;
+    const detected = detectOwnNumber(ocrNum, patterns?.invoice_number_pattern, patterns?.receipt_number_pattern);
+    if (detected.isOurs) {
+      invNumber = `REC-${Date.now().toString(36).toUpperCase()}`;
+    } else {
+      invNumber = await generateReceiptNumber(db, userId);
+      if (ocrNum && !detected.isOurs) counterpartyRef = ocrNum;
+    }
+  } else {
+    const ocrNum = parsed?.invoice_number || null;
+    const detected = detectOwnNumber(ocrNum, patterns?.invoice_number_pattern, patterns?.receipt_number_pattern);
+    if (detected.isOurs) {
+      invNumber = ocrNum!;
+    } else {
+      invNumber = `INV-${Date.now().toString(36).toUpperCase()}`;
+      if (ocrNum && !detected.isOurs) counterpartyRef = ocrNum;
+    }
+  }
 
   const issueDate = parsed?.issue_date || new Date().toISOString().split('T')[0];
   const dueDate = isReceipt ? issueDate : (parsed?.due_date || new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0]);
@@ -721,53 +879,68 @@ ${ocrText.slice(0, 8000)}`;
   // fileRow.direction is set by classifyFile which can't know company context
   const direction = isReceipt ? 'incoming' : (isIncoming ? 'incoming' : 'outgoing');
 
-  // Duplicate check for invoices: same invoice_number already exists
+  // Duplicate check: if same invoice/receipt number exists, append suffix instead of blocking
+  let isDuplicate = false;
   if (!isReceipt) {
     const existing = await db.prepare(
-      'SELECT id, invoice_number, customer_id FROM invoices WHERE user_id = ? AND invoice_number = ?'
-    ).bind(userId, invNumber).first<{ id: string; invoice_number: string }>();
-    if (existing) return {
-      success: false,
-      error: `Invoice ${invNumber} already exists`,
-      invoice_id: existing.id,
-      duplicate_info: { type: 'invoice', number: invNumber, vendor: customerName },
-    };
+      'SELECT id, invoice_number FROM invoices WHERE user_id = ? AND invoice_number = ?'
+    ).bind(userId, invNumber).first<{ id: string }>();
+    if (existing) isDuplicate = true;
   }
-
-  // Duplicate check for receipts: same receipt_number already exists
   if (isReceipt && receiptNum) {
     const existing = await db.prepare(
-      'SELECT id, receipt_number, vendor_name FROM invoices WHERE user_id = ? AND receipt_number = ?'
-    ).bind(userId, receiptNum).first<{ id: string; receipt_number: string; vendor_name: string | null }>();
-    if (existing) return {
-      success: false,
-      error: `Receipt ${receiptNum} already exists`,
-      invoice_id: existing.id,
-      duplicate_info: { type: 'receipt', number: receiptNum, vendor: existing.vendor_name || customerName },
-    };
+      'SELECT id FROM invoices WHERE user_id = ? AND receipt_number = ?'
+    ).bind(userId, receiptNum).first<{ id: string }>();
+    if (existing) isDuplicate = true;
+  }
+  if (isDuplicate) {
+    invNumber = isReceipt
+      ? `REC-${Date.now().toString(36).toUpperCase()}`
+      : `${invNumber}-${Date.now().toString(36).slice(-3).toUpperCase()}`;
   }
 
-  // Also check by file_id — catches exact same file uploaded twice
+  // Check by file_id — flag but don't block (user can still review)
+  let duplicateExistingId: string | null = null;
+  let duplicateStatus: string | null = null;
   const existingByFile = await db.prepare(
     'SELECT id, invoice_number, receipt_number FROM invoices WHERE user_id = ? AND file_id = ?'
   ).bind(userId, fileId).first<{ id: string; invoice_number: string; receipt_number: string | null }>();
-  if (existingByFile) return {
-    success: false,
-    error: 'This file has already been imported',
-    invoice_id: existingByFile.id,
-    duplicate_info: {
-      type: isReceipt ? 'receipt' : 'invoice',
-      number: existingByFile.receipt_number || existingByFile.invoice_number,
-      vendor: customerName,
-    },
-  };
+  if (existingByFile) {
+    isDuplicate = true;
+    duplicateExistingId = existingByFile.id;
+    duplicateStatus = 'active';
+  }
+
+  // Build review flags for persistent display in the Invoices list
+  const reviewFlags: string[] = [];
+  if (needsDirectionReview) reviewFlags.push('direction');
+  if (companyNotDetected) reviewFlags.push('company_not_detected');
+  if (isDuplicate) reviewFlags.push('duplicate');
+  const needsReview = reviewFlags.join(',');
 
   const invId = `i-${uuidv4().slice(0, 8)}`;
   // Save as 'pending_review' — the user must confirm/edit on the Invoice Review page.
   await db.prepare(
-    `INSERT INTO invoices (id, user_id, invoice_number, customer_id, supplier_id, status, issue_date, due_date, subtotal, total, currency, notes, file_id, vendor_name, receipt_number, direction)
-     VALUES (?, ?, ?, ?, ?, 'pending_review', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(invId, userId, invNumber, customerId, supplierId || null, issueDate, dueDate, subtotal, total, parsed?.currency || 'HKD', parsed?.notes || null, fileId, customerName || null, receiptNum, direction).run();
+    `INSERT INTO invoices (id, user_id, invoice_number, customer_id, supplier_id, status, issue_date, due_date, subtotal, total, currency, notes, file_id, vendor_name, receipt_number, direction, needs_review, counterparty_ref)
+     VALUES (?, ?, ?, ?, ?, 'pending_review', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(invId, userId, invNumber, customerId, supplierId || null, issueDate, dueDate, subtotal, total, parsed?.currency || 'HKD', parsed?.notes || null, fileId, customerName || null, receiptNum, direction, needsReview, counterpartyRef).run();
+
+  // Auto-link: if this is a receipt, try to find a matching invoice by amount
+  // Receipt = proof of payment. Links to AR (customer paid us) or AP (we paid supplier)
+  let linkedInvoiceId: string | null = null;
+  if (isReceipt && total > 0) {
+    const match = await db.prepare(
+      `SELECT id, invoice_number, total, direction FROM invoices
+       WHERE user_id = ? AND status IN ('sent', 'draft', 'pending_review')
+       AND ABS(total - ?) < 0.02 AND linked_invoice_id IS NULL AND receipt_number IS NULL
+       ORDER BY ABS(total - ?) LIMIT 1`
+    ).bind(userId, total, total).first<{ id: string; invoice_number: string; total: number; direction: string }>();
+    if (match) {
+      linkedInvoiceId = match.id;
+      await db.prepare("UPDATE invoices SET status = 'paid', linked_invoice_id = ? WHERE id = ?")
+        .bind(invId, match.id).run();
+    }
+  }
 
   for (const item of items) {
     await db.prepare(
@@ -775,40 +948,42 @@ ${ocrText.slice(0, 8000)}`;
     ).bind(`ii-${uuidv4().slice(0, 8)}`, invId, item.description, item.quantity, item.unit_price, item.amount, item.sort_order).run();
   }
 
-  // Derive a clean partner folder name from the resolved counterparty (supplier for incoming
-  // bills, customer for outgoing invoices) — NOT the raw parsed.customer_name, which can be
-  // our own company name when this is an incoming supplier bill.
-  const rawPartner = (customerName || '').toString();
-  let partnerFolder = rawPartner
-    .replace(/\b(limited|ltd|inc|incorporated|llc|llp|co\.?|company|corp|corporation|gmbh|holdings|group|services|hk|hong\s*kong)\b/gi, '')
-    .replace(/[(),.&]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  // Title case
-  partnerFolder = partnerFolder
-    .split(' ')
-    .filter(Boolean)
-    .slice(0, 4)
-    .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-    .join(' ');
-  if (!partnerFolder || partnerFolder.length < 2) partnerFolder = 'Invoices';
+  // Set the reverse link on the receipt
+  if (linkedInvoiceId) {
+    await db.prepare('UPDATE invoices SET linked_invoice_id = ? WHERE id = ?')
+      .bind(linkedInvoiceId, invId).run();
+  }
+
+  // Keep the file in the classified folder (Invoices or Receipts) — no per-partner subfolders
+  const folder = isReceipt ? 'Receipts' : 'Invoices';
 
   // Update file record
   await db.prepare(
-    "UPDATE file_records SET category = 'invoice', direction = ?, payment_status = 'unmatched', amount = ?, folder = ?, updated_at = datetime('now') WHERE id = ?"
-  ).bind(direction, total, partnerFolder, fileId).run();
+    "UPDATE file_records SET category = ?, direction = ?, payment_status = 'unmatched', amount = ?, folder = ?, updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL"
+  ).bind(isReceipt ? 'receipt' : 'invoice', direction, total, folder, fileId).run();
 
   // Return parsed data so the review page can pre-populate without another round-trip
   return {
     success: true,
     invoice_id: invId,
     items_count: items.length,
-    partner_folder: partnerFolder,
+    folder,
     is_receipt: isReceipt,
     receipt_number: receiptNum,
+    needs_direction_review: needsDirectionReview,
+    company_not_detected: companyNotDetected,
+    usage,
+    glm_usage: glmUsage,
+    deepseek_raw: deepseekRaw,
+    is_duplicate: isDuplicate,
+    duplicate_status: duplicateStatus,
+    duplicate_existing_id: duplicateExistingId,
+    auto_linked_invoice_id: linkedInvoiceId,
+    direction,
     parsed: {
       invoice_number: invNumber,
       customer_name: customerName,
+      vendor_name: parsed?.vendor_name || null,
       issue_date: issueDate,
       due_date: dueDate,
       currency: parsed?.currency || 'HKD',
@@ -847,32 +1022,12 @@ function classifyFile(filename: string, fileType: string, ocrText?: string): { f
   const type = fileType.toLowerCase();
 
   // Bank statements
-  if (/hsbc|bank|statement|月結單|月结单|bank\s*statement|eStatement/i.test(name)) {
+  if (/hsbc|bank\s*statement|月結單|月结单|eStatement|statement\s*date|statement\s*period/i.test(name) && !/card|credit/i.test(name)) {
     return { folder: 'Bank Statements', category: 'bank_statement' };
   }
-  // Business Registration
-  if (/br[^a-z]|business\s*reg|商業登記|商业登记|biz\s*reg/i.test(name)) {
-    return { folder: 'Business Registration', category: 'br' };
-  }
-  // Certificate of Incorporation
-  if (/ci[^a-z]|incorporation|公司註冊|公司注册|inc\s*cert/i.test(name)) {
-    return { folder: 'Company Incorporation', category: 'ci' };
-  }
-  // Employee Insurance
-  if (/ei[^a-z]|insurance|勞工保險|劳工保险|employee\s*insurance|ec\s*insurance/i.test(name)) {
-    return { folder: 'Insurance', category: 'ei' };
-  }
-  // Employment Contract
-  if (/employment|雇傭|雇佣|僱傭|staff\s*contract|labour\s*contract|labor\s*contract/i.test(name)) {
-    return { folder: 'Employment Contracts', category: 'ec' };
-  }
-  // Telecom Contract
-  if (/telecom|電信|电信|broadband|寬頻|宽频|mobile\s*plan|上網|上网/i.test(name)) {
-    return { folder: 'Telecom Contracts', category: 'tc' };
-  }
-  // Rental Lease
-  if (/rental|lease|tenancy|租約|租约|租單|租单|tenancy\s*agreement|lease\s*agreement/i.test(name)) {
-    return { folder: 'Rental Leases', category: 'rl' };
+  // Card statements
+  if (/card\s*statement|credit\s*card|信用卡|card\s*stmt|amex|mastercard|visa\s*statement/i.test(name)) {
+    return { folder: 'Card Statements', category: 'card_statement' };
   }
   // Invoices — direction is determined later by company_settings comparison, not here
   if (/invoice|發票|发票|inv[_-]?\d/i.test(name)) {
@@ -882,24 +1037,9 @@ function classifyFile(filename: string, fileType: string, ocrText?: string): { f
   if (/receipt|收據|收据/i.test(name)) {
     return { folder: 'Receipts', category: 'receipt' };
   }
-  // Contracts
-  if (/contract|agreement|合約|合同|合约/i.test(name)) {
-    return { folder: 'Contracts', category: 'contract' };
-  }
-  // PDFs
-  if (type.includes('pdf')) {
-    return { folder: 'Documents', category: 'document' };
-  }
-  // Images
-  if (type.includes('image')) {
-    return { folder: 'Images', category: 'image' };
-  }
-  // Spreadsheets
-  if (type.includes('sheet') || type.includes('excel') || type.includes('xls') || name.endsWith('.csv')) {
-    return { folder: 'Spreadsheets', category: 'spreadsheet' };
-  }
 
-  return { folder: 'General', category: 'general' };
+  // Everything else
+  return { folder: 'Others', category: 'general' };
 }
 
 // Run GLM-OCR for PDFs and images
@@ -966,7 +1106,7 @@ files.get('/issues', async (c) => {
   const user = c.get('user');
   const tenantId = c.get('client_user_id') || user.id;
   const row = await c.env.DB.prepare(
-    "SELECT COUNT(*) as count FROM file_records WHERE user_id = ? AND ocr_status IN ('failed', 'unclear')"
+    "SELECT COUNT(*) as count FROM file_records WHERE user_id = ? AND ocr_status IN ('failed', 'unclear') AND deleted_at IS NULL"
   ).bind(tenantId).first<{ count: number }>();
   return c.json({ issues: row?.count || 0 });
 });
@@ -1025,21 +1165,26 @@ files.post('/upload', async (c) => {
   const cleanBase64 = file_data.replace(/^data:.*?;base64,/, '');
   const binary = Uint8Array.from(atob(cleanBase64), ch => ch.charCodeAt(0));
 
+  // Compute SHA-256 content hash for duplicate detection
+  const hashBuffer = await crypto.subtle.digest('SHA-256', binary);
+  const contentHash = Array.from(new Uint8Array(hashBuffer))
+    .map(b => b.toString(16).padStart(2, '0')).join('');
+
   await c.env.FILE_BUCKET.put(r2Key, binary, {
     httpMetadata: { contentType: file_type || 'application/octet-stream' },
     customMetadata: { originalName: safeName, userId: user.id },
   });
 
   await c.env.DB.prepare(
-    `INSERT INTO file_records (id, user_id, folder, filename, original_name, file_type, file_size, r2_key, description, ocr_text, ocr_status, category, direction, amount)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO file_records (id, user_id, folder, filename, original_name, file_type, file_size, r2_key, description, ocr_text, ocr_status, category, direction, amount, content_hash)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(id, tenantId, folder, displayName, safeName,
     file_type || 'application/octet-stream', file_size || binary.byteLength,
     r2Key, description || '', ocrResult.text, ocrResult.status, classification.category,
-    ocrDirection || null, ocrAmount).run();
+    ocrDirection || null, ocrAmount, contentHash).run();
 
   const row = await c.env.DB.prepare(
-    'SELECT id, folder, filename, original_name, file_type, file_size, description, ocr_status, category, created_at FROM file_records WHERE id = ?'
+    'SELECT id, folder, filename, original_name, file_type, file_size, description, ocr_status, category, created_at FROM file_records WHERE id = ? AND deleted_at IS NULL'
   ).bind(id).first();
 
   // Notify OCR worker via WebSocket
@@ -1261,7 +1406,7 @@ files.get('/:id', async (c) => {
   const user = c.get('user');
   const tenantId = c.get('client_user_id') || user.id;
   const row = await c.env.DB.prepare(
-    'SELECT id, folder, filename, original_name, file_type, file_size, description, ocr_text, ocr_status, category, direction, payment_status, amount, created_at, updated_at FROM file_records WHERE id = ? AND user_id = ?'
+    'SELECT id, folder, filename, original_name, file_type, file_size, description, ocr_text, ocr_status, category, direction, payment_status, amount, created_at, updated_at FROM file_records WHERE id = ? AND user_id = ? AND deleted_at IS NULL'
   ).bind(c.req.param('id'), tenantId).first();
   if (!row) return c.json({ error: 'Not found' }, 404);
   return c.json(row);
@@ -1272,7 +1417,7 @@ files.get('/:id/download', async (c) => {
   const user = c.get('user');
   const tenantId = c.get('client_user_id') || user.id;
   const row = await c.env.DB.prepare(
-    'SELECT r2_key, file_type, original_name, filename FROM file_records WHERE id = ? AND user_id = ?'
+    'SELECT r2_key, file_type, original_name, filename FROM file_records WHERE id = ? AND user_id = ? AND deleted_at IS NULL'
   ).bind(c.req.param('id'), tenantId).first();
   if (!row) return c.json({ error: 'Not found' }, 404);
 
@@ -1296,7 +1441,7 @@ files.patch('/:id', async (c) => {
   const id = c.req.param('id');
   const body = await c.req.json();
 
-  const existing = await c.env.DB.prepare('SELECT id FROM file_records WHERE id = ? AND user_id = ?')
+  const existing = await c.env.DB.prepare('SELECT id FROM file_records WHERE id = ? AND user_id = ? AND deleted_at IS NULL')
     .bind(id, tenantId).first();
   if (!existing) return c.json({ error: 'Not found' }, 404);
 
@@ -1313,11 +1458,11 @@ files.patch('/:id', async (c) => {
   sets.push("updated_at = datetime('now')");
   params.push(id, tenantId);
 
-  await c.env.DB.prepare(`UPDATE file_records SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`)
+  await c.env.DB.prepare(`UPDATE file_records SET ${sets.join(', ')} WHERE id = ? AND user_id = ? AND deleted_at IS NULL`)
     .bind(...params).run();
 
   const row = await c.env.DB.prepare(
-    'SELECT id, folder, filename, original_name, file_type, file_size, description, ocr_status, category, created_at, updated_at FROM file_records WHERE id = ?'
+    'SELECT id, folder, filename, original_name, file_type, file_size, description, ocr_status, category, created_at, updated_at FROM file_records WHERE id = ? AND deleted_at IS NULL'
   ).bind(id).first();
   return c.json(row);
 });
@@ -1360,7 +1505,7 @@ files.delete('/:id', async (c) => {
       const txRes = await c.env.DB.prepare(
         `UPDATE bank_transactions SET deleted_at = ?
          WHERE bank_statement_id IN (
-           SELECT id FROM bank_statements WHERE r2_key = ? AND user_id = ?
+           SELECT id FROM bank_statements WHERE r2_key = ? AND user_id = ? AND deleted_at IS NULL
          ) AND deleted_at IS NULL`
       ).bind(now, existing.r2_key, tenantId).run();
       transactionsRemoved = txRes.meta?.changes || 0;
@@ -1418,7 +1563,7 @@ files.post('/reprocess', async (c) => {
   const db = c.env.DB;
 
   const rows = await db.prepare(
-    "SELECT id, r2_key, filename, original_name, file_type FROM file_records WHERE user_id = ? AND (ocr_status IN ('pending','skipped','failed') OR category = '' OR category IS NULL) LIMIT 50"
+    "SELECT id, r2_key, filename, original_name, file_type FROM file_records WHERE user_id = ? AND (ocr_status IN ('pending','skipped','failed') OR category = '' OR category IS NULL) AND deleted_at IS NULL LIMIT 50"
   ).bind(tenantId).all();
 
   let processed = 0;
@@ -1468,7 +1613,7 @@ files.post('/reprocess', async (c) => {
       }
 
       await db.prepare(
-        "UPDATE file_records SET ocr_text = ?, ocr_status = ?, category = ?, folder = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?"
+        "UPDATE file_records SET ocr_text = ?, ocr_status = ?, category = ?, folder = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ? AND deleted_at IS NULL"
       ).bind(ocrText, ocrStatus, classification.category, classification.folder, row.id, tenantId).run();
 
       processed++;
@@ -1489,7 +1634,7 @@ files.post('/:id/ocr-result', async (c) => {
   const body = await c.req.json();
   const { ocr_text, ocr_status, category, folder } = body as { ocr_text?: string; ocr_status?: string; category?: string; folder?: string };
 
-  const existing = await db.prepare('SELECT id FROM file_records WHERE id = ? AND user_id = ?')
+  const existing = await db.prepare('SELECT id FROM file_records WHERE id = ? AND user_id = ? AND deleted_at IS NULL')
     .bind(id, tenantId).first();
   if (!existing) return c.json({ error: 'Not found' }, 404);
 
@@ -1503,8 +1648,8 @@ files.post('/:id/ocr-result', async (c) => {
   sets.push("updated_at = datetime('now')");
   params.push(id, tenantId);
 
-  await db.prepare(`UPDATE file_records SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).bind(...params).run();
-  const row = await db.prepare('SELECT id, filename, ocr_status, ocr_text, category, folder FROM file_records WHERE id = ?').bind(id).first();
+  await db.prepare(`UPDATE file_records SET ${sets.join(', ')} WHERE id = ? AND user_id = ? AND deleted_at IS NULL`).bind(...params).run();
+  const row = await db.prepare('SELECT id, filename, ocr_status, ocr_text, category, folder FROM file_records WHERE id = ? AND deleted_at IS NULL').bind(id).first();
 
   // Auto-import bank statements / invoices when Docker worker provides good OCR
   // DISABLED — /import-document is the sole trigger for creating statements/invoices.
@@ -1552,48 +1697,65 @@ files.post('/:id/import-invoice', async (c) => {
   return c.json(result, 201);
 });
 
-// ── Auto-match invoice files with bank transactions ──
+// ── Auto-match invoices + receipts with bank transactions ──
 files.post('/auto-match-invoices', async (c) => {
   const user = c.get('user');
   const tenantId = c.get('client_user_id') || user.id;
   const db = c.env.DB;
 
-  // Get unmatched invoice files with amounts
-  const invoiceFiles = await db.prepare(
+  // Get unmatched invoice + receipt files with amounts
+  const docFiles = await db.prepare(
     `SELECT id, filename, original_name, ocr_text, direction, amount, category
      FROM file_records
-     WHERE user_id = ? AND category = 'invoice' AND payment_status = 'unmatched' AND amount IS NOT NULL AND amount > 0`
+     WHERE user_id = ? AND category IN ('invoice', 'receipt') AND payment_status = 'unmatched' AND amount IS NOT NULL AND amount > 0 AND deleted_at IS NULL`
   ).bind(tenantId).all();
 
   // Get unmatched bank transactions
   const deposits = await db.prepare(
     `SELECT id, transaction_date, description, deposit_amount
-     FROM bank_transactions WHERE user_id = ? AND deposit_amount > 0 AND match_status = 'unmatched'`
+     FROM bank_transactions WHERE user_id = ? AND deposit_amount > 0 AND match_status = 'unmatched' AND deleted_at IS NULL`
   ).bind(tenantId).all();
 
   const withdrawals = await db.prepare(
     `SELECT id, transaction_date, description, withdrawal_amount
-     FROM bank_transactions WHERE user_id = ? AND withdrawal_amount > 0 AND match_status = 'unmatched'`
+     FROM bank_transactions WHERE user_id = ? AND withdrawal_amount > 0 AND match_status = 'unmatched' AND deleted_at IS NULL`
   ).bind(tenantId).all();
 
   const matched: any[] = [];
+  const usedTxIds = new Set<string>();
 
-  for (const file of invoiceFiles.results as any[]) {
-    const isOutgoing = file.direction === 'outgoing' || !file.direction;
-    const candidates = isOutgoing ? deposits.results : withdrawals.results;
-    const amountKey = isOutgoing ? 'deposit_amount' : 'withdrawal_amount';
-    const newStatus = isOutgoing ? 'received' : 'paid';
+  for (const file of docFiles.results as any[]) {
+    // Receipts always match deposits (money in)
+    const isReceiptDoc = file.category === 'receipt';
+    const isOutgoing = !isReceiptDoc && (file.direction === 'outgoing' || !file.direction);
+    const candidates = (isReceiptDoc || isOutgoing) ? deposits.results : withdrawals.results;
+    const amountKey = (isReceiptDoc || isOutgoing) ? 'deposit_amount' : 'withdrawal_amount';
+    const newStatus = (isReceiptDoc || isOutgoing) ? 'received' : 'paid';
 
     for (const tx of candidates as any[]) {
+      if (usedTxIds.has(tx.id)) continue;
       if (Math.abs(file.amount - tx[amountKey]) < 0.01) {
+        usedTxIds.add(tx.id);
         await db.prepare(
-          `UPDATE file_records SET payment_status = ? WHERE id = ?`
+          `UPDATE file_records SET payment_status = ? WHERE id = ? AND deleted_at IS NULL`
         ).bind(newStatus, file.id).run();
+
+        // Also update linked invoice's file_record status for receipt-invoice pairs
+        if (isReceiptDoc) {
+          const linked = await db.prepare(
+            'SELECT file_id FROM invoices WHERE id = (SELECT linked_invoice_id FROM invoices WHERE file_id = ?)'
+          ).bind(file.id).first<{ file_id: string | null }>();
+          if (linked?.file_id) {
+            await db.prepare("UPDATE file_records SET payment_status = 'received' WHERE id = ? AND deleted_at IS NULL")
+              .bind(linked.file_id).run();
+          }
+        }
 
         matched.push({
           file_id: file.id,
           filename: file.original_name || file.filename,
-          direction: isOutgoing ? 'outgoing' : 'incoming',
+          doc_type: isReceiptDoc ? 'receipt' : 'invoice',
+          direction: isReceiptDoc ? 'incoming' : (isOutgoing ? 'outgoing' : 'incoming'),
           amount: file.amount,
           transaction_id: tx.id,
           transaction_date: tx.transaction_date,
@@ -1604,7 +1766,7 @@ files.post('/auto-match-invoices', async (c) => {
     }
   }
 
-  return c.json({ matched, unmatched: (invoiceFiles.results as any[]).length - matched.length });
+  return c.json({ matched, total_docs: (docFiles.results as any[]).length });
 });
 
 // ── Update file direction manually ──
@@ -1617,7 +1779,7 @@ files.patch('/:id/direction', async (c) => {
     return c.json({ error: 'direction must be outgoing or incoming' }, 400);
   }
   await c.env.DB.prepare(
-    'UPDATE file_records SET direction = ? WHERE id = ? AND user_id = ?'
+    'UPDATE file_records SET direction = ? WHERE id = ? AND user_id = ? AND deleted_at IS NULL'
   ).bind(direction, id, tenantId).run();
   return c.json({ success: true });
 });
@@ -1709,7 +1871,7 @@ files.post('/:id/glm-ocr', async (c) => {
   const id = c.req.param('id');
 
   const fileRow = await c.env.DB.prepare(
-    'SELECT id, r2_key, filename, original_name, file_type, ocr_text FROM file_records WHERE id = ? AND user_id = ?'
+    'SELECT id, r2_key, filename, original_name, file_type, ocr_text FROM file_records WHERE id = ? AND user_id = ? AND deleted_at IS NULL'
   ).bind(id, tenantId).first<{ id: string; r2_key: string; filename: string; original_name: string; file_type: string; ocr_text: string }>();
   if (!fileRow) return c.json({ error: 'File not found' }, 404);
 
@@ -1742,12 +1904,12 @@ files.post('/:id/glm-ocr', async (c) => {
     // Save OCR result to file_records (full GLM-OCR JSON)
     const ocrText = typeof data === 'string' ? data : JSON.stringify(data);
     await c.env.DB.prepare(
-      "UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ?"
+      "UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL"
     ).bind(ocrText.slice(0, 50000), id).run();
 
     // Also update linked bank_statement ocr_text
     await c.env.DB.prepare(
-      "UPDATE bank_statements SET ocr_text = ?, updated_at = datetime('now') WHERE r2_key = (SELECT r2_key FROM file_records WHERE id = ?)"
+      "UPDATE bank_statements SET ocr_text = ?, updated_at = datetime('now') WHERE r2_key = (SELECT r2_key FROM file_records WHERE id = ? AND deleted_at IS NULL) AND deleted_at IS NULL"
     ).bind(ocrText.slice(0, 50000), id).run();
 
     return c.json({ success: true, file_id: id, ocr_result: data });
@@ -1755,6 +1917,162 @@ files.post('/:id/glm-ocr', async (c) => {
     return c.json({ error: 'GLM-OCR failed: ' + (e.message || 'unknown') }, 500);
   }
 });
+
+// ── Card Statement import: OCR + DeepSeek AI parsing ──
+async function importCardStatementFromFile(
+  fileId: string, userId: string, db: D1Database, fileBucket: R2Bucket, ai: any, deepseekKey: string, glmApiKey?: string,
+): Promise<{ success: boolean; statement_id?: string; error?: string; transactions_count?: number; ocr_failed?: boolean; duplicate_info?: any }> {
+  const fileRow = await db.prepare(
+    'SELECT id, r2_key, filename, original_name, file_type, ocr_text, ocr_status FROM file_records WHERE id = ? AND user_id = ? AND deleted_at IS NULL'
+  ).bind(fileId, userId).first<{ id: string; r2_key: string; filename: string; original_name: string; file_type: string; ocr_text: string; ocr_status: string }>();
+  if (!fileRow) return { success: false, error: 'File not found' };
+
+  // Duplicate check
+  const existing = await db.prepare(
+    'SELECT id, card_issuer, period_start, period_end, file_name FROM card_statements WHERE user_id = ? AND r2_key = ? AND deleted_at IS NULL'
+  ).bind(userId, fileRow.r2_key).first<{ id: string; card_issuer: string | null; period_start: string | null; period_end: string | null; file_name: string | null }>();
+  if (existing) return {
+    success: false, error: 'Statement already imported', statement_id: existing.id,
+    duplicate_info: { type: 'card_statement', bank_name: existing.card_issuer, period: existing.period_start && existing.period_end ? `${existing.period_start} – ${existing.period_end}` : null, file_name: existing.file_name },
+  };
+
+  // Get OCR text
+  let ocrText = fileRow.ocr_text || '';
+  if ((!ocrText || ocrText.length < 20) && fileBucket && glmApiKey) {
+    try {
+      const obj = await fileBucket.get(fileRow.r2_key);
+      if (obj) {
+        const buffer = await obj.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        let binary = ''; for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        const base64 = btoa(binary);
+        const glmResp = await fetch('https://api.z.ai/api/paas/v4/layout_parsing', {
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${glmApiKey}` },
+          body: JSON.stringify({ model: 'glm-ocr', file: `data:${fileRow.file_type || 'application/pdf'};base64,${base64}` }),
+        });
+        if (glmResp.ok) {
+          const glmData = await glmResp.json() as any;
+          glmUsage = glmData.usage || null;
+          ocrText = typeof glmData === 'string' ? glmData : JSON.stringify(glmData);
+        }
+      }
+    } catch {}
+    if (ocrText) await db.prepare("UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL").bind(ocrText, fileId).run();
+  }
+
+  if (!ocrText || ocrText.length < 10) {
+    const emptyId = `cs-${crypto.randomUUID().slice(0, 8)}`;
+    await db.prepare(
+      "INSERT INTO card_statements (id, user_id, file_name, file_type, r2_key, status) VALUES (?, ?, ?, ?, ?, 'draft')"
+    ).bind(emptyId, userId, fileRow.original_name || fileRow.filename, fileRow.file_type, fileRow.r2_key).run();
+    return { success: true, statement_id: emptyId, ocr_failed: true, error: 'Could not read this file automatically.' };
+  }
+
+  // Parse with DeepSeek AI
+  let parsed: any = null;
+  let usage: any = null;
+  let glmUsage: any = null;
+  if (deepseekKey) {
+    try {
+      const parseResp = await fetch('https://api.deepseek.com/chat/completions', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${deepseekKey}` },
+        body: JSON.stringify({
+          model: 'deepseek-chat',
+          messages: [{ role: 'user', content: `Parse this credit card statement OCR text into structured JSON:
+
+{
+  "card_issuer": "HSBC / Standard Chartered / Hang Seng / Amex / etc",
+  "card_network": "Visa / MasterCard / Amex / UnionPay",
+  "card_number_last4": "last 4 digits if visible",
+  "cardholder_name": "name on card",
+  "currency": "HKD",
+  "statement_year": 2026,
+  "statement_month": 1,
+  "period_start": "YYYY-MM-DD",
+  "period_end": "YYYY-MM-DD",
+  "credit_limit": number or null,
+  "opening_balance": number or null,
+  "closing_balance": number or null,
+  "minimum_payment": number or null,
+  "payment_due_date": "YYYY-MM-DD or null",
+  "transactions": [
+    {
+      "transaction_date": "YYYY-MM-DD",
+      "posting_date": "YYYY-MM-DD or null",
+      "description": "merchant name / transaction description",
+      "amount": number (always positive),
+      "transaction_type": "purchase / payment / refund / fee / interest / cash_advance",
+      "foreign_currency": "USD etc or null",
+      "foreign_amount": number or null
+    }
+  ]
+}
+
+Rules:
+- Card statements list purchases, payments, refunds, fees. All amounts are positive numbers.
+- "payment" type = payment made to the card (reduces balance)
+- "purchase" type = charged to card
+- "refund" type = merchant refund credited to card
+- "fee" type = annual fee, late fee, overlimit fee, etc
+- "interest" type = finance charges, interest
+- "cash_advance" type = cash withdrawal from card
+- IMPORTANT: opening_balance is the balance carried forward from the previous statement. Look for "Previous Balance", "Balance B/F", "Opening Balance", "上月結欠", "上期結欠", "承前結欠" — this is the starting amount owed at the beginning of the period.
+- IMPORTANT: closing_balance is the NEW balance at the end of this statement (what you currently owe). Look for "Closing Balance", "New Balance", "Current Balance", "Statement Balance", "今期結欠", "總結欠", "本月結欠".
+- The OCR text may NOT explicitly label opening_balance — if only "Previous Balance" is shown, use that as opening_balance.
+- Transactions often list date, description/merchant, and amount
+- If no transaction detail, return empty transactions array
+- Return valid JSON only, no markdown
+
+OCR text:
+${ocrText.slice(0, 12000)}` }],
+          temperature: 0.1, max_tokens: 4000,
+        }),
+      });
+      if (parseResp.ok) {
+        const data = await parseResp.json() as any;
+        const content = data.choices?.[0]?.message?.content || '';
+        usage = data.usage || null;
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+      }
+    } catch (e: any) { console.log('[CARD-PARSE] DeepSeek error:', e.message); }
+  }
+
+  // Create draft statement
+  const stmtId = `cs-${crypto.randomUUID().slice(0, 8)}`;
+  await db.prepare(
+    `INSERT INTO card_statements (id, user_id, file_name, file_type, r2_key, ocr_text,
+     card_issuer, card_network, card_number_last4, cardholder_name, currency,
+     statement_year, statement_month, period_start, period_end,
+     credit_limit, opening_balance, closing_balance, minimum_payment, payment_due_date, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')`
+  ).bind(stmtId, userId, fileRow.original_name || fileRow.filename, fileRow.file_type, fileRow.r2_key, ocrText,
+    parsed?.card_issuer || null, parsed?.card_network || null, parsed?.card_number_last4 || null,
+    parsed?.cardholder_name || null, parsed?.currency || 'HKD',
+    parsed?.statement_year || null, parsed?.statement_month || null,
+    parsed?.period_start || null, parsed?.period_end || null,
+    parsed?.credit_limit ?? null, parsed?.opening_balance ?? null, parsed?.closing_balance ?? null,
+    parsed?.minimum_payment ?? null, parsed?.payment_due_date || null).run();
+
+  // Insert transactions
+  let txCount = 0;
+  if (parsed?.transactions && Array.isArray(parsed.transactions)) {
+    for (let i = 0; i < parsed.transactions.length; i++) {
+      const tx = parsed.transactions[i];
+      await db.prepare(
+        `INSERT INTO card_transactions (id, card_statement_id, user_id, transaction_date, posting_date,
+         description, amount, transaction_type, foreign_currency, foreign_amount, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(`ct-${crypto.randomUUID().slice(0, 8)}`, stmtId, userId,
+        tx.transaction_date, tx.posting_date || null, tx.description || '',
+        tx.amount || 0, tx.transaction_type || null, tx.foreign_currency || null,
+        tx.foreign_amount || null, i).run();
+      txCount++;
+    }
+  }
+
+  return { success: true, statement_id: stmtId, transactions_count: txCount, parsed_via_ai: !!parsed, usage, glm_usage: glmUsage };
+}
 
 // ── Smart document import: detect bank statement vs invoice, dispatch to right importer ──
 files.post('/:id/import-document', async (c) => {
@@ -1769,7 +2087,7 @@ files.post('/:id/import-document', async (c) => {
   let fileRow: any = null;
   for (let attempt = 0; attempt < 3; attempt++) {
     fileRow = await db.prepare(
-      'SELECT id, r2_key, original_name, file_type, ocr_text, category FROM file_records WHERE id = ? AND user_id = ?'
+      'SELECT id, r2_key, original_name, file_type, ocr_text, category, content_hash FROM file_records WHERE id = ? AND user_id = ? AND deleted_at IS NULL'
     ).bind(fileId, tenantId).first();
     if (fileRow) break;
     if (attempt < 2) await new Promise(r => setTimeout(r, 600));
@@ -1795,11 +2113,11 @@ files.post('/:id/import-document', async (c) => {
       }
     }
     // Clear OCR cache so it re-runs fresh
-    await db.prepare("UPDATE file_records SET ocr_text = '', ocr_status = 'pending' WHERE id = ? AND user_id = ?")
+    await db.prepare("UPDATE file_records SET ocr_text = '', ocr_status = 'pending' WHERE id = ? AND user_id = ? AND deleted_at IS NULL")
       .bind(fileId, tenantId).run();
     // Re-fetch fileRow with cleared OCR
     fileRow = await db.prepare(
-      'SELECT id, r2_key, original_name, file_type, ocr_text, category FROM file_records WHERE id = ? AND user_id = ?'
+      'SELECT id, r2_key, original_name, file_type, ocr_text, category FROM file_records WHERE id = ? AND user_id = ? AND deleted_at IS NULL'
     ).bind(fileId, tenantId).first<{ id: string; r2_key: string; original_name: string; file_type: string; ocr_text: string; category: string }>() || fileRow;
   }
 
@@ -1818,8 +2136,27 @@ files.post('/:id/import-document', async (c) => {
       const buffer = await obj.arrayBuffer();
       const mimeType = fileRow.file_type || 'application/pdf';
 
-      // Attempt 1: GLM-OCR — best for all PDFs (tables, Chinese, scanned docs)
-      if (c.env.GLM_API_KEY) {
+      // Attempt 1: Cloudflare AI Workers toMarkdown — best for text-layer PDFs (fast, free)
+      if (c.env.AI) {
+        try {
+          const mdResult = await (c.env.AI as any).toMarkdown([{
+            name: fileRow.original_name || fileRow.filename || 'file.pdf',
+            blob: new Blob([buffer], { type: mimeType }),
+          }]);
+          const candidate = Array.isArray(mdResult)
+            ? mdResult.map((r: any) => r?.data || r?.content || '').join('\n')
+            : String(mdResult || '');
+          if (candidate && candidate.length > 20) {
+            ocrText = candidate;
+            await db.prepare("UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL").bind(ocrText, fileId).run();
+          }
+        } catch (e: any) {
+          console.log('[SMART-IMPORT] toMarkdown failed:', e?.message || e);
+        }
+      }
+
+      // Attempt 2: GLM-OCR — for scanned/image PDFs
+      if ((!ocrText || ocrText.length < 20) && c.env.GLM_API_KEY) {
         try {
           const bytes = new Uint8Array(buffer);
           let binary = '';
@@ -1835,30 +2172,11 @@ files.post('/:id/import-document', async (c) => {
             const candidate = typeof glmData === 'string' ? glmData : JSON.stringify(glmData);
             if (candidate && candidate.length > 20) {
               ocrText = candidate;
-              await db.prepare("UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ?").bind(ocrText, fileId).run();
+              await db.prepare("UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL").bind(ocrText, fileId).run();
             }
           }
         } catch (e: any) {
           console.log('[SMART-IMPORT] GLM OCR error:', e?.message || e);
-        }
-      }
-
-      // Attempt 2: Cloudflare AI toMarkdown — fast free fallback for text-layer PDFs
-      if ((!ocrText || ocrText.length < 20) && c.env.AI) {
-        try {
-          const mdResult = await (c.env.AI as any).toMarkdown([{
-            name: fileRow.original_name || fileRow.filename || 'file.pdf',
-            blob: new Blob([buffer], { type: mimeType }),
-          }]);
-          const candidate = Array.isArray(mdResult)
-            ? mdResult.map((r: any) => r?.data || r?.content || '').join('\n')
-            : String(mdResult || '');
-          if (candidate && candidate.length > 20) {
-            ocrText = candidate;
-            await db.prepare("UPDATE file_records SET ocr_text = ?, ocr_status = 'completed', updated_at = datetime('now') WHERE id = ?").bind(ocrText, fileId).run();
-          }
-        } catch (e: any) {
-          console.log('[SMART-IMPORT] toMarkdown failed:', e?.message || e);
         }
       }
     }
@@ -1911,6 +2229,9 @@ files.post('/:id/import-document', async (c) => {
   const lower = ocrText.toLowerCase();
   let bankScore = filenameBank;
   let invoiceScore = filenameInvoice;
+  let cardScore = 0;
+
+  // Bank statement signals
   if (/statement\s+of\s+account/i.test(ocrText)) bankScore += 3;
   if (/account\s+activities/i.test(ocrText)) bankScore += 3;
   if (/business\s+direct\s+statement/i.test(ocrText)) bankScore += 3;
@@ -1918,7 +2239,10 @@ files.post('/:id/import-document', async (c) => {
   if (/(deposit|withdrawal|debit|credit)/i.test(ocrText) && (lower.match(/balance/g) || []).length >= 2) bankScore += 2;
   if (/transaction\s+(details|date|history)/i.test(ocrText)) bankScore += 1;
   if (/(hsbc|standard\s+chartered|citibank|hang\s+seng|bank\s+of\s+china|dbs)/i.test(ocrText)) bankScore += 1;
+  // Penalize bank score for card-specific signals
+  if (/credit\s+card|信用卡|card\s+statement/i.test(ocrText)) { bankScore -= 2; cardScore += 4; }
 
+  // Invoice signals
   if (/\binvoice\b/i.test(ocrText)) invoiceScore += 2;
   if (/invoice\s*(no|number|#)/i.test(ocrText)) invoiceScore += 3;
   if (/bill\s*to/i.test(ocrText)) invoiceScore += 3;
@@ -1927,9 +2251,56 @@ files.post('/:id/import-document', async (c) => {
   if (/(subtotal|total\s*due|total\s*amount)/i.test(ocrText)) invoiceScore += 1;
   if (/(unit\s*price|qty|quantity)/i.test(ocrText)) invoiceScore += 1;
 
-  // Decide. Bank statements usually have many more transaction-like rows.
-  const type = bankScore > invoiceScore ? 'bank_statement' : 'invoice';
-  console.log(`[SMART-IMPORT] file=${fileId} bankScore=${bankScore} invoiceScore=${invoiceScore} → ${type}`);
+  // Card statement signals
+  if (/credit\s+card\s+statement|信用卡.*月結|信用卡.*月结|card\s+statement/i.test(ocrText)) cardScore += 5;
+  if (/(american\s+express|amex)/i.test(ocrText)) cardScore += 3;
+  if (/visa\s*(card|platinum|gold|signature|infinite)?/i.test(ocrText)) cardScore += 2;
+  if (/mastercard|master\s*card/i.test(ocrText)) cardScore += 2;
+  if (/unionpay|銀聯|银联/i.test(ocrText)) cardScore += 2;
+  if (/credit\s+limit/i.test(ocrText)) cardScore += 3;
+  if (/minimum\s+payment|payment\s+due\s+date/i.test(ocrText)) cardScore += 3;
+  if (/finance\s+charge|interest\s+charge|late\s+payment\s+fee/i.test(ocrText)) cardScore += 2;
+  if (/cash\s+advance/i.test(ocrText)) cardScore += 2;
+  if (/card\s+number|card\s+(no|#)|cardholder|card\s+holder/i.test(ocrText)) cardScore += 2;
+  if (/previous\s+balance|new\s+balance|outstanding\s+balance/i.test(ocrText)) { cardScore += 2; bankScore -= 1; }
+  if (/(purchase|payment.*received|refund|annual\s+fee)/i.test(ocrText) && /credit\s+card|信用卡|card/i.test(ocrText)) cardScore += 1;
+
+  // 3-way decision
+  let type: string;
+  if (cardScore > bankScore && cardScore > invoiceScore && cardScore >= 5) {
+    type = 'card_statement';
+  } else if (bankScore > invoiceScore) {
+    type = 'bank_statement';
+  } else {
+    type = 'invoice';
+  }
+  console.log(`[SMART-IMPORT] file=${fileId} bankScore=${bankScore} invoiceScore=${invoiceScore} cardScore=${cardScore} → ${type}`);
+
+  // Duplicate detection: check content_hash for soft duplicate flag
+  // (individual import functions handle the actual duplicate logic — never block here)
+  let hashDuplicate = false, hashDuplicateId: string | null = null;
+  if (fileRow.content_hash && !force) {
+    const existingFile = await db.prepare(
+      `SELECT id FROM file_records WHERE user_id = ? AND content_hash = ? AND id != ? AND deleted_at IS NULL`
+    ).bind(tenantId, fileRow.content_hash, fileId).first<{ id: string }>();
+    if (existingFile) {
+      hashDuplicate = true;
+      hashDuplicateId = existingFile.id;
+    }
+  }
+
+  if (type === 'card_statement') {
+    const result = await importCardStatementFromFile(
+      fileId, tenantId, db, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY, c.env.GLM_API_KEY
+    );
+    if (!result.success) {
+      const status = result.error === 'File not found' ? 404 : result.error === 'Statement already imported' ? 409 : 422;
+      return c.json({ type, error: result.error, statement_id: result.statement_id, duplicate_info: result.duplicate_info, scores: { bankScore, invoiceScore, cardScore } }, status as any);
+    }
+    result.is_duplicate = result.is_duplicate || hashDuplicate;
+    if (hashDuplicate && !result.duplicate_status) result.duplicate_status = 'active';
+    return c.json({ type, ...result, scores: { bankScore, invoiceScore, cardScore }, ocr_text: ocrText }, 201);
+  }
 
   if (type === 'bank_statement') {
     const result = await importStatementFromFile(
@@ -1937,18 +2308,22 @@ files.post('/:id/import-document', async (c) => {
     );
     if (!result.success) {
       const status = result.error === 'File not found' ? 404 : result.error === 'Statement already imported' ? 409 : 422;
-      return c.json({ type, error: result.error, statement_id: result.statement_id, duplicate_info: result.duplicate_info, scores: { bankScore, invoiceScore } }, status as any);
+      return c.json({ type, error: result.error, statement_id: result.statement_id, duplicate_info: result.duplicate_info, scores: { bankScore, invoiceScore, cardScore } }, status as any);
     }
-    return c.json({ type, ...result, scores: { bankScore, invoiceScore } }, 201);
+    result.is_duplicate = result.is_duplicate || hashDuplicate;
+    if (hashDuplicate && !result.duplicate_status) result.duplicate_status = 'active';
+    return c.json({ type, ...result, scores: { bankScore, invoiceScore, cardScore }, ocr_text: ocrText }, 201);
   } else {
     const result = await importInvoiceFromFile(
       fileId, tenantId, db, c.env.FILE_BUCKET, c.env.AI, c.env.DEEPSEEK_API_KEY, c.env.GLM_API_KEY
     );
     if (!result.success) {
       const status = result.error === 'File not found' ? 404 : result.error?.includes('already exists') || result.error?.includes('already been imported') ? 409 : 422;
-      return c.json({ type, error: result.error, invoice_id: result.invoice_id, duplicate_info: result.duplicate_info, scores: { bankScore, invoiceScore } }, status as any);
+      return c.json({ type, error: result.error, invoice_id: result.invoice_id, duplicate_info: result.duplicate_info, scores: { bankScore, invoiceScore, cardScore } }, status as any);
     }
-    return c.json({ type, ...result, scores: { bankScore, invoiceScore } }, 201);
+    result.is_duplicate = result.is_duplicate || hashDuplicate;
+    if (hashDuplicate && !result.duplicate_status) result.duplicate_status = 'active';
+    return c.json({ type, ...result, scores: { bankScore, invoiceScore, cardScore }, ocr_text: ocrText }, 201);
   }
 });
 

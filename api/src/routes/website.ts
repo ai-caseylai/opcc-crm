@@ -49,7 +49,7 @@ website.post('/', async (c) => {
 
   const row = await db.prepare('SELECT * FROM company_settings WHERE user_id = ?').bind(tenantId).first<Record<string, string>>();
   const company = {
-    name: row?.name || 'My Company',
+    name: row?.name || 'My Company (set your company name in Settings)',
     tagline: row?.tagline || '',
     address: row?.address || 'Hong Kong',
     phone: row?.phone || '',

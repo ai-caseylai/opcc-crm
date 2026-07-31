@@ -109,6 +109,10 @@ export default function BankStatementReview() {
   const [closingManuallyEdited, setClosingManuallyEdited] = useState(false);
   // Rows added manually via "Add Row" (used when OCR failed to read the file).
   const [localRows, setLocalRows] = useState<Transaction[]>([]);
+  // Guard against double-submission — true for the ENTIRE save-and-confirm pipeline
+  const [isSaving, setIsSaving] = useState(false);
+  // Reset saving state when navigating to a different review (React Router reuses component)
+  useEffect(() => { setIsSaving(false); }, [id]);
 
   // PDF blob URL (loaded with auth)
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
@@ -186,16 +190,39 @@ export default function BankStatementReview() {
       api(`/bank-statements/${id}/transactions`, { method: 'POST', body }),
   });
 
+  // ── Review queue: after save/discard, load next queued item ──
+  function goNextInQueue() {
+    const raw = sessionStorage.getItem('reviewQueue');
+    if (!raw) return null;
+    try {
+      const queue: {docType:string, reviewId:string, filename:string, flags:string}[] = JSON.parse(raw);
+      if (queue.length > 0) {
+        const next = queue.shift()!;
+        if (queue.length > 0) sessionStorage.setItem('reviewQueue', JSON.stringify(queue));
+        else { sessionStorage.removeItem('reviewQueue'); sessionStorage.removeItem('reviewQueueTotal'); }
+        if (next.docType === 'bank_statement') navigate(`/bank-statements/review/${next.reviewId}`);
+        else if (next.docType === 'card_statement') navigate(`/card-statements/review/${next.reviewId}`);
+        else navigate(`/invoices/review/${next.reviewId}${next.flags || ''}`);
+        return true;
+      }
+    } catch {}
+    sessionStorage.removeItem('reviewQueue');
+    sessionStorage.removeItem('reviewQueueTotal');
+    return null;
+  }
+
   const confirmMut = useMutation({
-    mutationFn: () => api(`/bank-statements/${id}/confirm`, { method: 'POST' }),
+    mutationFn: (body?: any) => api(`/bank-statements/${id}/confirm`, { method: 'POST', body }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
       queryClient.invalidateQueries({ queryKey: ['bank-statements-drafts'] });
+      queryClient.invalidateQueries({ queryKey: ['bank-continuity'] });
       toast.success(tr('Saved to database! This statement is now confirmed.', '已儲存至數據庫！此月結單已確認。', '已储存至数据库！此月结单已确认。'));
-      navigate('/bank-statements');
+      setTimeout(() => { if (!goNextInQueue()) navigate('/bank-statements'); }, 0);
     },
     onError: (err: any) => {
       toast.error(`Failed to save: ${err?.message || err?.error || 'Unknown error'}`);
+      setIsSaving(false);
     },
   });
 
@@ -204,7 +231,8 @@ export default function BankStatementReview() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
       queryClient.invalidateQueries({ queryKey: ['bank-statements-drafts'] });
-      navigate('/file-storage');
+      queryClient.invalidateQueries({ queryKey: ['bank-continuity'] });
+      setTimeout(() => { if (!goNextInQueue()) navigate('/bank-statements'); }, 0);
     },
   });
 
@@ -411,13 +439,28 @@ export default function BankStatementReview() {
   };
 
   const saveAndConfirm = async () => {
-    if (headerHasChanges) await saveHeaderMut.mutateAsync(headerEdits);
-    if (txDirtyCount > 0 || localRows.length > 0) await saveAllTxEdits();
-    confirmMut.mutate();
+    if (isSaving || confirmMut.isPending) return;
+    setIsSaving(true);
+    try {
+      if (headerHasChanges) await saveHeaderMut.mutateAsync(headerEdits);
+      if (txDirtyCount > 0 || localRows.length > 0) await saveAllTxEdits();
+    } catch (e: any) {
+      toast.error(`Failed to save edits: ${e?.message || e?.error || 'Unknown error'}`);
+      setIsSaving(false);
+      return;
+    }
+    const status = totals.closingMismatch ? 'mismatch' : 'ok';
+    const check = totals.closingMismatch ? {
+      expected: totals.computedClosing,
+      actual: totals.declaredClosing,
+      diff: totals.declaredClosing - totals.computedClosing,
+      corrected_by_user: closingManuallyEdited,
+    } : null;
+    confirmMut.mutate({ balance_status: status, balance_check: check });
   };
 
   return (
-    <div className="p-4 space-y-4 max-w-[1800px] mx-auto">
+    <div className="p-4 space-y-4 max-w-[1800px] mx-auto" key={id}>
       {/* Banner */}
       {isDraft ? (
         <div className="rounded-lg border-2 border-yellow-400 bg-yellow-50 dark:bg-yellow-950 p-4">
@@ -480,7 +523,7 @@ export default function BankStatementReview() {
         </div>
 
         {/* Right: Extracted data */}
-        <div className="space-y-4 overflow-y-auto pb-24" style={{ maxHeight: '85vh' }}>
+        <div className="space-y-4 overflow-y-auto" style={{ maxHeight: '85vh' }}>
           {/* Header info */}
           <div className="rounded-lg border bg-card p-4">
             <h3 className="font-bold text-sm mb-3">{tr('📋 Extracted Statement Details', '📋 提取的月結單資料', '📋 提取的月结单资料')}</h3>
@@ -741,8 +784,8 @@ export default function BankStatementReview() {
         </div>
       </div>
 
-      {/* Footer actions — sticky bar; pb-24 on the scroll container above prevents it hiding content */}
-      <div className="rounded-lg border-2 border-primary bg-primary/5 p-4 sticky bottom-0 z-30 shadow-lg mt-2">
+      {/* Footer actions — in normal document flow at the bottom of the page */}
+      <div className="rounded-lg border-2 border-primary bg-primary/5 p-4 mt-2">
         {isDraft ? (
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div>
@@ -771,11 +814,11 @@ export default function BankStatementReview() {
               </button>
               <button
                 onClick={saveAndConfirm}
-                disabled={confirmMut.isPending || saveHeaderMut.isPending || createTxMut.isPending || transactions.length === 0}
+                disabled={isSaving || confirmMut.isPending || saveHeaderMut.isPending || createTxMut.isPending || transactions.length === 0}
                 className="px-6 py-2 bg-green-600 text-white rounded font-bold hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 title={transactions.length === 0 ? (tr('Add at least one transaction before saving', '儲存前請先新增至少一筆交易', '储存前請先新增至少一笔交易')) : ''}
               >
-                {confirmMut.isPending
+                {isSaving || confirmMut.isPending
                   ? (tr('Saving…', '儲存中…', '储存中…'))
                   : (tr('✅ Save to Database', '✅ 儲存至數據庫', '✅ 储存至数据库'))}
               </button>

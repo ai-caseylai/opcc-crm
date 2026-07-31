@@ -5,48 +5,10 @@ import { v4 as uuidv4 } from 'uuid';
 import { Bindings, Variables } from '../types';
 import { authMiddleware } from '../middleware/auth';
 import { ensureProducts } from '../lib/auto-product';
+import { generateInvoiceNumber, generateReceiptNumber } from '../lib/numbering';
 
 const invoices = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 invoices.use('*', authMiddleware);
-
-async function generateInvoiceNumber(db: D1Database, userId: string): Promise<string> {
-  const row = await db.prepare(
-    'SELECT invoice_number_pattern FROM company_settings WHERE user_id = ?'
-  ).bind(userId).first<{ invoice_number_pattern: string }>();
-
-  const pattern = row?.invoice_number_pattern || 'INV{YY}{MM}-{NNN}';
-  const now = new Date();
-  const YYYY = now.getFullYear().toString();
-  const YY = YYYY.slice(-2);
-  const MM = (now.getMonth() + 1).toString().padStart(2, '0');
-  const DD = now.getDate().toString().padStart(2, '0');
-
-  // Expand date tokens to get prefix before counter
-  let prefix = pattern
-    .replace('{YYYY}', YYYY)
-    .replace('{YY}', YY)
-    .replace('{MM}', MM)
-    .replace('{DD}', DD);
-
-  // Extract counter length from {N+} placeholder
-  const counterMatch = pattern.match(/\{(N+)\}/);
-  const counterLen = counterMatch ? counterMatch[1].length : 4;
-  prefix = prefix.replace(/\{N+\}/, '');
-
-  // Find highest existing number with this prefix
-  const result = await db.prepare(
-    'SELECT invoice_number FROM invoices WHERE user_id = ? AND invoice_number LIKE ? ORDER BY invoice_number DESC LIMIT 1'
-  ).bind(userId, `${prefix}%`).first<{ invoice_number: string }>();
-
-  let counter = 1;
-  if (result) {
-    const numPart = result.invoice_number.substring(prefix.length);
-    const num = parseInt(numPart, 10);
-    if (!isNaN(num)) counter = num + 1;
-  }
-
-  return prefix + counter.toString().padStart(counterLen, '0');
-}
 
 invoices.get('/', async (c) => {
   const user = c.get('user');
@@ -58,23 +20,31 @@ invoices.get('/', async (c) => {
   const limit = parseInt(c.req.query('limit') || '20');
   const offset = (page - 1) * limit;
   const docType = c.req.query('doc_type') || ''; // 'receipt' | 'invoice' | ''
+  const direction = c.req.query('direction') || ''; // 'incoming' | 'outgoing' | ''
 
-  let query = `SELECT i.*, c.name as customer_name, c.company_name as customer_company FROM invoices i LEFT JOIN customers c ON i.customer_id = c.id WHERE i.user_id = ? AND i.status != 'pending_review'`;
+  // Default: exclude pending_review unless explicitly requested
+  const showPendingReview = status === 'pending_review';
+  let query = `SELECT i.*, c.name as customer_name, c.company_name as customer_company, s.name as supplier_name FROM invoices i LEFT JOIN customers c ON i.customer_id = c.id LEFT JOIN suppliers s ON i.supplier_id = s.id WHERE i.user_id = ?`;
+  if (!showPendingReview) query += " AND i.status != 'pending_review'";
   const params: any[] = [tenantId];
   if (status) { query += ' AND i.status = ?'; params.push(status); }
-  if (search) { query += ' AND (i.invoice_number LIKE ? OR c.name LIKE ?)'; params.push(`%${search}%`, `%${search}%`); }
+  if (search) { query += ' AND (i.invoice_number LIKE ? OR c.name LIKE ? OR s.name LIKE ? OR i.vendor_name LIKE ?)'; params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`); }
   // doc_type filter: receipt = has receipt_number, invoice = no receipt_number
   if (docType === 'receipt') { query += ' AND i.receipt_number IS NOT NULL'; }
   else if (docType === 'invoice') { query += ' AND i.receipt_number IS NULL'; }
+  if (direction === 'incoming') { query += " AND i.direction = 'incoming'"; }
+  else if (direction === 'outgoing') { query += " AND i.direction = 'outgoing'"; }
   query += ' ORDER BY i.created_at DESC LIMIT ? OFFSET ?';
   params.push(limit, offset);
 
   const rows = await db.prepare(query).bind(...params).all();
   const countRow = await db.prepare(
-    `SELECT COUNT(*) as count FROM invoices i LEFT JOIN customers c ON i.customer_id = c.id WHERE i.user_id = ? AND i.status != 'pending_review'` +
+    `SELECT COUNT(*) as count FROM invoices i LEFT JOIN customers c ON i.customer_id = c.id LEFT JOIN suppliers s ON i.supplier_id = s.id WHERE i.user_id = ?` +
+    (showPendingReview ? '' : " AND i.status != 'pending_review'") +
     (status ? ' AND i.status = ?' : '') +
-    (search ? ' AND (i.invoice_number LIKE ? OR c.name LIKE ?)' : '') +
-    (docType === 'receipt' ? ' AND i.receipt_number IS NOT NULL' : docType === 'invoice' ? ' AND i.receipt_number IS NULL' : '')
+    (search ? ' AND (i.invoice_number LIKE ? OR c.name LIKE ? OR s.name LIKE ? OR i.vendor_name LIKE ?)' : '') +
+    (docType === 'receipt' ? ' AND i.receipt_number IS NOT NULL' : docType === 'invoice' ? ' AND i.receipt_number IS NULL' : '') +
+    (direction === 'incoming' ? " AND i.direction = 'incoming'" : direction === 'outgoing' ? " AND i.direction = 'outgoing'" : '')
   ).bind(...params.slice(0, -2)).first<{ count: number }>();
   return c.json({ data: rows.results, total: countRow?.count || 0, page, limit });
 });
@@ -120,7 +90,7 @@ const itemSchema = z.object({
 
 const createSchema = z.object({
   invoice_number: z.string().optional(), customer_id: z.string().min(1), supplier_id: z.string().optional(),
-  issue_date: z.string(), due_date: z.string(), status: z.string().optional(),
+  issue_date: z.string(), due_date: z.string(), status: z.string().optional(), direction: z.enum(['incoming', 'outgoing']).optional(),
   currency: z.string().optional(), tax_rate: z.number().optional(), discount_amount: z.number().optional(),
   notes: z.string().optional(), terms: z.string().optional(),
   receipt_number: z.string().optional(), paid_date: z.string().optional(),
@@ -156,8 +126,8 @@ invoices.post('/', zValidator('json', createSchema), async (c) => {
   const brNumber = company?.br_number || null;
 
   await db.prepare(
-    `INSERT INTO invoices (id, user_id, invoice_number, customer_id, supplier_id, status, issue_date, due_date, subtotal, tax_rate, tax_amount, discount_amount, total, currency, notes, terms, receipt_number, paid_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(id, tenantId, invoice_number, data.customer_id, data.supplier_id || null, data.status || 'draft', data.issue_date, data.due_date, subtotal, taxRate, taxAmount, discount, total, data.currency || 'HKD', data.notes || null, data.terms || null, data.receipt_number || null, data.paid_date || null).run();
+    `INSERT INTO invoices (id, user_id, invoice_number, customer_id, supplier_id, status, issue_date, due_date, subtotal, tax_rate, tax_amount, discount_amount, total, currency, notes, terms, receipt_number, paid_date, direction) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(id, tenantId, invoice_number, data.customer_id, data.supplier_id || null, data.status || 'draft', data.issue_date, data.due_date, subtotal, taxRate, taxAmount, discount, total, data.currency || 'HKD', data.notes || null, data.terms || null, data.receipt_number || null, data.paid_date || null, data.direction || 'outgoing').run();
 
   for (let i = 0; i < data.items.length; i++) {
     const item = data.items[i];
@@ -264,8 +234,8 @@ invoices.put('/:id', async (c) => {
   const total = subtotal + taxAmount - discount;
 
   await db.prepare(
-    `UPDATE invoices SET invoice_number=?, customer_id=?, status=?, issue_date=?, due_date=?, subtotal=?, tax_rate=?, tax_amount=?, discount_amount=?, total=?, currency=?, notes=?, terms=?, receipt_number=?, paid_date=?, attn=?, customer_phone=?, customer_email=?, customer_address=?, updated_at=datetime('now') WHERE id=? AND user_id=?`
-  ).bind(data.invoice_number, data.customer_id, data.status || 'draft', data.issue_date, data.due_date, subtotal, taxRate, taxAmount, discount, total, data.currency || 'HKD', data.notes || null, data.terms || null, data.receipt_number || null, data.paid_date || null, data.attn || null, data.customer_phone || null, data.customer_email || null, data.customer_address || null, id, tenantId).run();
+    `UPDATE invoices SET invoice_number=?, customer_id=?, supplier_id=?, status=?, issue_date=?, due_date=?, subtotal=?, tax_rate=?, tax_amount=?, discount_amount=?, total=?, currency=?, notes=?, terms=?, receipt_number=?, paid_date=?, attn=?, customer_phone=?, customer_email=?, customer_address=?, direction=?, updated_at=datetime('now') WHERE id=? AND user_id=?`
+  ).bind(data.invoice_number, data.customer_id, data.supplier_id || null, data.status || 'draft', data.issue_date, data.due_date, subtotal, taxRate, taxAmount, discount, total, data.currency || 'HKD', data.notes || null, data.terms || null, data.receipt_number || null, data.paid_date || null, data.attn || null, data.customer_phone || null, data.customer_email || null, data.customer_address || null, data.direction || null, id, tenantId).run();
 
   // Replace line items
   await db.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').bind(id).run();
@@ -313,6 +283,8 @@ invoices.post('/:id/confirm', async (c) => {
       ? { receipt_number: body.invoice_number || body.receipt_number }  // form.invoice_number holds the displayed receipt number
       : { invoice_number: body.invoice_number }),                        // real invoice: update invoice_number normally
     customer_id: body.customer_id,
+    supplier_id: body.supplier_id,
+    direction: body.direction,
     issue_date: body.issue_date,
     due_date: body.due_date,
     currency: body.currency,
@@ -366,12 +338,21 @@ invoices.delete('/:id', async (c) => {
   const id = c.req.param('id');
 
   const existing = await db.prepare(
-    'SELECT id, customer_id, supplier_id FROM invoices WHERE id = ? AND user_id = ?'
-  ).bind(id, tenantId).first<{ id: string; customer_id: string | null; supplier_id: string | null }>();
+    'SELECT id, customer_id, supplier_id, file_id FROM invoices WHERE id = ? AND user_id = ?'
+  ).bind(id, tenantId).first<{ id: string; customer_id: string | null; supplier_id: string | null; file_id: string | null }>();
   if (!existing) return c.json({ error: 'Invoice not found' }, 404);
+
+  // Break circular FK: NULL out any linked_invoice_id references to this invoice
+  await db.prepare('UPDATE invoices SET linked_invoice_id = NULL WHERE linked_invoice_id = ?').bind(id).run();
 
   // Delete the invoice (invoice_items cascade via FK)
   await db.prepare('DELETE FROM invoices WHERE id = ? AND user_id = ?').bind(id, tenantId).run();
+
+  // Also remove the linked file from File Storage so it doesn't linger after discard
+  if (existing.file_id) {
+    await db.prepare('DELETE FROM file_records WHERE id = ? AND user_id = ?')
+      .bind(existing.file_id, tenantId).run();
+  }
 
   // Clean up orphaned customer — delete only if no other invoices reference this customer
   if (existing.customer_id) {

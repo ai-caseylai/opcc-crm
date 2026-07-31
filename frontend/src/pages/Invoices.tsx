@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api, WORKER_API_BASE } from '../lib/api';
-import { Plus, Search, FileText, Eye, Trash2, Download, Pencil } from 'lucide-react';
+import { Plus, Search, FileText, Eye, Trash2, Download, Pencil, AlertTriangle, Info, Copy } from 'lucide-react';
 import { tr } from '../lib/i18nHelpers';
 
 // Authenticated PDF download: fetches with Bearer token, opens as blob URL
@@ -106,17 +106,13 @@ export default function Invoices() {
 
   const allInvoices = data?.data || [];
   const invoices = directionFilter === 'all' ? allInvoices
-    : allInvoices.filter((inv: any) =>
-        directionFilter === 'incoming'
-          ? (inv.direction === 'incoming' || inv.direction === 'expense')
-          : (inv.direction === 'outgoing' || inv.direction === 'income')
-      );
+    : allInvoices.filter((inv: any) => inv.direction === directionFilter);
   const statusLabel = (s: string) => {
-    const labels: Record<string, string> = { draft: tr('Draft', '草稿', '草稿'), sent: tr('Sent', '應收', '应收'), paid: tr('Paid', '已收', '已收'), overdue: tr('Overdue', '逾期未收', '逾期未收'), cancelled: tr('Cancelled', '已取消', '已取消') };
+    const labels: Record<string, string> = { draft: tr('Draft', '草稿', '草稿'), sent: tr('Sent', '應收', '应收'), paid: tr('Paid', '已收', '已收'), overdue: tr('Overdue', '逾期未收', '逾期未收'), cancelled: tr('Cancelled', '已取消', '已取消'), pending_review: tr('⏳ Pending Review', '⏳ 待審核', '⏳ 待审核') };
     return labels[s] || s;
   };
   const statusBadge = (s: string) => {
-    const colors: Record<string, string> = { draft: 'bg-gray-100 text-gray-700', sent: 'bg-blue-100 text-blue-700', paid: 'bg-green-100 text-green-700', overdue: 'bg-red-100 text-red-700', cancelled: 'bg-gray-100 text-gray-500' };
+    const colors: Record<string, string> = { draft: 'bg-gray-100 text-gray-700', sent: 'bg-blue-100 text-blue-700', paid: 'bg-green-100 text-green-700', overdue: 'bg-red-100 text-red-700', cancelled: 'bg-gray-100 text-gray-500', pending_review: 'bg-yellow-100 text-yellow-700' };
     return `px-2 py-0.5 rounded-full text-xs font-medium ${colors[s] || 'bg-gray-100'}`;
   };
 
@@ -152,11 +148,7 @@ export default function Invoices() {
             {t.label}
             {t.key !== 'all' && (
               <span className="ml-1.5 text-xs text-muted-foreground">
-                ({allInvoices.filter((inv: any) =>
-                  t.key === 'incoming'
-                    ? (inv.direction === 'incoming' || inv.direction === 'expense')
-                    : (inv.direction === 'outgoing' || inv.direction === 'income')
-                ).length})
+                ({allInvoices.filter((inv: any) => inv.direction === t.key).length})
               </span>
             )}
           </button>
@@ -175,6 +167,7 @@ export default function Invoices() {
           <option value="draft">{tr('Draft', '草稿', '草稿')}</option>
           <option value="sent">{tr('Receivable', '應收', '應收')}</option>
           <option value="paid">{tr('Paid', '已收', '已收')}</option>
+          <option value="pending_review">{tr('⏳ Pending Review', '⏳ 待審核', '⏳ 待审核')}</option>
           <option value="overdue">{tr('Overdue', '逾期未收', '逾期未收')}</option>
         </select>
       </div>
@@ -197,29 +190,54 @@ export default function Invoices() {
             <tbody>
               {invoices.map((inv: any) => (
                 <tr key={inv.id} className="border-b hover:bg-muted/30">
-                  <td className="p-3 font-medium">{inv.invoice_number}</td>
-                  <td className="p-3 hidden md:table-cell">{inv.direction === 'incoming' ? (inv.vendor_name || inv.customer_name || '-') : (inv.customer_name || '-')}</td>
+                  <td className="p-3 font-medium">
+                    <span className="inline-flex items-center gap-1.5">
+                      {inv.invoice_number}
+                      {inv.needs_review?.includes('direction') && (
+                        <span title={tr('AI OCR could not determine if this is AR (you issued) or AP (you received). Please review.', 'AI OCR 無法判斷此為 AR（你開出）或 AP（你接收）。請審核。', 'AI OCR 无法判断此为 AR（你开出）或 AP（你接收）。请审核。')}>
+                          <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+                        </span>
+                      )}
+                      {inv.needs_review?.includes('company_not_detected') && (
+                        <span title={tr('Your company name was not detected in this invoice. It may be between two third parties.', '未在此發票中檢測到你公司名稱。可能涉及兩個第三方。', '未在此发票中检测到你公司名称。可能涉及两个第三方。')}>
+                          <Info className="h-3.5 w-3.5 text-blue-500" />
+                        </span>
+                      )}
+                      {inv.needs_review?.includes('duplicate') && (
+                        <span title={tr('An invoice with this number already existed. The number was adjusted to avoid conflict.', '此發票號碼已存在。號碼已調整以避免衝突。', '此发票号码已存在。号码已调整以避免冲突。')}>
+                          <Copy className="h-3.5 w-3.5 text-orange-500" />
+                        </span>
+                      )}
+                    </span>
+                  </td>
+                  <td className="p-3 hidden md:table-cell">{inv.direction === 'incoming' ? (inv.vendor_name || inv.supplier_name || inv.customer_name || '-') : (inv.customer_name || '-')}</td>
                   <td className="p-3">
                     <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
-                      inv.direction === 'incoming' || inv.direction === 'expense'
+                      inv.direction === 'incoming'
                         ? 'bg-orange-100 text-orange-700'
                         : 'bg-blue-100 text-blue-700'
                     }`}>
-                      {(inv.direction === 'incoming' || inv.direction === 'expense') ? (tr('AP', '應付', '應付')) : (tr('AR', '應收', '應收'))}
+                      {inv.direction === 'incoming' ? (tr('AP', '應付', '應付')) : (tr('AR', '應收', '應收'))}
                     </span>
                   </td>
                   <td className="p-3"><span className={statusBadge(inv.status)}>{statusLabel(inv.status)}</span></td>
                   <td className="p-3 text-right hidden lg:table-cell">{inv.currency} {inv.total?.toLocaleString()}</td>
                   <td className="p-3 hidden lg:table-cell">{inv.issue_date}</td>
                   <td className="p-3 text-right">
-                    <button onClick={() => setViewId(inv.id)} className="p-1 hover:bg-muted rounded mr-1" title="查看 View"><Eye className="h-4 w-4" /></button>
-                    <button onClick={() => navigate(`/invoices/review/${inv.id}`)} className="p-1 hover:bg-muted rounded mr-1" title="編輯 Edit"><Pencil className="h-4 w-4" /></button>
-                    <button onClick={() => downloadInvoicePDF(inv.id, inv.invoice_number)} className="p-1 hover:bg-muted rounded mr-1" title="下載 PDF"><Download className="h-4 w-4" /></button>
+                    <button onClick={() => setViewId(inv.id)} className="p-1 hover:bg-muted rounded mr-1" title={tr('View', '查看', '查看')}><Eye className="h-4 w-4" /></button>
+                    <button onClick={() => navigate(`/invoices/review/${inv.id}`)} className="p-1 hover:bg-muted rounded mr-1" title={tr('Edit', '編輯', '编辑')}><Pencil className="h-4 w-4" /></button>
+                    <button onClick={() => downloadInvoicePDF(inv.id, inv.invoice_number)} className="p-1 hover:bg-muted rounded mr-1" title={tr('Download PDF', '下載 PDF', '下载 PDF')}><Download className="h-4 w-4" /></button>
                     {inv.status === 'draft' && (
-                      <button onClick={() => updateStatus.mutate({ id: inv.id, status: 'sent' })} className="text-xs text-blue-600 hover:underline mr-2">{tr('Send (AR)', '發送（應收）', '发送（应收）')}</button>
+                      <button onClick={() => updateStatus.mutate({ id: inv.id, status: 'sent' })} className={`text-xs hover:underline mr-2 ${inv.direction === 'incoming' ? 'text-orange-600' : 'text-blue-600'}`}>
+                        {inv.direction === 'incoming'
+                          ? tr('Send (AP)', '發送（應付）', '发送（应付）')
+                          : tr('Send (AR)', '發送（應收）', '发送（应收）')}
+                      </button>
                     )}
                     {inv.status === 'sent' && (
-                      <button onClick={() => updateStatus.mutate({ id: inv.id, status: 'paid' })} className="text-xs text-green-600 hover:underline mr-2">已收</button>
+                      <button onClick={() => updateStatus.mutate({ id: inv.id, status: 'paid' })} className="text-xs text-green-600 hover:underline mr-2">
+                        {inv.direction === 'incoming' ? tr('Paid', '已付', '已付') : tr('Paid', '已收', '已收')}
+                      </button>
                     )}
                     <button onClick={() => { if (confirm(tr('Delete this item?', '確定刪除?', '确定删除?'))) deleteMut.mutate(inv.id); }} className="p-1 hover:bg-muted rounded text-destructive"><Trash2 className="h-4 w-4" /></button>
                   </td>
@@ -374,7 +392,7 @@ export default function Invoices() {
                 <button onClick={() => setViewId(null)} className="text-muted-foreground">✕</button>
               </div>
               <div className="grid grid-cols-2 gap-3 text-sm">
-                <div><span className="text-muted-foreground">{invoiceDetail.direction === 'incoming' ? '供應商:' : '客戶:'}</span> {invoiceDetail.direction === 'incoming' ? (invoiceDetail.vendor_name || invoiceDetail.customer_name) : invoiceDetail.customer_name}</div>
+                <div><span className="text-muted-foreground">{invoiceDetail.direction === 'incoming' ? '供應商:' : '客戶:'}</span> {invoiceDetail.direction === 'incoming' ? (invoiceDetail.vendor_name || invoiceDetail.supplier_name || invoiceDetail.customer_name) : invoiceDetail.customer_name}</div>
                 <div><span className="text-muted-foreground">{tr('Status', '狀態', '状态')}:</span> <span className={statusBadge(invoiceDetail.status)}>{statusLabel(invoiceDetail.status)}</span></div>
                 <div><span className="text-muted-foreground">{tr('Date', '日期', '日期')}:</span> {invoiceDetail.issue_date}</div>
                 <div><span className="text-muted-foreground">{tr('Due', '到期', '到期')}:</span> {invoiceDetail.due_date}</div>
@@ -419,7 +437,7 @@ export default function Invoices() {
                 <div className="grid grid-cols-2 gap-4 text-xs">
                   <div>
                     <div className="text-gray-500 uppercase tracking-wide mb-1">Bill To</div>
-                    <div className="font-semibold">{invoiceDetail.direction === 'incoming' ? (invoiceDetail.vendor_name || invoiceDetail.customer_name) : invoiceDetail.customer_name}</div>
+                    <div className="font-semibold">{invoiceDetail.direction === 'incoming' ? (invoiceDetail.vendor_name || invoiceDetail.supplier_name || invoiceDetail.customer_name) : invoiceDetail.customer_name}</div>
                     {invoiceDetail.customer_address && <div className="text-gray-500">{invoiceDetail.customer_address}</div>}
                     {invoiceDetail.customer_email && <div className="text-gray-500">{invoiceDetail.customer_email}</div>}
                   </div>

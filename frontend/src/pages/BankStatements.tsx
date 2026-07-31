@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import { useToast } from '../components/Toast';
 import { Eye, Trash2, Landmark, ChevronDown, ChevronRight, FileText, Link2, Check, X, Zap, Search, Tag, Download, Upload, FilePlus, Pencil } from 'lucide-react';
+import ContinuityChain from '../components/ContinuityChain';
 import { useAuth } from '../contexts/AuthContext';
 import SupervisorPasswordModal from '../components/SupervisorPasswordModal';
 import { tr } from '../lib/i18nHelpers';
@@ -66,6 +67,7 @@ export default function BankStatements() {
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
       queryClient.invalidateQueries({ queryKey: ['bank-statements-drafts'] });
+      queryClient.invalidateQueries({ queryKey: ['bank-continuity'] });
       queryClient.invalidateQueries({ queryKey: ['bank-transactions-flat'] });
       queryClient.invalidateQueries({ queryKey: ['file-storage'] });
       setExpandedId(null);
@@ -101,7 +103,7 @@ export default function BankStatements() {
     mutationFn: ({ txId, invoiceId }: { txId: string; invoiceId: string }) =>
       api(`/bank-statements/transactions/${txId}/match`, {
         method: 'PATCH',
-        body: JSON.stringify({ invoice_id: invoiceId, action: 'confirm' }),
+        body: { invoice_id: invoiceId, action: 'confirm' },
       }),
     onSuccess: async (_data: any, variables: { txId: string; invoiceId: string }) => {
       queryClient.invalidateQueries({ queryKey: ['bank-statement', expandedId] });
@@ -117,7 +119,7 @@ export default function BankStatements() {
     mutationFn: (txId: string) =>
       api(`/bank-statements/transactions/${txId}/match`, {
         method: 'PATCH',
-        body: JSON.stringify({ action: 'unlink' }),
+        body: { action: 'unlink' },
       }),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['bank-statement', expandedId] }); },
   });
@@ -168,7 +170,7 @@ export default function BankStatements() {
       <PendingReviewBanner />
 
       {/* Continuity Chain */}
-      <ContinuityChain />
+      <ContinuityChain endpoint="/bank-statements/continuity" queryKey="bank-continuity" type="bank" />
 
       {/* Statements list */}
       <div className="bg-card border rounded-xl p-6 space-y-3">
@@ -208,7 +210,9 @@ export default function BankStatements() {
                       )}
                     </div>
                   </div>
-                  <div className="flex gap-2 flex-shrink-0 ml-2" onClick={e => e.stopPropagation()}>
+                  <div className="flex gap-2 flex-shrink-0 ml-2 items-center" onClick={e => e.stopPropagation()}>
+                    {s.balance_status === 'mismatch' && <span className="text-xs text-red-600 font-medium" title="Balance mismatch — confirmed with unresolved difference">⚠</span>}
+                    {s.balance_status === 'corrected' && <span className="text-xs text-blue-600 font-medium" title="AI data corrected manually">✏</span>}
                     <a href={`/api/bank-statements/${s.id}/file`} target="_blank" className="p-1.5 hover:bg-muted rounded" title="View original file">
                       <Eye className="h-4 w-4" />
                     </a>
@@ -665,175 +669,6 @@ Return ONLY a JSON object with corrected fields. If nothing needs fixing, return
   );
 }
 
-// ── Continuity Chain: shows gap/overlap/duplicate/mismatch detection ──
-function ContinuityChain() {
-  const { i18n } = useTranslation();
-  const [expanded, setExpanded] = useState(false);
-  const { data, isLoading } = useQuery({
-    queryKey: ['bank-continuity'],
-    queryFn: () => api('/bank-statements/continuity'),
-  });
-
-  const groups: any[] = (data as any)?.groups || [];
-  if (isLoading || groups.length === 0) return null;
-
-  const hasIssues = groups.some((g: any) => g.status !== 'complete');
-
-  const issueIcon = (issues: string[]) => {
-    if (issues.includes('gap')) return '🔴';
-    if (issues.includes('balance_mismatch')) return '🟡';
-    if (issues.includes('duplicate')) return '🟣';
-    if (issues.includes('overlap') || issues.includes('date_overlap')) return '🟠';
-    if (issues.includes('matched')) return '🟢';
-    return '⚪';
-  };
-
-  const issueLabel = (issues: string[], lang: string) => {
-    if (issues.includes('gap')) return lang === 'en' ? 'Gap' : '缺失';
-    if (issues.includes('balance_mismatch')) return lang === 'en' ? 'Balance mismatch' : '餘額不符';
-    if (issues.includes('duplicate')) return lang === 'en' ? 'Duplicate' : '重複';
-    if (issues.includes('overlap') || issues.includes('date_overlap')) return lang === 'en' ? 'Overlap' : '重疊';
-    if (issues.includes('matched')) return lang === 'en' ? 'OK' : '正常';
-    if (issues.includes('first')) return lang === 'en' ? 'Start' : '起始';
-    return '';
-  };
-
-  const groupStatusColor = (status: string) => {
-    if (status === 'complete') return 'border-green-400 bg-green-50 dark:bg-green-950/30';
-    if (status === 'has_gaps') return 'border-red-400 bg-red-50 dark:bg-red-950/30';
-    if (status === 'has_mismatches') return 'border-yellow-400 bg-yellow-50 dark:bg-yellow-950/30';
-    return 'border-orange-400 bg-orange-50 dark:bg-orange-950/30';
-  };
-
-  return (
-    <div className={`rounded-lg border-2 p-4 space-y-3 ${hasIssues ? 'border-red-400 bg-red-50 dark:bg-red-950/20' : 'border-green-400 bg-green-50 dark:bg-green-950/20'}`}>
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center justify-between"
-      >
-        <div className="flex items-center gap-2">
-          {expanded
-            ? <ChevronDown className="h-4 w-4 text-muted-foreground" />
-            : <ChevronRight className="h-4 w-4 text-muted-foreground" />
-          }
-          <span className="font-bold text-sm">
-            {hasIssues ? '⚠️' : '✅'}{' '}
-            {tr('Statement Continuity Chain', '月結單連續性檢查', '月结单连续性检查')}
-          </span>
-          {!expanded && (
-            <span className="text-xs text-muted-foreground ml-2">
-              {groups.length} {tr('account(s)', '個帳戶', '个账户')}
-              {hasIssues && (
-                <span className="text-red-600 font-medium ml-2">
-                  {tr('— issues found', '— 發現問題', '— 发现问题')}
-                </span>
-              )}
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-1">
-          {groups.map((g: any) => (
-            <span key={g.account_number} className={`w-2.5 h-2.5 rounded-full ${g.status === 'complete' ? 'bg-green-500' : g.status === 'has_gaps' ? 'bg-red-500' : g.status === 'has_mismatches' ? 'bg-yellow-500' : 'bg-orange-500'}`} />
-          ))}
-        </div>
-      </button>
-
-      {expanded && (
-        <div className="space-y-3 pt-1">
-          {/* Legend */}
-          <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-            <span>🟢 {tr('Matched', '正常', '正常')}</span>
-            <span>🔴 {tr('Gap (missing month)', '缺失月份', '缺失月份')}</span>
-            <span>🟡 {tr('Balance mismatch', '餘額不符', '余额不符')}</span>
-            <span>🟠 {tr('Overlap', '重疊', '重叠')}</span>
-            <span>🟣 {tr('Duplicate', '重複', '重复')}</span>
-          </div>
-
-          {groups.map((g: any) => (
-            <div key={g.account_number} className={`rounded-lg border p-3 space-y-2 ${groupStatusColor(g.status)}`}>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Landmark className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-sm font-medium">{g.bank_name || ''}</span>
-                  <span className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded">{g.account_number}</span>
-                  <span className="text-xs text-muted-foreground">{g.currency}</span>
-                </div>
-                <span className={`text-xs font-medium px-2 py-0.5 rounded ${
-                  g.status === 'complete' ? 'bg-green-200 text-green-800' : 'bg-red-200 text-red-800'
-                }`}>
-                  {g.status === 'complete'
-                    ? (tr('Complete', '完整', '完整'))
-                    : (tr('Issues found', '有問題', '有问题'))}
-                </span>
-              </div>
-
-              {/* Chain timeline */}
-              <div className="flex flex-wrap items-center gap-1">
-                {g.chain.map((link: any, idx: number) => (
-                  <div key={link.id} className="flex items-center gap-1">
-                    {idx > 0 && !link.issues.includes('first') && (
-                      <span className="text-xs">
-                        {link.issues.includes('gap') ? (
-                          <span className="text-red-500 font-bold">✕✕✕</span>
-                        ) : link.issues.includes('balance_mismatch') ? (
-                          <span className="text-yellow-600">⚡</span>
-                        ) : (
-                          <span className="text-green-500">―</span>
-                        )}
-                      </span>
-                    )}
-                    <div
-                      className={`relative group px-2 py-1 rounded text-xs border cursor-default ${
-                        link.issues.includes('gap') ? 'border-red-400 bg-red-100 dark:bg-red-900/30' :
-                        link.issues.includes('balance_mismatch') ? 'border-yellow-400 bg-yellow-100 dark:bg-yellow-900/30' :
-                        link.issues.includes('duplicate') ? 'border-purple-400 bg-purple-100 dark:bg-purple-900/30' :
-                        link.issues.includes('overlap') || link.issues.includes('date_overlap') ? 'border-orange-400 bg-orange-100 dark:bg-orange-900/30' :
-                        'border-green-300 bg-white dark:bg-green-900/20'
-                      }`}
-                      title={`${link.statement_year}-${String(link.statement_month).padStart(2, '0')}\nOpening: ${link.opening_balance?.toLocaleString() ?? '?'}\nClosing: ${link.closing_balance?.toLocaleString() ?? '?'}${link.missing_months ? '\nMissing: ' + link.missing_months.join(', ') : ''}${link.expected_opening != null ? '\nExpected opening: ' + link.expected_opening.toLocaleString() : ''}`}
-                    >
-                      <span className="font-mono font-medium">
-                        {link.statement_year}-{String(link.statement_month).padStart(2, '0')}
-                      </span>
-                      <span className="ml-1">{issueIcon(link.issues)}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Issue details */}
-              {g.chain.filter((l: any) => l.issues.some((i: string) => i !== 'matched' && i !== 'first')).map((link: any) => (
-                <div key={`issue-${link.id}`} className="text-xs pl-2 border-l-2 border-red-300 ml-2 space-y-0.5">
-                  {link.issues.includes('gap') && link.missing_months && (
-                    <p className="text-red-700 dark:text-red-400">
-                      {issueIcon(link.issues)} {tr('Missing:', '缺失：', '缺失：')}{' '}
-                      <span className="font-mono font-medium">{link.missing_months.join(', ')}</span>
-                    </p>
-                  )}
-                  {link.issues.includes('balance_mismatch') && (
-                    <p className="text-yellow-700 dark:text-yellow-400">
-                      🟡 {tr(`Balance mismatch at ${link.statement_year}-${String(link.statement_month).padStart(2, '0')}: expected opening ${link.expected_opening?.toLocaleString()}, got ${link.actual_opening?.toLocaleString()} (diff: ${link.mismatch_amount?.toLocaleString()})`, `${link.statement_year}-${String(link.statement_month).padStart(2, '0')} 餘額不符：預期期初 ${link.expected_opening?.toLocaleString()}，實際 ${link.actual_opening?.toLocaleString()}（差異 ${link.mismatch_amount?.toLocaleString()}）`, `${link.statement_year}-${String(link.statement_month).padStart(2, '0')} 餘額不符：預期期初 ${link.expected_opening?.toLocaleString()}，實際 ${link.actual_opening?.toLocaleString()}（差異 ${link.mismatch_amount?.toLocaleString()}）`)}
-                    </p>
-                  )}
-                  {link.issues.includes('duplicate') && (
-                    <p className="text-purple-700 dark:text-purple-400">
-                      🟣 {tr(`Duplicate statement for ${link.statement_year}-${String(link.statement_month).padStart(2, '0')}`, `${link.statement_year}-${String(link.statement_month).padStart(2, '0')} 重複月結單`, `${link.statement_year}-${String(link.statement_month).padStart(2, '0')} 重复月结单`)}
-                    </p>
-                  )}
-                  {(link.issues.includes('overlap') || link.issues.includes('date_overlap')) && (
-                    <p className="text-orange-700 dark:text-orange-400">
-                      🟠 {tr(`Overlapping period at ${link.statement_year}-${String(link.statement_month).padStart(2, '0')}`, `${link.statement_year}-${String(link.statement_month).padStart(2, '0')} 期間重疊`, `${link.statement_year}-${String(link.statement_month).padStart(2, '0')} 期间重叠`)}
-                    </p>
-                  )}
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 function AccountModal({ tx, allTx, accounts, onClose, onApply }: {
   tx: Transaction;
@@ -1052,14 +887,14 @@ function PendingReviewBanner() {
   });
   if (drafts.length === 0) return null;
   return (
-    <div className="rounded-lg border-2 border-yellow-400 bg-yellow-50 dark:bg-yellow-950 p-4 space-y-2">
+    <div className="rounded-lg border-2 border-black bg-gray-100 dark:bg-gray-800 p-4 space-y-2">
       <div className="flex items-start gap-3">
         <div className="text-2xl">⚠️</div>
         <div className="flex-1">
-          <h3 className="font-bold text-yellow-900 dark:text-yellow-100">
+          <h3 className="font-bold text-black dark:text-white">
             {drafts.length} statement{drafts.length === 1 ? '' : 's'} pending review
           </h3>
-          <p className="text-sm text-yellow-800 dark:text-yellow-200">
+          <p className="text-sm text-black dark:text-gray-300">
             The system extracted data from your uploaded file{drafts.length === 1 ? '' : 's'}.
             Please review and confirm before saving to the database.
           </p>
@@ -1069,7 +904,7 @@ function PendingReviewBanner() {
         {drafts.map((d: any) => (
           <div
             key={d.id}
-            className="flex items-center justify-between rounded border border-yellow-300 bg-white dark:bg-yellow-900/40 px-3 py-2 hover:bg-yellow-100 dark:hover:bg-yellow-900/70 transition-colors"
+            className="flex items-center justify-between rounded border border-black bg-white dark:bg-gray-700 px-3 py-2 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
           >
             <a
               href={`/bank-statements/review/${d.id}`}
@@ -1082,7 +917,7 @@ function PendingReviewBanner() {
             <div className="flex items-center gap-2">
               <a
                 href={`/bank-statements/review/${d.id}`}
-                className="text-sm text-yellow-900 dark:text-yellow-100 font-medium hover:underline"
+                className="text-sm text-black dark:text-white font-medium hover:underline"
               >
                 Review →
               </a>

@@ -13,3 +13,14 @@ frontend/.env.local
 
 # Skill config with API tokens
 .claude/
+
+# Deployment context (local notes, not for repo)
+DEPLOYMENT_CONTEXT.md
+TeCS_DEVELOPMENT_ROADMAP.md
+demo-redesign.html
+fix-admin-password.sql
+
+# Test artifacts
+test-results/
+test-samples-generated/
+*.tsbuildinfo
